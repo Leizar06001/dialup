@@ -117,7 +117,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config file patchelf \
             libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
-            libxdo-dev libssl-dev libasound2-dev
+            libxdo-dev libssl-dev libasound2-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pipewire
 
       - name: Rust stable
         shell: bash
