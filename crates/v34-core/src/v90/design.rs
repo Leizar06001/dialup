@@ -126,9 +126,15 @@ fn moduli(k: u32, max: usize) -> Option<[usize; FRAME]> {
 /// maximal ; à K égal, les niveaux les plus écartés possible (meilleure
 /// marge contre le bruit). `None` si même 28 000 bit/s est impossible.
 pub fn design(ch: &Channel, lim: &Limits) -> Option<Mapping> {
+    design_range(ch, lim, 15, 36)
+}
+
+/// Comme [`design`], avec K entre `k_lo` et `k_hi` (la phase 4 utilise des
+/// jeux plus petits, K de 6 à 24 : tableau 17/V.90).
+pub fn design_range(ch: &Channel, lim: &Limits, k_lo: u32, k_hi: u32) -> Option<Mapping> {
     let d0 = (lim.margin * ch.sigma).max(1.0);
     let base = ladder(ch, d0);
-    for k in (15..=36u32).rev() {
+    for k in (k_lo..=k_hi.min(36)).rev() {
         if rate_for(k, 6) > lim.max_rate {
             continue;
         }
