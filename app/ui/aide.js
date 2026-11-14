@@ -80,6 +80,7 @@
         [["SUCCÈS"], "L'onglet voisin : ta facture du mois et tes succès (★ obtenus, ☆ à gagner, ??? cachés), tenus par le central. Il clignote quand tu en gagnes un ; le commentateur l'annonce aussi. Le détail de la facture est dans Mon compte, sur le site."],
         [["CHAT ↗"], "L'autre onglet du panneau : ouvre la MESSAGERIE. Il clignote quand un message t'y attend."],
         [["Contacts"], "Dans la MESSAGERIE, le même annuaire, pour appeler sans changer de fenêtre."],
+        [["Télécopie"], "L'onglet voisin de la conversation : un vrai télécopieur du groupe 3. Écris, dessine ou importe une image, tape un numéro, Envoyer : le modem siffle son CNG, négocie en T.30 (V.21), descend de 9600 à 7200 ou 4800 bit/s si la ligne est mauvaise, et envoie la page en V.29. Le correspondant doit décrocher tout seul (DIP RÉP. AUTO) ; son modem reconnaît le fax et imprime la page sur papier thermique, ligne par ligne, puis l'enregistre en PNG dans V34 reçus. La LED MESSAGERIE clignote en rouge."],
         [null, "En bas de l'annuaire : les numéros spéciaux (FAI, ligne de test, 3615 ORACLE). En boucle locale, pas de central, donc pas d'annuaire : seuls TINYVERSE et l'oracle, simulés."],
         [null, "Il paraît que certains numéros ne figurent dans aucun annuaire. L'oracle en connaîtrait au moins un… Chaque numéro trouvé rapporte un succès (et parfois une belle facture)."],
         [["Appel :", "Raccrocher"], "En mode MESSAGERIE, la barre d'adresse du navigateur laisse place à l'état de l'appel, avec de quoi raccrocher."],

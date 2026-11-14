@@ -150,6 +150,10 @@ $("btn-messagerie").addEventListener("click", openMessagerie);
 bridge.listen("v34:chat", ({ from }) => {
   if (from === "remote" || from === "salon") messagerie.unread = true;
 });
+// Une télécopie reçue, c'est un message : la LED clignote en rouge
+bridge.listen("v34:fax", (m) => {
+  if (m.type === "fin" && m.recu) messagerie.unread = true;
+});
 // La messagerie a été lue (sa fenêtre a le focus)
 bridge.listen("messagerie:vu", () => { messagerie.unread = false; messagerie.nouvelAppel = false; });
 // Un numéro choisi dans l'annuaire s'affiche aussi dans le terminal
@@ -454,7 +458,7 @@ async function loadPresets() {
 const PHASE_ORDER = ["Phase1", "Phase2", "Phase3", "Phase4", "Data"];
 const CALL_PILL = {
   idle: ["REPOS", ""], dialing: ["NUMÉROTATION", "warn"], ringing: ["SONNERIE", "warn"],
-  connecting: ["NÉGOCIATION", "warn"], online: ["EN LIGNE", "good"],
+  connecting: ["NÉGOCIATION", "warn"], online: ["EN LIGNE", "good"], fax: ["TÉLÉCOPIE", "good"],
 };
 const ledEls = {};
 document.querySelectorAll(".led-cell").forEach((c) => (ledEls[c.dataset.led] = c.querySelector(".led")));

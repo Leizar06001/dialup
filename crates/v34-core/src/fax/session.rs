@@ -53,6 +53,8 @@ pub enum FaxEvenement {
     Ligne(Vec<bool>),
     /// Lignes envoyées (émetteur)
     Progression { faites: usize, total: usize },
+    /// Résolution de la page qui arrive (récepteur) : fine = 7,7 lignes/mm
+    Resolution { fine: bool },
     Fin { ok: bool, raison: String },
 }
 
@@ -652,6 +654,7 @@ impl Fax {
         let Some((debit, fine)) = s.iter().find(|t| t.code() == t30::DCS).and_then(|t| t30::dcs_lire(&t.fif)) else { return };
         self.debit = debit;
         self.fine = fine;
+        self.evenement(FaxEvenement::Resolution { fine });
         self.etape_ev(format!("DCS reçu : {} bit/s", debit.bit_s()));
         self.rx29 = Some(Box::new(V29Rx::new(debit)));
         self.tcf.clear();

@@ -16,6 +16,7 @@ mod audio;
 mod bbs;
 mod browser;
 mod engine;
+mod fax;
 mod fft;
 mod link;
 #[cfg(target_os = "linux")]
@@ -279,6 +280,21 @@ struct AppInfo {
     visio: Option<String>,
 }
 
+/// Télécopie : compose ce numéro et envoie la page (`hauteur` lignes de 216
+/// octets, 1 = noir).
+#[tauri::command]
+fn fax_envoyer(state: State<AppState>, numero: String, hauteur: usize, octets: Vec<u8>, fine: bool) -> Result<(), String> {
+    let numero: String = numero.chars().filter(|c| c.is_ascii_digit()).collect();
+    if numero.is_empty() {
+        return Err("numéro vide".into());
+    }
+    let lignes = fax::depaqueter(&octets, hauteur.min(4000));
+    if lignes.is_empty() {
+        return Err("page vide".into());
+    }
+    state.send(EngineCmd::EnvoyerFax { numero, lignes, fine })
+}
+
 /// La liste des succès (titres, descriptions, cachés ou non).
 #[tauri::command]
 fn succes_liste() -> &'static [v34_net::succes::Succes] {
@@ -396,6 +412,7 @@ fn main() {
             nav_offline,
             nav_initial,
             succes_liste,
+            fax_envoyer,
             app_info
         ])
         .run(tauri::generate_context!())

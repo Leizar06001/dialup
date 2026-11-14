@@ -165,6 +165,9 @@ pub enum EngineCmd {
     VisioCamera(bool),
     /// Visiophone : une image hallucinée à envoyer, si la ligne le permet
     VisioFrame(Vec<u8>),
+    /// Télécopie : compose ce numéro et envoie cette page (lignes de 1728
+    /// points, vrai = noir ; fine : 7,7 lignes par mm)
+    EnvoyerFax { numero: String, lignes: Vec<Vec<bool>>, fine: bool },
 }
 
 /// Débit le plus bas du V.90 (sens descendant), en bit/s : en dessous, le
@@ -362,6 +365,12 @@ pub struct Engine {
     /// réentraînements
     orage_s: f32,
     retrains: u32,
+    /// Télécopie qui arrive : lignes déjà imprimées, résolution, expéditeur
+    fax_recu: Vec<Vec<bool>>,
+    fax_fine: bool,
+    fax_de: Option<String>,
+    /// Lignes déjà montrées à l'IHM (page en cours)
+    fax_y: usize,
 }
 
 /// Compteur de taxes d'un appel (tarifs : [`v34_net::tarif`]).
@@ -463,6 +472,10 @@ impl Engine {
             succes_connus: None,
             orage_s: 0.0,
             retrains: 0,
+            fax_recu: Vec::new(),
+            fax_fine: true,
+            fax_de: None,
+            fax_y: 0,
         }
     }
 
@@ -665,6 +678,17 @@ impl Engine {
                     self.send_bytes(b);
                 }
             }
+            EngineCmd::EnvoyerFax { numero, lignes, fine } => {
+                let n = lignes.len();
+                if !self.start_outgoing(&numero) {
+                    self.console("ERROR", "result");
+                    return;
+                }
+                // le modem créé pour l'appel enverra la page au lieu de négocier
+                self.link.command_local(ModemCommand::PreparerFax { lignes, fine });
+                self.fax_recu.clear();
+                self.console(&format!("Télécopie vers {numero} : {n} lignes, en {}", if fine { "fin" } else { "standard" }), "info");
+            }
         }
     }
 
@@ -841,6 +865,8 @@ impl Engine {
         match ev {
             N::Registered { number } => {
                 self.console(&format!("Connecté au central — votre numéro : {number}"), "result");
+                // identité de notre télécopieur (TSI / CSI)
+                self.cfg.ident = number.clone();
                 // Après une coupure, le central nous redonne le même numéro :
                 // la messagerie le sait déjà.
                 if self.numero_annonce.as_deref() != Some(number.as_str()) {
@@ -1481,6 +1507,10 @@ impl Engine {
     }
 
     fn on_event(&mut self, side: Side, ev: ModemEvent) {
+        if let ModemEvent::Fax(f) = ev {
+            // (les lignes reçues sont lourdes : l'IHM les reçoit empaquetées)
+            return self.on_fax(side, f);
+        }
         if side == Side::Local {
             match &ev {
                 ModemEvent::PhaseChanged(Phase::Retrain) => {
@@ -1526,6 +1556,77 @@ impl Engine {
             }
         }
         let _ = self.app.emit("v34:event", EventMsg { side, event: ev });
+    }
+
+    /// Télécopie : étapes, page reçue au fil de l'eau, fin. En boucle
+    /// locale, c'est le correspondant simulé qui reçoit : on montre aussi
+    /// sa page, pour voir que ça marche.
+    fn on_fax(&mut self, side: Side, f: v34_core::fax::session::FaxEvenement) {
+        use v34_core::fax::session::FaxEvenement as F;
+        let local = side == Side::Local;
+        match f {
+            F::Etape(s) => {
+                if local {
+                    self.console(&format!("FAX · {s}"), "info");
+                }
+                let _ = self.app.emit("v34:fax", serde_json::json!({ "type": "etape", "texte": s, "local": local }));
+            }
+            F::Correspondant(c) => {
+                if local {
+                    self.console(&format!("FAX · correspondant : {c}"), "info");
+                }
+                self.fax_de = Some(c.clone());
+                let _ = self.app.emit("v34:fax", serde_json::json!({ "type": "correspondant", "numero": c, "local": local }));
+            }
+            F::Resolution { fine } => {
+                self.fax_fine = fine;
+                self.fax_recu.clear();
+                self.fax_y = 0;
+                let _ = self.app.emit("v34:fax", serde_json::json!({ "type": "debut", "fine": fine, "de": self.fax_de }));
+            }
+            F::Ligne(pixels) => {
+                // seules les lignes reçues par notre modem sont gardées (pour
+                // le PNG) ; celles du correspondant simulé sont seulement montrées
+                let y = self.fax_y;
+                self.fax_y += 1;
+                let octets = crate::fax::empaqueter(&pixels);
+                if local {
+                    self.fax_recu.push(pixels);
+                }
+                let _ = self.app.emit("v34:fax", serde_json::json!({ "type": "ligne", "y": y, "octets": octets, "fine": self.fax_fine }));
+            }
+            F::Progression { faites, total } => {
+                let _ = self.app.emit("v34:fax", serde_json::json!({ "type": "progression", "faites": faites, "total": total }));
+            }
+            F::Fin { ok, raison } => {
+                let recu = !self.fax_recu.is_empty();
+                let mut fichier = None;
+                // (en boucle locale, c'est le correspondant simulé qui a reçu :
+                // on a montré sa page, sans l'enregistrer chez nous)
+                if recu && local {
+                    let dir = self.app.path().download_dir().unwrap_or_else(|_| std::env::temp_dir()).join("V34 reçus");
+                    let png = crate::fax::png(&self.fax_recu, self.fax_fine);
+                    let de = self.fax_de.clone().filter(|d| !d.is_empty()).unwrap_or_else(|| "inconnu".into());
+                    let nom = format!("fax de {de}.png");
+                    match crate::bbs::save_unique(&dir, &nom, &png) {
+                        Ok(p) => {
+                            self.console(&format!("Télécopie reçue ({} lignes) → {}", self.fax_recu.len(), p.display()), "info");
+                            fichier = Some(p.display().to_string());
+                        }
+                        Err(e) => self.console(&format!("Télécopie reçue, mais impossible de l'enregistrer : {e}"), "info"),
+                    }
+                }
+                self.fax_recu.clear();
+                if local {
+                    self.console(&format!("FAX · {raison}"), "result");
+                    if ok && !recu {
+                        self.exploit("fax");
+                    }
+                }
+                self.fax_de = None;
+                let _ = self.app.emit("v34:fax", serde_json::json!({ "type": "fin", "ok": ok, "raison": raison, "recu": recu, "fichier": fichier, "local": local }));
+            }
+        }
     }
 
     /// Décodage UTF-8 incrémental (un caractère peut être coupé entre deux paquets).
@@ -1583,6 +1684,7 @@ impl Engine {
         }
         match self.status.phase {
             Phase::Data => "online",
+            Phase::Fax => "fax",
             p if in_call(p) => "connecting",
             _ => "idle",
         }

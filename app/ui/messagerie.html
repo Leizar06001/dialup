@@ -40,7 +40,11 @@
     <!-- ======================== CONVERSATION ======================== -->
     <section class="box chat" aria-label="Conversation">
       <h2 class="legend" id="chat-title">Conversation</h2>
-      <div class="amber">
+      <div class="seg onglets" id="chat-onglets" role="tablist">
+        <button data-vue="chat" class="on" role="tab">Conversation</button>
+        <button data-vue="fax" role="tab">Télécopie <i class="voyant" id="fax-voyant"></i></button>
+      </div>
+      <div class="amber" id="vue-chat">
         <pre class="bbs-banner">╔════════════════════════════════════════╗
 ║  T I N Y V E R S E   B B S   · 1996 ·  ║
 ╚════════════════════════════════════════╝</pre>
@@ -55,6 +59,32 @@
         <input type="file" id="file-input" hidden>
         <div class="progress"><i id="file-progress"></i><span id="file-label">aucun transfert</span></div>
         <span class="cell rate" id="file-rate">0,0 Ko/s</span>
+      </div>
+      <!-- Télécopieur : une page à composer (texte, crayon, image), envoyée
+           en vrai fax (T.30, V.29, T.4) ; les fax reçus s'impriment ici. -->
+      <div class="faxv" id="vue-fax" hidden>
+        <div class="fax-outils">
+          <div class="seg" id="fax-feuille" role="group" aria-label="Feuille affichée">
+            <button data-f="envoi" class="on" title="La page que tu vas envoyer">À envoyer</button>
+            <button data-f="recu" title="Le dernier fax reçu, sur papier thermique">Reçu</button>
+          </div>
+          <button id="fax-texte" title="Taper du texte sur la page">Écrire…</button>
+          <button id="fax-crayon" title="Dessiner à la souris">Crayon</button>
+          <label class="btn" for="fax-image" title="Une image, passée en noir et blanc">Image…</label>
+          <input type="file" id="fax-image" accept="image/*" hidden>
+          <button id="fax-effacer" title="Une page blanche">Effacer</button>
+          <span class="fax-num"><label for="fax-numero">N°</label> <input id="fax-numero" inputmode="tel" spellcheck="false" placeholder="01 23 45 67 89"></span>
+          <button id="fax-envoyer" class="gros" title="Compose le numéro et envoie la page (CNG, T.30, V.29)">Envoyer ▶</button>
+        </div>
+        <div class="fax-ecrire" id="fax-ecrire" hidden>
+          <textarea id="fax-texte-in" rows="3" spellcheck="false" placeholder="Ton texte (il s'ajoute sous ce qui est déjà écrit)"></textarea>
+          <button id="fax-texte-ok">Ajouter</button>
+        </div>
+        <div class="fax-papier" id="fax-papier">
+          <canvas id="fax-page" width="1728" height="2288"></canvas>
+          <canvas id="fax-recu" width="1728" height="2288" hidden></canvas>
+        </div>
+        <div class="cell fax-etat" id="fax-etat">Prêt : compose une page, un numéro, puis Envoyer. Le correspondant doit décrocher (DIP RÉP. AUTO).</div>
       </div>
     </section>
 

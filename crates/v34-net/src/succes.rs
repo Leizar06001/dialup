@@ -69,6 +69,7 @@ pub const LISTE: &[Succes] = &[
     a("gros-colis", "Colis encombrant", "Envoyer un fichier de 1 Mo ou plus."),
     a("visio", "Souriez !", "Un appel en visiophone, chacun sa caméra."),
     cache(a("tenace", "Tenace", "Rester en ligne malgré 3 réentraînements dans le même appel.")),
+    a("fax", "Papier thermique", "Envoyer une télécopie qui arrive à bon port."),
     // Numéros cachés du central (absents de l'annuaire) : l'identifiant est
     // celui du service, voir v34-server/src/caches
     c("explorateur", "Explorateur", "Trouver 3 numéros qui ne sont pas dans l'annuaire."),

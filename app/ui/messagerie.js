@@ -489,3 +489,213 @@ if (!T) renderDir(null);
 // Démo / tests : V34_VISIO=mire allume la mire à l'ouverture
 invoke("app_info").then((i) => { if (i && (i.visio === "mire" || i.visio === "cam")) visioSource(i.visio); }).catch(() => {});
 $("bbs-input").focus();
+
+/* ---------------------------------------------------------------- télécopieur
+   La page fait 1728 points de large (215 mm à 8 points/mm) et 2288 lignes
+   (A4 en résolution fine). Elle part en vrai fax : le modem compose le
+   numéro, siffle son CNG, négocie en T.30 (V.21) et envoie la page en V.29,
+   codée en T.4. Les fax reçus s'impriment ici ligne par ligne, et sont
+   enregistrés en PNG dans « V34 reçus ». */
+const FAX_L = 1728, FAX_H = 2288;
+const faxPage = $("fax-page"), faxRecu = $("fax-recu");
+const fpx = faxPage.getContext("2d", { willReadFrequently: true });
+const frx = faxRecu.getContext("2d");
+const fax = { crayon: false, trace: null, curseurY: 120, vue: "chat", feuille: "envoi", y: 0, fine: true };
+
+function faxBlanc() {
+  fpx.fillStyle = "#fff";
+  fpx.fillRect(0, 0, FAX_L, FAX_H);
+  fax.curseurY = 120;
+}
+faxBlanc();
+
+/** Onglets Conversation / Télécopie */
+function vueChat(v) {
+  fax.vue = v;
+  $("vue-chat").hidden = v !== "chat";
+  document.querySelector(".filebar").hidden = v !== "chat";
+  $("vue-fax").hidden = v !== "fax";
+  document.querySelectorAll("#chat-onglets button").forEach((b) => b.classList.toggle("on", b.dataset.vue === v));
+  if (v === "fax") $("fax-voyant").classList.remove("on");
+}
+document.querySelectorAll("#chat-onglets button").forEach((b) => b.addEventListener("click", () => vueChat(b.dataset.vue)));
+
+function feuille(f) {
+  fax.feuille = f;
+  faxPage.hidden = f !== "envoi";
+  faxRecu.hidden = f !== "recu";
+  document.querySelectorAll("#fax-feuille button").forEach((b) => b.classList.toggle("on", b.dataset.f === f));
+}
+document.querySelectorAll("#fax-feuille button").forEach((b) => b.addEventListener("click", () => feuille(b.dataset.f)));
+frx.fillStyle = "#f3efe2";
+frx.fillRect(0, 0, FAX_L, FAX_H);
+
+const faxEtat = (t) => setText("fax-etat", t);
+
+/* Écrire : le texte s'ajoute sous ce qui est déjà écrit */
+$("fax-texte").addEventListener("click", () => {
+  $("fax-ecrire").hidden = !$("fax-ecrire").hidden;
+  if (!$("fax-ecrire").hidden) $("fax-texte-in").focus();
+});
+$("fax-texte-ok").addEventListener("click", () => {
+  const t = $("fax-texte-in").value;
+  if (!t.trim()) return;
+  fpx.fillStyle = "#000";
+  fpx.font = "bold 64px 'Courier New', monospace";
+  fpx.textBaseline = "top";
+  for (const brut of t.split("\n")) {
+    // retour à la ligne automatique (≈ 40 caractères)
+    let l = brut;
+    do {
+      const morceau = l.slice(0, 40);
+      l = l.slice(40);
+      if (fax.curseurY + 80 > FAX_H) break;
+      fpx.fillText(morceau, 110, fax.curseurY);
+      fax.curseurY += 80;
+    } while (l.length);
+  }
+  $("fax-texte-in").value = "";
+  $("fax-ecrire").hidden = true;
+  feuille("envoi");
+});
+
+/* Crayon */
+$("fax-crayon").addEventListener("click", () => {
+  fax.crayon = !fax.crayon;
+  $("fax-crayon").classList.toggle("on", fax.crayon);
+  feuille("envoi");
+});
+function pointPage(e) {
+  const r = faxPage.getBoundingClientRect();
+  return [((e.clientX - r.left) / r.width) * FAX_L, ((e.clientY - r.top) / r.height) * FAX_H];
+}
+faxPage.addEventListener("pointerdown", (e) => {
+  if (!fax.crayon) return;
+  fax.trace = pointPage(e);
+  faxPage.setPointerCapture(e.pointerId);
+});
+faxPage.addEventListener("pointermove", (e) => {
+  if (!fax.trace) return;
+  const p = pointPage(e);
+  fpx.strokeStyle = "#000";
+  fpx.lineWidth = 7;
+  fpx.lineCap = "round";
+  fpx.beginPath();
+  fpx.moveTo(fax.trace[0], fax.trace[1]);
+  fpx.lineTo(p[0], p[1]);
+  fpx.stroke();
+  fax.trace = p;
+  fax.curseurY = Math.max(fax.curseurY, Math.min(FAX_H - 80, p[1] + 40));
+});
+faxPage.addEventListener("pointerup", () => { fax.trace = null; });
+
+/* Image : mise à la largeur, en noir et blanc (seuil), sous ce qui est écrit */
+$("fax-image").addEventListener("change", async (e) => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (!f) return;
+  try {
+    const img = await createImageBitmap(f);
+    const w = FAX_L - 200, h = Math.min(FAX_H - fax.curseurY - 60, Math.round((img.height * w) / img.width));
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = Math.max(1, h);
+    const cx = c.getContext("2d");
+    cx.fillStyle = "#fff";
+    cx.fillRect(0, 0, w, h);
+    cx.drawImage(img, 0, 0, w, h);
+    const d = cx.getImageData(0, 0, w, h);
+    for (let i = 0; i < d.data.length; i += 4) {
+      const lum = 0.299 * d.data[i] + 0.587 * d.data[i + 1] + 0.114 * d.data[i + 2];
+      const v = lum < 128 ? 0 : 255;
+      d.data[i] = d.data[i + 1] = d.data[i + 2] = v;
+      d.data[i + 3] = 255;
+    }
+    fpx.putImageData(d, 100, fax.curseurY);
+    fax.curseurY = Math.min(FAX_H - 80, fax.curseurY + h + 40);
+    feuille("envoi");
+  } catch (err) {
+    faxEtat("Image illisible : " + err);
+  }
+});
+
+$("fax-effacer").addEventListener("click", () => { faxBlanc(); feuille("envoi"); });
+
+/* Envoi : la page (jusqu'à la dernière ligne écrite) empaquetée, 1 = noir */
+$("fax-envoyer").addEventListener("click", () => {
+  const numero = $("fax-numero").value.replace(/\D/g, "");
+  if (!numero) { faxEtat("Il faut un numéro (celui d'un abonné qui décroche tout seul)."); $("fax-numero").focus(); return; }
+  const d = fpx.getImageData(0, 0, FAX_L, FAX_H).data;
+  const octets = new Uint8Array((FAX_L / 8) * FAX_H);
+  let derniere = 0;
+  for (let y = 0; y < FAX_H; y++) {
+    for (let x = 0; x < FAX_L; x++) {
+      const i = (y * FAX_L + x) * 4;
+      if (d[i] < 128) {
+        octets[y * (FAX_L / 8) + (x >> 3)] |= 0x80 >> (x & 7);
+        derniere = y;
+      }
+    }
+  }
+  // on coupe le blanc du bas (sauf une marge), mais pas sous 400 lignes
+  const hauteur = Math.min(FAX_H, Math.max(400, derniere + 80));
+  faxEtat(`Numérotation du ${fmtNum(numero)}… (${hauteur} lignes à envoyer)`);
+  invoke("fax_envoyer", { numero, hauteur, octets: Array.from(octets.subarray(0, (FAX_L / 8) * hauteur)), fine: true })
+    .catch((err) => faxEtat("Envoi impossible : " + err));
+});
+// Sur l'onglet Télécopie, un contact remplit le numéro du fax (sans appeler)
+$("dir-list").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-num]");
+  if (!b || fax.vue !== "fax") return;
+  e.stopImmediatePropagation();
+  $("fax-numero").value = fmtNum(b.dataset.num);
+  faxEtat(`Numéro du fax : ${fmtNum(b.dataset.num)}. Envoyer quand la page est prête.`);
+}, true);
+
+/* Ce que dit le télécopieur (étapes T.30, lignes reçues, fin) */
+listen("v34:fax", (m) => {
+  switch (m.type) {
+    case "etape":
+      if (m.local !== false) faxEtat("FAX · " + m.texte);
+      break;
+    case "correspondant":
+      faxEtat("FAX · correspondant : " + fmtNum(m.numero));
+      break;
+    case "debut":
+      // une page arrive : on l'imprime sur le papier thermique
+      fax.y = 0;
+      fax.fine = m.fine;
+      frx.fillStyle = "#f3efe2";
+      frx.fillRect(0, 0, FAX_L, FAX_H);
+      if (fax.vue !== "fax") $("fax-voyant").classList.add("on");
+      feuille("recu");
+      break;
+    case "ligne": {
+      const rep = m.fine ? 1 : 2;
+      const img = frx.createImageData(FAX_L, rep);
+      for (let x = 0; x < FAX_L; x++) {
+        const noir = m.octets[x >> 3] & (0x80 >> (x & 7));
+        for (let r = 0; r < rep; r++) {
+          const i = (r * FAX_L + x) * 4;
+          const v = noir ? 34 : 243;
+          img.data[i] = v; img.data[i + 1] = noir ? 34 : 239; img.data[i + 2] = noir ? 38 : 226; img.data[i + 3] = 255;
+        }
+      }
+      const y = m.y * rep;
+      if (y + rep <= FAX_H) frx.putImageData(img, 0, y);
+      // le papier sort : on suit la ligne qui s'imprime
+      if (fax.feuille === "recu" && m.y % 16 === 0) {
+        const pap = $("fax-papier");
+        pap.scrollTop = Math.max(0, (y / FAX_H) * faxRecu.clientHeight - pap.clientHeight * 0.7);
+      }
+      break;
+    }
+    case "progression":
+      faxEtat(`FAX · page : ${m.faites}/${m.total} lignes envoyées`);
+      break;
+    case "fin":
+      faxEtat((m.ok ? "✓ " : "✗ ") + m.raison + (m.fichier ? " — enregistré : " + m.fichier : ""));
+      if (m.recu && fax.vue !== "fax") $("fax-voyant").classList.add("on");
+      break;
+  }
+});
