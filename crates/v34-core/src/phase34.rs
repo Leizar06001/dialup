@@ -819,7 +819,17 @@ impl P34 {
                 v.extend(seq_pp().iter().map(|p| *p * std::f32::consts::SQRT_2));
                 self.mapper.sixteen = false;
                 self.tx.set_constellation_power(2.0);
-                self.send_burst(v, TxSt::Trn { left: TRN3_LEN }, "S S̄ PP");
+                // Notre annuleur d'écho n'apprend qu'une fois le J de l'appelé
+                // éteint (S + S̄ + un aller-retour + 60 ms, `ec_wait`). Avec
+                // un long aller-retour (Internet, ~0,5 s), un TRN de durée fixe
+                // finissait presque aussitôt : 30 ms d'apprentissage, 2 dB
+                // d'atténuation, et notre propre écho brouillait la phase 4.
+                // Le TRN dure donc au moins jusqu'à `ec_wait` + 400 ms (l'autre
+                // attend J pour en voir la fin : V.34 le permet).
+                let deja = v.len() as f64;
+                let besoin = ((self.ec_wait as f64 / 8000.0) + 0.4) * self.sym_rate_tx - deja;
+                let trn = TRN3_LEN.max(besoin.ceil().max(0.0) as usize);
+                self.send_burst(v, TxSt::Trn { left: trn }, "S S̄ PP");
                 self.goto(Step::C3Send);
                 self.rx_st = RxSt::WaitS;
             }
