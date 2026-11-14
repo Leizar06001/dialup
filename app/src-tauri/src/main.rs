@@ -117,8 +117,11 @@ fn net_local(state: State<AppState>) -> Result<(), String> {
 
 /// Ouvre la fenêtre du navigateur (trafic par le proxy du modem), sur la
 /// page web ou, avec `mode` = "messagerie", sur le chat et le visiophone.
+/// Asynchrone : sous Windows, créer une fenêtre WebView2 depuis une commande
+/// synchrone (exécutée sur le fil principal) bloque l'appli — fenêtre blanche
+/// impossible à fermer.
 #[tauri::command]
-fn open_browser(app: tauri::AppHandle, mode: Option<String>) -> Result<(), String> {
+async fn open_browser(app: tauri::AppHandle, mode: Option<String>) -> Result<(), String> {
     browser::open(&app, engine::PROXY_PORT, mode.as_deref() == Some("messagerie"))
 }
 
