@@ -748,6 +748,9 @@ impl Server {
             let mut output = vec![0.0f32; input.len()];
             sims[dir].process(&input, &mut output);
             p.samples = output;
+            // les copies des trames précédentes n'ont pas traversé le
+            // simulateur (qui a une mémoire) : on ne les transmet pas
+            p.backup.clear();
         }
         self.counters.relayed_packets += 1;
         if to_modem {

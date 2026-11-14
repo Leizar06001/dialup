@@ -156,6 +156,11 @@ impl Dfe {
         Some(e2 / rows as f64)
     }
 
+    /// Normes des coefficients (avant, arrière), pour le diagnostic.
+    pub fn norms(&self) -> (f64, f64) {
+        (self.f.iter().map(|x| x * x).sum::<f64>().sqrt(), self.b.iter().map(|x| x * x).sum::<f64>().sqrt())
+    }
+
     /// Remet l'historique à zéro (coefficients gardés).
     pub fn clear(&mut self) {
         self.rx.iter_mut().for_each(|x| *x = 0.0);

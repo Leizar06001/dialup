@@ -177,6 +177,8 @@ pub struct CentralClient {
     tx_seq: u32,
     tx_ts: u32,
     tx_acc: Vec<f32>,
+    /// Dernières trames émises, répétées dans les paquets suivants
+    tx_hist: std::collections::VecDeque<Vec<f32>>,
     jb: JitterBuffer,
     rx_fifo: VecDeque<(f32, bool)>,
     epoch: Instant,
@@ -230,6 +232,7 @@ impl CentralClient {
             tx_seq: 0,
             tx_ts: 0,
             tx_acc: Vec::with_capacity(FRAME_SAMPLES),
+            tx_hist: std::collections::VecDeque::new(),
             jb,
             rx_fifo: VecDeque::new(),
             epoch: now,
@@ -590,6 +593,7 @@ impl CentralClient {
         self.tx_seq = 0;
         self.tx_ts = 0;
         self.tx_acc.clear();
+        self.tx_hist.clear();
         self.jb = JitterBuffer::new(self.cfg.jitter_target_ms, self.cfg.concealment);
         self.rx_fifo.clear();
         self.got_audio = false;
@@ -612,7 +616,7 @@ impl CentralClient {
         self.stats.bytes_received += n as u64;
         self.got_audio = true;
         let arrival = self.epoch.elapsed().as_secs_f64();
-        self.jb.push(pkt.seq, pkt.timestamp, pkt.samples, arrival);
+        self.jb.push_with_backup(pkt.seq, pkt.timestamp, pkt.samples, &pkt.backup, arrival);
     }
 
     /// Envoie des échantillons de l'appel en cours (jetés hors appel).
@@ -626,13 +630,17 @@ impl CentralClient {
             self.tx_acc.extend_from_slice(&rest[..take]);
             rest = &rest[take..];
             if self.tx_acc.len() == FRAME_SAMPLES {
+                let frame = std::mem::take(&mut self.tx_acc);
                 let pkt = Packet {
                     codec: self.cfg.codec,
                     call_id,
                     seq: self.tx_seq,
                     timestamp: self.tx_ts,
-                    samples: std::mem::take(&mut self.tx_acc),
+                    backup: self.tx_hist.iter().cloned().collect(),
+                    samples: frame.clone(),
                 };
+                self.tx_hist.push_front(frame);
+                self.tx_hist.truncate(crate::packet::BACKUP_FRAMES);
                 self.tx_acc.reserve(FRAME_SAMPLES);
                 self.tx_seq = self.tx_seq.wrapping_add(1);
                 self.tx_ts = self.tx_ts.wrapping_add(FRAME_SAMPLES as u32);

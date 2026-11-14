@@ -67,6 +67,8 @@ pub struct JitterStats {
     pub concealed: u64,
     /// Recalages forcés (mode modem : glissement inévitable)
     pub resyncs: u64,
+    /// Trames perdues rattrapées grâce à la copie du paquet suivant
+    pub recovered: u64,
     /// Gigue estimée (RFC 3550), ms
     pub jitter_ms: f32,
     /// Profondeur actuelle du tampon, ms
@@ -235,6 +237,32 @@ impl JitterBuffer {
         s.resize(FRAME_SAMPLES, 0.0);
         self.frames.insert(key, s);
         self.update_depth();
+    }
+
+    /// Copie d'une trame précédente portée par un paquet (redondance) : prise
+    /// seulement si la trame manque encore et n'a pas déjà été jouée.
+    /// À appeler après [`push`](Self::push) du paquet qui la porte.
+    pub fn push_backup(&mut self, seq: u32, samples: &[f32]) {
+        let (Some(key), Some(next)) = (self.unwrap_seq(seq), self.next) else {
+            return;
+        };
+        if key < next || key - next > RESYNC_GAP || self.frames.contains_key(&key) {
+            return;
+        }
+        let mut s = samples.to_vec();
+        s.resize(FRAME_SAMPLES, 0.0);
+        self.frames.insert(key, s);
+        self.stats.recovered += 1;
+        self.highest = Some(self.highest.map_or(key, |h| h.max(key)));
+        self.update_depth();
+    }
+
+    /// Ajoute un paquet et les copies des trames précédentes qu'il porte.
+    pub fn push_with_backup(&mut self, seq: u32, timestamp: u32, samples: Vec<f32>, backup: &[Vec<f32>], arrival_s: f64) {
+        self.push(seq, timestamp, samples, arrival_s);
+        for (i, b) in backup.iter().enumerate() {
+            self.push_backup(seq.wrapping_sub(i as u32 + 1), b);
+        }
     }
 
     fn update_depth(&mut self) {
@@ -453,6 +481,33 @@ mod tests {
         }
         let (f, k) = jb.pop_frame();
         assert_eq!((k, f[0]), (FrameKind::Audio, 0.0));
+    }
+
+    #[test]
+    fn lost_packet_recovered_from_next_one() {
+        let mut jb = JitterBuffer::for_modem(60);
+        let frame = |v: f32| vec![v; FRAME_SAMPLES];
+        let mut t = 0.0;
+        for seq in 0..10u32 {
+            if seq == 4 {
+                t += 0.02;
+                continue; // paquet 4 perdu…
+            }
+            let backup = if seq == 0 { vec![] } else { vec![frame(seq as f32 - 1.0)] };
+            jb.push_with_backup(seq, seq * FRAME_SAMPLES as u32, frame(seq as f32), &backup, t);
+            t += 0.02;
+        }
+        // … rattrapé grâce au paquet 5
+        let mut got = Vec::new();
+        for _ in 0..10 {
+            let (f, kind) = jb.pop_frame();
+            if kind == FrameKind::Audio {
+                got.push(f[0]);
+            }
+        }
+        assert!(got.contains(&4.0), "{got:?}");
+        assert_eq!(jb.stats().recovered, 1);
+        assert_eq!(jb.stats().lost, 0);
     }
 
     #[test]

@@ -257,3 +257,74 @@ fn son_de_la_connexion() {
     let r = echange(LineParams::preset("Urbaine").unwrap(), ModemConfig::default(), fai());
     assert!(r.connected[0].is_some());
 }
+
+/// Endurance : appels longs sur une ligne, graines de bruit différentes ;
+/// compte les pertes de la réception 56k.
+/// `V90_SOAK="Urbaine 600 1,2,3"` (ligne, secondes, graines)
+#[test]
+#[ignore = "très long : V90_SOAK='Urbaine 600 1,2,3' cargo test --release --test v90_appel endurance -- --ignored --nocapture"]
+fn endurance() {
+    let spec = std::env::var("V90_SOAK").unwrap_or_else(|_| "Urbaine 300 1".into());
+    let mut it = spec.split_whitespace();
+    let ligne = it.next().unwrap().to_string();
+    let secondes: usize = it.next().unwrap().parse().unwrap();
+    let graines: Vec<u64> = it.next().unwrap().split(',').map(|g| g.parse().unwrap()).collect();
+    let mut total = 0;
+    for g in graines {
+        let mut p = LineParams::preset(&ligne).unwrap();
+        if let Some(x) = std::env::var("V90_SNR").ok().and_then(|v| v.parse().ok()) { p.snr_db = x; }
+        if let Ok(b) = std::env::var("V90_BANDE") { let v: Vec<f32> = b.split(',').map(|x| x.parse().unwrap()).collect(); p.band_low_hz = v[0]; p.band_high_hz = v[1]; p.hf_tilt_db = v.get(2).copied().unwrap_or(p.hf_tilt_db); }
+        let mut call = Modem::new(Role::Call, ModemConfig { express: true, ..ModemConfig::default() });
+        let mut ans = Modem::new(Role::Answer, fai());
+        let mut c2a = LineSim::with_seed(p.clone(), g * 7919 + 1);
+        let mut a2c = LineSim::with_seed(p.clone(), g * 104729 + 3);
+        let mut echo_c = EchoPath::new(p.clone());
+        let mut echo_a = EchoPath::new(p);
+        call.command(ModemCommand::Dial);
+        ans.command(ModemCommand::Answer);
+        const B: usize = 160;
+        let (mut call_rx, mut ans_rx) = ([0.0f32; B], [0.0f32; B]);
+        let (mut call_tx, mut ans_tx) = ([0.0f32; B], [0.0f32; B]);
+        let mut t0: Option<usize> = None;
+        let mut pertes = Vec::new();
+        let mut octets = 0usize;
+        let t_start = std::time::Instant::now();
+        for blk in 0..(secondes + 20) * 50 {
+            call.process(&call_rx, &mut call_tx);
+            ans.process(&ans_rx, &mut ans_tx);
+            c2a.process(&call_tx, &mut ans_rx);
+            echo_a.process(&ans_tx, &mut ans_rx);
+            a2c.process(&ans_tx, &mut call_rx);
+            if std::env::var_os("V90_SANS_ECHO").is_none() { echo_c.process(&call_tx, &mut call_rx); }
+            for (i, m) in [&mut call, &mut ans].into_iter().enumerate() {
+                for ev in m.drain_events() {
+                    match ev {
+                        ModemEvent::Connected { .. } if i == 0 => {
+                            t0.get_or_insert(blk);
+                        }
+                        ModemEvent::Data(d) if i == 0 => octets += d.len(),
+                        ModemEvent::Log { msg, .. } => {
+                            if std::env::var_os("V90_TOUT").is_some() {
+                                eprintln!("[{:6.2} s] {} {msg}", blk as f64 / 50.0, if i == 0 { "ABONNÉ" } else { "FAI" });
+                            }
+                            if t0.is_some() && (msg.contains("perdue") || msg.contains("muette") || msg.contains("bloquée") || msg.contains("repli") || msg.contains("emande un réentra") || (msg.starts_with("PCM rx :") && !msg.contains("dmin"))) {
+                                pertes.push(format!("[{:6.1} s] {} {msg}", (blk - t0.unwrap()) as f64 / 50.0, if i == 0 { "ABONNÉ" } else { "FAI" }));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if t0.is_some() && blk % 10 == 0 {
+                call.command(ModemCommand::Send(vec![b'a'; 300]));
+                ans.command(ModemCommand::Send(vec![b'f'; 1000]));
+            }
+        }
+        eprintln!("graine {g} : CONNECT à {:?} s, {} Ko reçus par l'abonné, {} incidents ({:.0} s de calcul)", t0.map(|t| t / 50), octets / 1000, pertes.len(), t_start.elapsed().as_secs_f64());
+        for l in &pertes {
+            eprintln!("    {l}");
+        }
+        total += pertes.len();
+    }
+    eprintln!("total : {total} incidents");
+}

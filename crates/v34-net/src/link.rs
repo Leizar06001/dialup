@@ -130,6 +130,7 @@ impl AudioLink {
                     seq: self.tx_seq,
                     timestamp: self.tx_ts,
                     samples: std::mem::take(&mut self.tx_acc),
+                    backup: Vec::new(),
                 };
                 self.tx_acc.reserve(FRAME_SAMPLES);
                 self.tx_seq = self.tx_seq.wrapping_add(1);

@@ -454,6 +454,9 @@ impl Engine {
             }
             next += period;
             let now = Instant::now();
+            if now > next + Duration::from_millis(60) && crate::link::trace_on() {
+                eprintln!("[{:>6}] moteur en retard de {} ms", trace_ms(), (now - next).as_millis());
+            }
             if next > now {
                 std::thread::sleep(next - now);
             } else if now - next > Duration::from_millis(200) {
@@ -1299,6 +1302,11 @@ impl Engine {
                 _ => {}
             }
         }
+        if std::env::var_os("V34_TRACE").is_some() {
+            if let ModemEvent::Log { msg, .. } = &ev {
+                eprintln!("[{:>6}] {:?} {msg}", trace_ms(), side);
+            }
+        }
         let _ = self.app.emit("v34:event", EventMsg { side, event: ev });
     }
 
@@ -1335,6 +1343,9 @@ impl Engine {
     // ------------------------------------------------------------ IHM
 
     fn console(&self, text: &str, kind: &'static str) {
+        if std::env::var_os("V34_TRACE").is_some() {
+            eprintln!("[{:>6}] console {text}", trace_ms());
+        }
         let _ = self.app.emit("v34:console", ConsoleLine { text: text.to_string(), kind });
     }
 
@@ -1420,4 +1431,10 @@ mod tests {
         // Réglages d'usine du panneau = configuration par défaut du modem
         assert_eq!(modem_config(true, 56000, false), d);
     }
+}
+
+/// Millisecondes depuis le lancement, pour les traces V34_TRACE.
+fn trace_ms() -> u128 {
+    static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    T0.get_or_init(std::time::Instant::now).elapsed().as_millis()
 }

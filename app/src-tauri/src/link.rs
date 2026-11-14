@@ -129,6 +129,10 @@ pub struct NetLink {
     info: NetInfo,
     /// Cadence calée sur l'horloge du central
     pacer: v34_net::Pacer,
+    /// V34_TRACE : derniers compteurs réseau affichés
+    trace_prev: Option<(u64, u64, u64, u64, u64, u64, u64)>,
+    /// V34_DUMP=fichier : (reçu du réseau, entrée du modem, sortie du modem) en f32
+    dump: Option<std::io::BufWriter<std::fs::File>>,
 }
 
 impl NetLink {
@@ -146,6 +150,8 @@ impl NetLink {
             incoming: Vec::new(),
             pending_dial: false,
             pacer: v34_net::Pacer::new(),
+            trace_prev: None,
+            dump: std::env::var_os("V34_DUMP").and_then(|p| std::fs::File::create(p).ok()).map(std::io::BufWriter::new),
             info: NetInfo { server: server.to_string(), user: user.to_string(), number: None, registered: false, error: None, isp_number: None, stats: None, rtt_ms: None, directory: Vec::new(), services: Vec::new() },
         })
     }
@@ -200,6 +206,26 @@ impl Link for NetLink {
             let _ = self.central.send_block(&self.up_buf);
         }
         self.last_tx.copy_from_slice(tx);
+        if active {
+            if let Some(f) = self.dump.as_mut() {
+                use std::io::Write;
+                let mut buf = Vec::with_capacity(n * 12);
+                for i in 0..n {
+                    for v in [self.incoming[i], rx[i], tx[i]] {
+                        buf.extend_from_slice(&v.to_le_bytes());
+                    }
+                }
+                let _ = f.write_all(&buf);
+            }
+        }
+        if active && trace_on() {
+            let j = self.central.stats().jitter;
+            let k = (j.lost, j.late, j.underruns, j.dropped, j.resyncs, self.pacer.extra, self.pacer.skipped);
+            if self.trace_prev.is_some_and(|p| p != k) {
+                eprintln!("[réseau] perdus {} · en retard {} · trous {} · jetés {} · recalages {} · blocs +{} −{} · tampon {:.0}/{:.0} ms · gigue {:.1} ms", k.0, k.1, k.2, k.3, k.4, k.5, k.6, j.depth_ms, j.target_ms, j.jitter_ms);
+            }
+            self.trace_prev = Some(k);
+        }
     }
 
     fn local_status(&self) -> ModemStatus {
@@ -486,4 +512,10 @@ impl Link for LocalLoop {
     fn line_response(&self, points: usize) -> Vec<(f32, f32)> {
         self.line_rl.frequency_response(points)
     }
+}
+
+/// V34_TRACE : traces de diagnostic sur la sortie d'erreur
+pub fn trace_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("V34_TRACE").is_some())
 }

@@ -24,6 +24,14 @@ use crate::v90::{Law, Mapping};
 pub(crate) const UINFO: u8 = 96;
 /// Silence d'une séquence de l'autre au-delà duquel on abandonne (ms).
 const STALL_MS: u64 = 9000;
+/// Écart entre niveaux voisins des données, en multiples du bruit mesuré
+/// sur le DIL. La ligne (coupée sous 200 Hz et vers 3,7 kHz) renvoie près
+/// de 90 % d'un symbole deux échantillons plus tard : une seule erreur de
+/// décision peut se recopier de proche en proche dans l'égaliseur et la
+/// réception décroche. À 9 σ, une erreur toutes les vingt secondes environ,
+/// une perte toutes les 4 minutes en ligne urbaine ; à 11 σ, moins d'une
+/// par heure, pour un cran de débit en moins (40 000 au lieu de 41 333).
+const MARGE_DONNEES: f64 = 11.0;
 
 /// Motif pseudo-aléatoire de `n` bits (registre à décalage, polynôme
 /// x^7 + x^6 + 1), à peu près autant de 1 que de 0.
@@ -522,6 +530,7 @@ impl P34 {
                 self.v90_check_connected();
             }
             RxEvent::Lost(why) => self.act(P34Action::NoV90(format!("56k : {why}"))),
+            RxEvent::Debug(line) => self.detail(line),
             RxEvent::Degraded { sigma } => {
                 self.log(format!("Réception 56k perdue (erreur {sigma:.0}) : réentraînement"));
                 self.act(P34Action::Retrain("réception 56k perdue".into()));
@@ -537,13 +546,14 @@ impl P34 {
         let jd_rates = v.cp.as_ref().map_or(u32::MAX, |c| c.d);
         let jd = Jd { rates: jd_rates, cp16_train: false, cp16_reneg: false, lookahead: 1 };
         let ch = Channel::nominal(law, sigma);
-        let data = design::design(&ch, &Limits { margin: 9.0, power_rms: power, max_rate: max_pcm }).and_then(|m| {
+        let marge = MARGE_DONNEES;
+        let data = design::design(&ch, &Limits { margin: marge, power_rms: power, max_rate: max_pcm }).and_then(|m| {
             // débit accepté par le FAI (Jd)
             let d = jd.best_d(m.bits_per_frame())?;
             if d == m.bits_per_frame() {
                 Some(m)
             } else {
-                design::design_range(&ch, &Limits { margin: 9.0, power_rms: power, max_rate: max_pcm }, d - 6, d - 6)
+                design::design_range(&ch, &Limits { margin: marge, power_rms: power, max_rate: max_pcm }, d - 6, d - 6)
             }
         });
         let train = design::design_range(&ch, &Limits { margin: 14.0, power_rms: power, max_rate: 32000 }, 6, 18);

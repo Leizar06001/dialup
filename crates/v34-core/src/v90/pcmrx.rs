@@ -50,6 +50,8 @@ pub enum RxEvent {
     DataStarted,
     /// Échec (calage impossible…)
     Lost(String),
+    /// Diagnostic (V90_DEBUG) : une ligne par seconde en données
+    Debug(String),
     /// En données : la réception ne vaut plus rien depuis une demi-seconde
     Degraded { sigma: f64 },
 }
@@ -246,6 +248,11 @@ pub struct PcmRx {
     dmin: f64,
     /// Symboles de données consécutifs avec une erreur trop forte
     bad_run: u32,
+    /// V90_DEBUG : (symboles, |y| max, mises à jour LMS, erreur max)
+    dbg: Option<(u32, f64, u32, f64)>,
+    /// V90_DEBUG : derniers (y, décision) pour l'autopsie d'une perte
+    dbg_hist: std::collections::VecDeque<(f64, f64, usize)>,
+    dbg_onset: bool,
 }
 
 impl PcmRx {
@@ -299,6 +306,9 @@ impl PcmRx {
             mse: 0.0,
             dmin: f64::MAX,
             bad_run: 0,
+            dbg: std::env::var_os("V90_DEBUG").map(|_| (0, 0.0, 0, 0.0)),
+            dbg_hist: std::collections::VecDeque::new(),
+            dbg_onset: false,
         }
     }
 
@@ -586,6 +596,39 @@ impl PcmRx {
             // erreur de décision ne doit pas entraîner l'égaliseur (sinon il
             // s'emballe et ne s'en remet pas).
             self.dfe.mu = if e.abs() < self.dmin / 4.0 { 0.0001 } else { 0.0 };
+            // V90_DEBUG : bilan chaque seconde, autopsie des pertes
+            if self.in_data && self.dbg.is_some() {
+                self.dbg_hist.push_back((y * codes::SCALE as f64, v * codes::SCALE as f64, i));
+                if self.dbg_hist.len() > 48 {
+                    self.dbg_hist.pop_front();
+                }
+                if !self.dbg_onset && e.abs() > self.dmin / 2.0 {
+                    self.dbg_onset = true;
+                    let h: Vec<String> = self.dbg_hist.iter().map(|(y, v, i)| format!("{i}:{y:.0}/{v:.0}")).collect();
+                    self.events.push(RxEvent::Debug(format!("PCM rx : première erreur de décision (e {e:.0}) — {}", h.join(" "))));
+                }
+                if self.dbg_onset && self.dbg_hist.len() == 48 && self.bad_run == 40 {
+                    let h: Vec<String> = self.dbg_hist.iter().map(|(y, v, i)| format!("{i}:{y:.0}/{v:.0}")).collect();
+                    self.events.push(RxEvent::Debug(format!("PCM rx : emballement — {}", h.join(" "))));
+                }
+                if self.bad_run == 0 && e.abs() < self.dmin / 4.0 {
+                    self.dbg_onset = false;
+                }
+            }
+            if self.in_data {
+                if let Some(d) = self.dbg.as_mut() {
+                    d.0 += 1;
+                    d.1 = d.1.max(y.abs() * codes::SCALE as f64);
+                    d.2 += (self.dfe.mu > 0.0) as u32;
+                    d.3 = d.3.max(e.abs());
+                    if d.0 == 8000 {
+                        let (fn2, bn2) = self.dfe.norms();
+                        let line = format!("PCM rx : erreur {:.0} (max {:.0}), dmin {:.0}, |y| max {:.0}, LMS {:.0} %, ‖f‖ {:.3}, ‖b‖ {:.3}", self.mse.sqrt(), d.3, self.dmin, d.1, d.2 as f64 / 80.0, fn2, bn2);
+                        self.events.push(RxEvent::Debug(line));
+                        *d = (0, 0.0, 0, 0.0);
+                    }
+                }
+            }
             // Réception perdue (canal changé, échantillons perdus qui ont
             // décalé les trames…) : signalée après une demi-seconde.
             if self.in_data && self.mse.sqrt() > self.dmin / 3.0 {

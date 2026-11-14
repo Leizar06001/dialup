@@ -106,7 +106,7 @@ fn appel_entre_deux_abonnes_avec_audio_dans_les_deux_sens() {
     // rien pouvoir injecter.
     let intruder = UdpSocket::bind("127.0.0.1:0").unwrap();
     for seq in 0..10 {
-        let p = Packet { codec: Codec::L16, call_id, seq, timestamp: seq * FRAME_SAMPLES as u32, samples: frame(0.9) };
+        let p = Packet { codec: Codec::L16, call_id, seq, timestamp: seq * FRAME_SAMPLES as u32, samples: frame(0.9), backup: Vec::new() };
         intruder.send_to(&p.encode(), server.local_addr()).unwrap();
     }
 
@@ -202,7 +202,7 @@ fn identifiants_refuses_sans_dire_pourquoi_puis_limitation() {
     let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
     raw.set_read_timeout(Some(Duration::from_millis(300))).unwrap();
     raw.send_to(b"bonjour", server.local_addr()).unwrap();
-    let p = Packet { codec: Codec::Alaw, call_id: 1234, seq: 0, timestamp: 0, samples: frame(0.1) };
+    let p = Packet { codec: Codec::Alaw, call_id: 1234, seq: 0, timestamp: 0, samples: frame(0.1), backup: Vec::new() };
     raw.send_to(&p.encode(), server.local_addr()).unwrap();
     let mut buf = [0u8; 2048];
     assert!(raw.recv_from(&mut buf).is_err(), "le central ne répond pas aux inconnus");

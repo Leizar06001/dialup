@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use v34_core::{LineParams, LineSim, LogLevel, Modem, ModemCommand, ModemConfig, ModemEvent, Role};
+use v34_core::{LineParams, LineSim, Modem, ModemCommand, ModemConfig, ModemEvent, Role};
 use v34_net::jitter::{Concealment, JitterBuffer};
 use v34_net::signal::HangupReason;
 use v34_net::tunnel::ModemPipe;
@@ -105,6 +105,7 @@ fn run(call: ModemCall, rx: Receiver<ModemInput>) -> (HangupReason, String) {
     let (mut seq, mut ts) = (0u32, 0u32);
     let mut tx = vec![0.0f32; FRAME_SAMPLES];
     let mut tx_line = vec![0.0f32; FRAME_SAMPLES];
+    let mut tx_hist: std::collections::VecDeque<Vec<f32>> = std::collections::VecDeque::new();
 
     let mut pipe: Option<ModemPipe> = None;
     let mut tunnel: Option<JoinHandle<String>> = None;
@@ -122,7 +123,7 @@ fn run(call: ModemCall, rx: Receiver<ModemInput>) -> (HangupReason, String) {
                 Ok(ModemInput::Audio { pkt, from }) => {
                     peer = from;
                     codec = pkt.codec;
-                    jb.push(pkt.seq, pkt.timestamp, pkt.samples, epoch.elapsed().as_secs_f64());
+                    jb.push_with_backup(pkt.seq, pkt.timestamp, pkt.samples, &pkt.backup, epoch.elapsed().as_secs_f64());
                 }
                 Ok(ModemInput::Hangup) | Err(TryRecvError::Disconnected) => {
                     caller_gone = true;
@@ -145,8 +146,13 @@ fn run(call: ModemCall, rx: Receiver<ModemInput>) -> (HangupReason, String) {
             }
             None => &tx,
         };
-        let pkt = Packet { codec, call_id: call.call_id, seq, timestamp: ts, samples: out.to_vec() };
+        // chaque paquet répète les deux trames précédentes : un paquet perdu
+        // en route est rattrapé avec le suivant (le 56k ne supporte pas un
+        // trou de 20 ms)
+        let pkt = Packet { codec, call_id: call.call_id, seq, timestamp: ts, samples: out.to_vec(), backup: tx_hist.iter().cloned().collect() };
         let _ = call.sock.send_to(&pkt.encode(), peer);
+        tx_hist.push_front(out.to_vec());
+        tx_hist.truncate(v34_net::packet::BACKUP_FRAMES);
         seq = seq.wrapping_add(1);
         ts = ts.wrapping_add(FRAME_SAMPLES as u32);
 
@@ -191,7 +197,7 @@ fn run(call: ModemCall, rx: Receiver<ModemInput>) -> (HangupReason, String) {
                     });
                 }
                 ModemEvent::PhaseChanged(p) => debug!("{label} : phase {p:?}"),
-                ModemEvent::Log { level: LogLevel::Warn, msg } => debug!("{label} : modem : {msg}"),
+                ModemEvent::Log { msg, .. } => debug!("{label} : modem : {msg}"),
                 _ => {}
             }
         }

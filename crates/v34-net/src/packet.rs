@@ -9,7 +9,10 @@
 //!   futur « central téléphonique » sur VPS qui relaiera plusieurs appels.
 //! - `seq` : numéro de séquence (+1 par paquet).
 //! - `timestamp` : position du premier échantillon, en échantillons à 8 kHz.
-//! - charge utile : 160 échantillons (20 ms) codés selon `codec`.
+//! - charge utile : 160 échantillons (20 ms) codés selon `codec`, suivis
+//!   éventuellement des une ou deux trames précédentes (redondance : un
+//!   paquet perdu est rattrapé avec le suivant). Un récepteur ancien ne garde
+//!   que les 160 premiers échantillons : il ignore cette queue sans erreur.
 
 use crate::g711;
 
@@ -18,6 +21,8 @@ pub const VERSION: u8 = 1;
 pub const HEADER_LEN: usize = 16;
 /// Échantillons par paquet (20 ms à 8 kHz).
 pub const FRAME_SAMPLES: usize = 160;
+/// Trames précédentes répétées dans chaque paquet (redondance).
+pub const BACKUP_FRAMES: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Codec {
@@ -81,19 +86,23 @@ pub struct Packet {
     pub timestamp: u32,
     /// Échantillons décodés (FRAME_SAMPLES), ±1.0
     pub samples: Vec<f32>,
+    /// Trames précédentes répétées (redondance) : `backup[0]` est la trame
+    /// `seq − 1`, `backup[1]` la trame `seq − 2`.
+    pub backup: Vec<Vec<f32>>,
 }
 
 impl Packet {
     /// Sérialise le paquet (encode les échantillons).
     pub fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(HEADER_LEN + self.samples.len() * self.codec.bytes_per_sample());
+        let n = self.samples.len() + self.backup.iter().map(Vec::len).sum::<usize>();
+        let mut out = Vec::with_capacity(HEADER_LEN + n * self.codec.bytes_per_sample());
         out.extend_from_slice(&MAGIC);
         out.push(VERSION);
         out.push(self.codec.id());
         out.extend_from_slice(&self.call_id.to_be_bytes());
         out.extend_from_slice(&self.seq.to_be_bytes());
         out.extend_from_slice(&self.timestamp.to_be_bytes());
-        for &s in &self.samples {
+        for &s in self.samples.iter().chain(self.backup.iter().flatten()) {
             let v = g711::f32_to_i16(s);
             match self.codec {
                 Codec::Ulaw => out.push(g711::linear_to_ulaw(v)),
@@ -125,7 +134,13 @@ impl Packet {
         if samples.is_empty() || samples.len() > 4 * FRAME_SAMPLES {
             return None;
         }
-        Some(Packet { codec, call_id: u32_at(4), seq: u32_at(8), timestamp: u32_at(12), samples })
+        let (mut samples, mut backup) = (samples, Vec::new());
+        let k = samples.len() / FRAME_SAMPLES;
+        if samples.len() % FRAME_SAMPLES == 0 && (2..=1 + BACKUP_FRAMES).contains(&k) {
+            backup = samples[FRAME_SAMPLES..].chunks(FRAME_SAMPLES).map(<[f32]>::to_vec).collect();
+            samples.truncate(FRAME_SAMPLES);
+        }
+        Some(Packet { codec, call_id: u32_at(4), seq: u32_at(8), timestamp: u32_at(12), samples, backup })
     }
 }
 
@@ -137,7 +152,7 @@ mod tests {
     fn round_trip_all_codecs() {
         let samples: Vec<f32> = (0..FRAME_SAMPLES).map(|i| ((i as f32) * 0.07).sin() * 0.5).collect();
         for codec in [Codec::Ulaw, Codec::Alaw, Codec::L16] {
-            let p = Packet { codec, call_id: 0xDEAD_BEEF, seq: 42, timestamp: 6720, samples: samples.clone() };
+            let p = Packet { codec, call_id: 0xDEAD_BEEF, seq: 42, timestamp: 6720, samples: samples.clone(), backup: Vec::new() };
             let bytes = p.encode();
             let q = Packet::decode(&bytes).unwrap();
             assert_eq!((q.codec, q.call_id, q.seq, q.timestamp), (codec, 0xDEAD_BEEF, 42, 6720));
@@ -147,6 +162,20 @@ mod tests {
                 assert!((a - b).abs() <= tol, "{codec:?} {a} {b}");
             }
         }
+    }
+
+    #[test]
+    fn backup_frames_round_trip_and_old_receivers_ignore_them() {
+        let f = |a: f32| -> Vec<f32> { (0..FRAME_SAMPLES).map(|i| ((i as f32) * 0.05 + a).sin() * 0.4).collect() };
+        let p = Packet { codec: Codec::Alaw, call_id: 7, seq: 10, timestamp: 1600, samples: f(0.0), backup: vec![f(1.0), f(2.0)] };
+        let bytes = p.encode();
+        assert_eq!(bytes.len(), HEADER_LEN + 3 * FRAME_SAMPLES);
+        let q = Packet::decode(&bytes).unwrap();
+        assert_eq!(q.samples.len(), FRAME_SAMPLES);
+        assert_eq!(q.backup.len(), 2);
+        assert!((q.backup[1][5] - f(2.0)[5]).abs() < 0.02);
+        // un récepteur ancien (sans `backup`) prend les 160 premiers : la trame courante
+        assert!((q.samples[5] - f(0.0)[5]).abs() < 0.02);
     }
 
     #[test]
