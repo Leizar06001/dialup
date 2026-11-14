@@ -179,6 +179,8 @@ pub struct CentralClient {
     tx_acc: Vec<f32>,
     /// Dernières trames émises, répétées dans les paquets suivants
     tx_hist: std::collections::VecDeque<Vec<f32>>,
+    /// Essais : V34_PERTES=0.02 jette 2 % des paquets audio, dans les deux sens
+    pertes: (f64, u64),
     jb: JitterBuffer,
     rx_fifo: VecDeque<(f32, bool)>,
     epoch: Instant,
@@ -233,6 +235,7 @@ impl CentralClient {
             tx_ts: 0,
             tx_acc: Vec::with_capacity(FRAME_SAMPLES),
             tx_hist: std::collections::VecDeque::new(),
+            pertes: (std::env::var("V34_PERTES").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0), 0x9E37_79B9_7F4A_7C15),
             jb,
             rx_fifo: VecDeque::new(),
             epoch: now,
@@ -599,7 +602,22 @@ impl CentralClient {
         self.got_audio = false;
     }
 
+    /// Essais (V34_PERTES) : vrai si ce paquet doit être « perdu en route ».
+    fn perdu(&mut self) -> bool {
+        if self.pertes.0 <= 0.0 {
+            return false;
+        }
+        let x = &mut self.pertes.1;
+        *x ^= *x << 13;
+        *x ^= *x >> 7;
+        *x ^= *x << 17;
+        (*x >> 11) as f64 / (1u64 << 53) as f64 <= self.pertes.0
+    }
+
     fn on_audio(&mut self, d: &[u8], n: usize) {
+        if self.perdu() {
+            return;
+        }
         let Some(pkt) = Packet::decode(d) else {
             self.stats.invalid += 1;
             return;
@@ -645,6 +663,9 @@ impl CentralClient {
                 self.tx_seq = self.tx_seq.wrapping_add(1);
                 self.tx_ts = self.tx_ts.wrapping_add(FRAME_SAMPLES as u32);
                 let bytes = pkt.encode();
+                if self.perdu() {
+                    continue;
+                }
                 match self.sock.send_to(&bytes, self.server) {
                     Ok(n) => {
                         self.stats.packets_sent += 1;
