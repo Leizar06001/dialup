@@ -935,3 +935,20 @@ button.dip-col:focus-visible .dip-slot { outline: 2px solid var(--vfd); outline-
   .cast-lignes { height: calc(var(--cast-lh) * 2); }
   .kara { font-size: 19px; line-height: 26px; }
 }
+
+/* ------------------------------------------------------------------ façade : touches empilées
+   CONFIG et COMMENTAIRES l'une sur l'autre, en format bas : le bloc du
+   haut-parleur reste étroit et la frise des phases garde sa place. La frise
+   peut rétrécir (jamais déborder sur le haut-parleur). */
+.key-stack { display: flex; flex-direction: column; gap: 5px; }
+.key-stack .key.cfg-key, .key-stack .key.cast-key {
+  flex-direction: row; justify-content: flex-start; gap: 6px;
+  padding: 3px 8px; min-height: 0; font-size: 8.5px; letter-spacing: 1px;
+}
+.phases { min-width: 0; }
+.phases .ph { min-width: 0; overflow: hidden; }
+.phases .ph small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.phases .call-pill { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (min-width: 1400px) and (min-height: 840px) {
+  .phases .call-pill { min-width: 96px; }
+}
