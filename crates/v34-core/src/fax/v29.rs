@@ -228,8 +228,9 @@ impl V29Tx {
 enum Etat {
     /// Pas de porteuse
     Attente,
-    /// Porteuse détectée au symbole k : on attend assez d'A/B pour se caler
-    Calage(i64),
+    /// Porteuse détectée vers le symbole k : on attend assez d'A/B pour se
+    /// caler (numéro de l'essai)
+    Calage(i64, u32),
     /// Égaliseur entraîné sur A, B, C, D jusqu'au symbole donné
     Apprentissage(i64),
     /// Décisions sur toute la constellation
@@ -259,6 +260,8 @@ pub struct V29Rx {
     bruit: f32,
     /// Niveau du signal reçu (puissance, suivi pendant la réception)
     niveau: f32,
+    /// Puissance lissée sur ~60 ms : un clic ne la fait pas remonter
+    lente: f32,
     /// Erreur quadratique moyenne des décisions en données (diagnostic)
     pub evm: f32,
     /// Diagnostic : symbole de détection et corrélations des deux parités
@@ -292,8 +295,10 @@ impl V29Rx {
             perdue: false,
             points: constellation(debit),
             en_donnees_n: 0,
-            bruit: SEUIL_MIN / 8.0,
+            // (rejoint le vrai bruit en ~60 ms, avant le premier signal)
+            bruit: 1.0e-3,
             niveau: 0.0,
+            lente: 0.0,
             evm: 1.0,
             diag: (0, 0.0, 0.0),
         }
@@ -330,28 +335,39 @@ impl V29Rx {
         }
         self.puissance += 0.05 * (x * x - self.puissance);
         if self.etat == Etat::Attente && self.dessus == 0 {
-            // bruit de fond : suit vite vers le bas, lentement vers le haut
+            // bruit de fond : part de haut, suit vite vers le bas et
+            // lentement vers le haut (un clic ne le fait pas monter)
             let k = if self.puissance < self.bruit { 0.01 } else { 0.0005 };
             self.bruit += k * (self.puissance - self.bruit);
         }
-        let seuil_on = SEUIL_MIN.max(10.0 * self.bruit);
+        let seuil_on = SEUIL_MIN.max(4.0 * self.bruit);
         // Pendant la réception, la porteuse est perdue 10 dB sous son niveau
-        let seuil_off = if matches!(self.etat, Etat::Apprentissage(_) | Etat::Donnees) { (0.1 * self.niveau).max(0.4 * SEUIL_MIN) } else { 0.4 * seuil_on };
-        if matches!(self.etat, Etat::Apprentissage(_) | Etat::Donnees) && self.puissance > seuil_off {
-            self.niveau += 0.0005 * (self.puissance - self.niveau);
+        let seuil_off = if matches!(self.etat, Etat::Apprentissage(_) | Etat::Donnees) { (0.1 * self.niveau).max(2.5 * self.bruit).max(0.4 * SEUIL_MIN) } else { 0.4 * seuil_on };
+        // Le niveau de référence se mesure pendant l'apprentissage seulement
+        // (ensuite, le bruit d'après la fin l'entraînerait vers le bas)
+        if matches!(self.etat, Etat::Apprentissage(_)) {
+            self.niveau += 0.001 * (self.puissance - self.niveau);
         }
+        // (le clic d'un parasite est bref : il compte à peine dans la
+        // puissance lente, qui décide de la fin de porteuse)
+        self.lente += 0.002 * ((x * x).min(4.0 * self.niveau.max(SEUIL_MIN)) - self.lente);
+        let en_reception = matches!(self.etat, Etat::Apprentissage(_) | Etat::Donnees);
         if self.puissance > seuil_on {
             self.dessus += 1;
-            self.dessous = 0;
         } else if self.puissance < seuil_off {
-            self.dessous += 1;
             self.dessus = 0;
         }
+        let eteinte = if en_reception { self.lente < seuil_off } else { self.puissance < seuil_off };
+        if eteinte {
+            self.dessous += 1;
+        } else {
+            self.dessous = 0;
+        }
         if self.etat == Etat::Attente && self.dessus >= PRESENCE {
-            self.etat = Etat::Calage(self.dernier_k);
-        } else if self.etat != Etat::Attente && self.dessous >= 800 {
-            // 100 ms sans porteuse : fin de la transmission (une coupure plus
-            // brève de la ligne n'arrête pas la réception)
+            self.etat = Etat::Calage(self.dernier_k, 0);
+        } else if self.etat != Etat::Attente && self.dessous >= 400 {
+            // 50 ms sans porteuse (puissance lente) : fin de la transmission ;
+            // une coupure plus brève de la ligne n'arrête pas la réception
             self.perdue = true;
             return;
         }
@@ -359,7 +375,7 @@ impl V29Rx {
         self.dernier_k = s.k;
         match self.etat {
             Etat::Attente => {}
-            Etat::Calage(k0) => {
+            Etat::Calage(k0, essai) => {
                 // Rythme, phase et gain sur 40 symboles A/B alternés : la
                 // fenêtre (trois essais) et la parité qui corrèlent le mieux
                 const N: i64 = 40;
@@ -383,13 +399,16 @@ impl V29Rx {
                 let (c, debut, pair) = meilleur;
                 self.diag = (k0, c, (debut - k0) as f32);
                 if c < CORRELATION_MIN {
-                    // pas l'alternance A/B : un parasite, ou autre chose
-                    self.etat = Etat::Attente;
+                    // Pas l'alternance A/B (un parasite dans la fenêtre, ou
+                    // une fausse alerte) : on réessaie un peu plus loin tant
+                    // que le segment 2 peut encore être là
+                    self.etat = if essai < 6 { Etat::Calage(k0 + 16, essai + 1) } else { Etat::Attente };
                     self.dessus = 0;
                     return;
                 }
                 self.porteuse_vue = true;
                 self.niveau = self.puissance;
+                self.lente = self.puissance;
                 self.rx.fine_timing(&refs(debut, pair));
                 self.rx.start_ls();
                 self.etat = Etat::Apprentissage(debut + 400);
@@ -525,7 +544,7 @@ mod tests {
             n += 1;
         }
         if std::env::var_os("V29_NIVEAUX").is_some() {
-            eprintln!("  fin : n = {n}, puissance {:.2e}, bruit {:.2e}, niveau {:.2e}, état {:?}, EVM {:.1} dB, SNR égaliseur {:.1} dB", rx.puissance, rx.bruit, rx.niveau, rx.etat, -10.0 * rx.evm.max(1e-9).log10(), rx.snr_db());
+            eprintln!("  fin : n = {n}, puissance {:.2e}, lente {:.2e}, bruit {:.2e}, niveau {:.2e}, dessous {}, état {:?}", rx.puissance, rx.lente, rx.bruit, rx.niveau, rx.dessous, rx.etat);
         }
         (recu, rx.diag, evm)
     }
