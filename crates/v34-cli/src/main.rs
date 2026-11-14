@@ -102,9 +102,15 @@ impl Args {
     fn preset(&self) -> Result<Option<(String, LineParams)>, String> {
         match self.get("preset") {
             None => Ok(None),
-            Some(name) => LineParams::preset(name)
-                .map(|p| Some((name.to_string(), p)))
-                .ok_or_else(|| format!("préréglage inconnu : {name} (voir `v34-cli presets`)")),
+            Some(name) => {
+                let mut p = LineParams::preset(name).ok_or_else(|| format!("préréglage inconnu : {name} (voir `v34-cli presets`)"))?;
+                // --delai-ms N : délai de propagation de la ligne (simule un
+                // long aller-retour, comme sur Internet, en boucle locale)
+                if let Some(d) = self.get("delai-ms") {
+                    p.delay_ms = d.parse().map_err(|_| format!("--delai-ms : nombre attendu, pas « {d} »"))?;
+                }
+                Ok(Some((name.to_string(), p)))
+            }
         }
     }
 
