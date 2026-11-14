@@ -516,7 +516,9 @@ mod tests {
     /// les décisions sur la suite de TRN sont toutes justes.
     fn train_over(preset: &str, sr: f64, fc: f64) -> f32 {
         let params = LineParams::preset(preset).expect("préréglage");
-        let mut line = LineSim::new(params);
+        // graine fixe : résultat reproductible, quel que soit l'ordre des tests
+        // (la ligne Campagne a des parasites, tirés au hasard)
+        let mut line = LineSim::with_seed(params, 1998);
         let mut tx = QamTx::new(sr, fc);
         let mut rx = QamRx::new(sr, fc);
         let mut sd = SDetector::new();
