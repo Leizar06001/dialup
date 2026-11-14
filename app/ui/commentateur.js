@@ -652,7 +652,7 @@ const Commentateur = (() => {
   const NOTRE = [
     { le: "notre modem", du: "de notre modem" },
     { le: "notre modem", du: "de notre modem" },
-    { le: "notre TV-3400", du: "de notre TV-3400" },
+    { le: "notre TV-5600", du: "de notre TV-5600" },
     { le: "notre champion", du: "de notre champion" },
     { le: "le petit Tinyverse", du: "du petit Tinyverse" },
   ];

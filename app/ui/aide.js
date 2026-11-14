@@ -1,4 +1,4 @@
-/* V.34 Tinyverse — AIDE : la notice d'utilisation du TV-3400.
+/* V.34 Tinyverse — AIDE : la notice d'utilisation du TV-5600.
  * Bouton « ? AIDE » de la barre du haut, F1, ou « ? » hors d'un champ de
  * saisie. Le contenu est une simple liste de rubriques ci-dessous : à tenir
  * à jour quand on ajoute une touche, une commande AT ou une page au site.
@@ -105,7 +105,7 @@
         [["Salon du FAI"], "Pendant la session, la conversation de la MESSAGERIE parle à tous les abonnés connectés au FAI. `/qui` : qui est là ; `/aide` : l'aide du salon."],
         [["WEB 1998"], "Le FAI va chercher la page et te la sert allégée : HTML simple, images GIF en 256 couleurs. Ça tient dans 33,6k."],
         [["Images : V.Hallucination"], "Lien en haut des pages web 1998 : chaque image arrive en une cinquantaine de formes (≈ 2,5 Ko au lieu de 15), comme un souvenir flou. Garanti sans intelligence artificielle. « normales » pour revenir aux GIF."],
-        [["MODERNE"], "Le vrai web, tel quel… à 33,6 kbit/s. Prévois un café. Le mode choisi est mémorisé."],
+        [["MODERNE"], "Le vrai web, tel quel… à 56 kbit/s au mieux (40 en ligne urbaine). Prévois un café. Le mode choisi est mémorisé."],
         [["Adresse :", "Aller"], "Tape `fr.wikipedia.org/wiki/Modem` ou une adresse complète, puis Entrée."],
         [["◀ Précédente", "▶ Suivante", "⟳ Actualiser", "■ Arrêter"], "Comme en 1998, en plus lent."],
         [["⌂ Accueil"], "Web 1998 : le portail du FAI (Aller à…, recherche FrogFind, sites conseillés). Moderne : DuckDuckGo Lite."],
@@ -222,7 +222,7 @@
 
   const head = el("div", "aide-head");
   const help = el("p", "modal-help aide-intro");
-  rich(help, "Tout ce que sait faire ton modem TV-3400. Les LEDs, les étapes et la face arrière ont aussi leur infobulle : survole-les.");
+  rich(help, "Tout ce que sait faire ton modem TV-5600. Les LEDs, les étapes et la face arrière ont aussi leur infobulle : survole-les.");
   const find = el("input", "lcd-input aide-find");
   find.type = "text";
   find.spellcheck = false;
