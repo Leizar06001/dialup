@@ -169,6 +169,16 @@ fn add_page(app: &AppHandle, win: &tauri::Window, proxy_port: u16, size: Logical
             let _ = a2.emit_to(CHROME, "nav:load", ev.clone());
             let _ = a2.emit_to(STATUS, "nav:load", ev);
         });
+    // Windows : WebView2 lance la page proxifiée avec une option
+    // `--proxy-server`. Toutes les vues d'un même dossier de données doivent
+    // avoir les mêmes options : sinon la création de celle-ci n'aboutit
+    // jamais (fenêtre blanche, impossible à fermer, le reste de l'appli
+    // tourne). La page a donc son propre dossier.
+    #[cfg(windows)]
+    let page = match app.path().app_local_data_dir() {
+        Ok(d) => page.data_directory(d.join("navigateur")),
+        Err(_) => page,
+    };
     let page = win.add_child(page, LogicalPosition::new(0.0, CHROME_H), LogicalSize::new(size.width, (size.height - CHROME_H - STATUS_H).max(100.0)))?;
     let status = win.add_child(
         WebviewBuilder::new(STATUS, WebviewUrl::App("nav-statut.html".into())),
