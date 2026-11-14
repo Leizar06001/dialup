@@ -12,6 +12,8 @@ struct Fin {
     lignes: Vec<Vec<bool>>,
     correspondant: Option<String>,
     phases: Vec<Phase>,
+    /// Chacun a signalé son raccroché (le lien réseau libère alors l'appel)
+    raccroche: [bool; 2],
 }
 
 fn telecopie(ligne: &str, page: &[Vec<bool>]) -> Fin {
@@ -26,7 +28,7 @@ fn telecopie(ligne: &str, page: &[Vec<bool>]) -> Fin {
     const B: usize = 160;
     let (mut call_rx, mut ans_rx) = ([0.0f32; B], [0.0f32; B]);
     let (mut call_tx, mut ans_tx) = ([0.0f32; B], [0.0f32; B]);
-    let mut f = Fin { appelant: None, appele: None, lignes: Vec::new(), correspondant: None, phases: Vec::new() };
+    let mut f = Fin { appelant: None, appele: None, lignes: Vec::new(), correspondant: None, phases: Vec::new(), raccroche: [false; 2] };
     for _ in 0..(90 * 8000 / B) {
         call.process(&call_rx, &mut call_tx);
         ans.process(&ans_rx, &mut ans_tx);
@@ -35,8 +37,10 @@ fn telecopie(ligne: &str, page: &[Vec<bool>]) -> Fin {
         a2c.process(&ans_tx, &mut call_rx);
         echo_c.process(&call_tx, &mut call_rx);
         for ev in call.drain_events() {
-            if let ModemEvent::Fax(FaxEvenement::Fin { ok, raison }) = ev {
-                f.appelant = Some((ok, raison));
+            match ev {
+                ModemEvent::Fax(FaxEvenement::Fin { ok, raison }) => f.appelant = Some((ok, raison)),
+                ModemEvent::Disconnected { .. } => f.raccroche[0] = true,
+                _ => {}
             }
         }
         for ev in ans.drain_events() {
@@ -45,10 +49,11 @@ fn telecopie(ligne: &str, page: &[Vec<bool>]) -> Fin {
                 ModemEvent::Fax(FaxEvenement::Ligne(l)) => f.lignes.push(l),
                 ModemEvent::Fax(FaxEvenement::Correspondant(c)) => f.correspondant = Some(c),
                 ModemEvent::PhaseChanged(p) => f.phases.push(p),
+                ModemEvent::Disconnected { .. } => f.raccroche[1] = true,
                 _ => {}
             }
         }
-        if f.appelant.is_some() && f.appele.is_some() {
+        if f.appelant.is_some() && f.appele.is_some() && f.raccroche == [true, true] {
             break;
         }
     }
@@ -68,4 +73,5 @@ fn telecopie_entre_deux_modems() {
     assert_eq!(f.correspondant.as_deref(), Some("0100000001"));
     assert!(f.phases.contains(&Phase::Fax), "l'appelé est passé en fax : {:?}", f.phases);
     assert_eq!(f.lignes, pg);
+    assert_eq!(f.raccroche, [true, true], "fin d'appel signalée des deux côtés");
 }

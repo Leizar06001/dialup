@@ -253,8 +253,7 @@ impl Modem {
                 self.cng = Some((ToneDetector::new(1100.0, 320), PowerMeter::new(320), 0));
             }
             ModemCommand::Hangup if self.fax.is_some() => {
-                self.fax = None;
-                self.hangup("raccroché");
+                self.fin_fax("raccroché");
             }
             ModemCommand::Hangup => {
                 if self.st == St::P3 {
@@ -360,8 +359,24 @@ impl Modem {
             self.events.push(ModemEvent::Fax(e));
         }
         if fini {
-            self.fax = None;
-            self.hangup("télécopie terminée");
+            self.fin_fax("télécopie terminée");
+        }
+    }
+
+    /// Fin d'une télécopie : on raccroche, et on le dit (le lien réseau
+    /// libère alors l'appel au central).
+    fn fin_fax(&mut self, raison: &str) {
+        if let Some(mut f) = self.fax.take() {
+            // coupé avant la fin de la procédure : on dit où on en était
+            f.couper();
+            for e in f.evenements() {
+                self.events.push(ModemEvent::Fax(e));
+            }
+        }
+        self.hangup(raison);
+        // (hors négociation de données, `hangup` ne prévient pas)
+        if !self.events.iter().any(|e| matches!(e, ModemEvent::Disconnected { .. })) {
+            self.events.push(ModemEvent::Disconnected { reason: raison.to_string() });
         }
     }
 

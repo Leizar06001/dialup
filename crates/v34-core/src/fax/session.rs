@@ -227,6 +227,25 @@ impl Fax {
         }
     }
 
+    /// L'appel est coupé en cours de route : la fin, pour l'affichage. Une
+    /// page déjà reçue reste reçue (l'appelant a pu raccrocher juste après
+    /// notre MCF, avant que son DCN nous parvienne).
+    pub fn couper(&mut self) {
+        if self.fini() {
+            return;
+        }
+        // Émetteur qui a déjà eu sa confirmation (MCF) : le correspondant a
+        // raccroché pendant notre DCN, la page est bien partie
+        if self.etat == Etat::EnvoiDcn && self.abandon.is_none() {
+            let ok = self.tcf_ok;
+            self.finir(ok, if ok { "page transmise" } else { "page transmise, mais mal reçue" });
+            return;
+        }
+        let recue = self.role == RoleFax::Recepteur && !self.page.is_empty();
+        let raison = if recue { "page reçue" } else { "appel coupé" };
+        self.finir(recue, raison);
+    }
+
     pub fn evenements(&mut self) -> Vec<FaxEvenement> {
         std::mem::take(&mut self.evenements)
     }
@@ -486,7 +505,15 @@ impl Fax {
                 }
             }
             Etat::EnvoiDcn => {
-                if self.sortie_finie() {
+                if matches!(self.sortie, Sortie::V21(..)) {
+                    if self.sortie_finie() {
+                        self.sortie = Sortie::Silence;
+                        self.n = 0;
+                    }
+                    return;
+                }
+                // un peu de silence : le DCN arrive avant qu'on raccroche
+                if self.n >= 300 * MS {
                     if let Some(r) = self.abandon {
                         self.finir(false, r);
                     } else {
