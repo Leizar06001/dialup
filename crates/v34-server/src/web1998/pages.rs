@@ -82,7 +82,9 @@ pub fn home(visits: u64, mode: ImageMode) -> String {
         "<br>\n<font size=\"2\"><i>Nouveau ! <b>V.Hallucination</b> : nos serveurs ne vous envoient plus les images, \
          seulement le souvenir qu'ils en gardent, redessiné de mémoire en une cinquantaine de formes.<br>\
          Six fois plus léger, presque ressemblant, garanti sans intelligence artificielle.</i></font></p>\n\
-         <hr width=\"80%\">\n</center>\n\
+         <hr width=\"80%\">\n\
+         <p><font size=\"4\"><b>Nouveau !</b> <a href=\"http://tinyblog/\"><b>TINYBLOG</b></a> : les blogs des abonnés Tinyverse. \
+         Écris ton premier article et lâche tes com's !</font></p>\n<hr width=\"80%\">\n</center>\n\
          <h3>Sites conseillés par la rédaction</h3>\n<ul>\n",
     );
     for (name, url, desc) in SITES {

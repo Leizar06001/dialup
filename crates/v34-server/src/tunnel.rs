@@ -53,6 +53,9 @@ pub struct TunnelPolicy {
     /// Salon de discussion du FAI (`salon:6667`), partagé par tous les
     /// tunnels qui utilisent cette politique
     pub salon: Option<Arc<Salon>>,
+    /// Les blogs des abonnés (`tinyblog:80`), quand le central a un dossier
+    /// de données
+    pub tinyblog: Option<Arc<crate::tinyblog::Tinyblog>>,
 }
 
 impl Default for TunnelPolicy {
@@ -84,6 +87,7 @@ impl TunnelPolicy {
             allow_private: fai.autoriser_prive,
             web1998: Web1998::from_config(web, denied.clone()),
             salon: Some(Salon::new()),
+            tinyblog: None,
             denied,
             connect_timeout: Duration::from_secs(fai.delai_connexion_s.max(1)),
         })
@@ -91,7 +95,9 @@ impl TunnelPolicy {
 
     /// `host:port` est-il l'hôte virtuel web 1998 (et le service actif) ?
     pub fn is_virtual(&self, host: &str, port: u16) -> bool {
-        (self.web1998.is_some() && web1998::is_virtual_host(host, port)) || (self.salon.is_some() && salon::is_virtual_host(host, port))
+        (self.web1998.is_some() && web1998::is_virtual_host(host, port))
+            || (self.salon.is_some() && salon::is_virtual_host(host, port))
+            || (self.tinyblog.is_some() && crate::tinyblog::is_virtual_host(host, port))
     }
 
     /// Adresse autorisée comme destination ?
@@ -305,6 +311,9 @@ pub fn connect_as(host: &str, port: u16, policy: &TunnelPolicy, user: &str) -> R
     if let Some(s) = policy.salon.as_ref().filter(|_| salon::is_virtual_host(host, port)) {
         return s.open_stream(user).map_err(|e| (FailCode::General, format!("salon indisponible : {e}")));
     }
+    if let Some(t) = policy.tinyblog.as_ref().filter(|_| crate::tinyblog::is_virtual_host(host, port)) {
+        return t.open_stream(user).map_err(|e| (FailCode::General, format!("Tinyblog indisponible : {e}")));
+    }
     if let Some(web) = policy.web1998.as_ref().filter(|_| web1998::is_virtual_host(host, port)) {
         return web.open_stream().map_err(|e| (FailCode::General, format!("web 1998 indisponible : {e}")));
     }
@@ -349,6 +358,7 @@ mod tests {
             connect_timeout: Duration::from_secs(1),
             web1998: None,
             salon: None,
+            tinyblog: None,
         }
     }
 

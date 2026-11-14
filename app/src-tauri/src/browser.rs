@@ -309,7 +309,9 @@ pub fn resolve(input: &str, mode: &str) -> Option<Url> {
         return Url::parse(if modern { HOME_MODERN } else { HOME_1998 }).ok();
     }
     let with_scheme = if t.contains("://") { t.to_string() } else { format!("http://{t}") };
-    if !modern && !with_scheme.to_ascii_lowercase().starts_with("http://web1998") {
+    // (web1998 et tinyblog sont des hôtes du FAI : servis tels quels)
+    let interne = ["http://web1998", "http://tinyblog"].iter().any(|h| with_scheme.to_ascii_lowercase().starts_with(h));
+    if !modern && !interne {
         return Url::parse(&format!("{HOME_1998}p?u={}", encode(&with_scheme))).ok();
     }
     Url::parse(&with_scheme).ok()
@@ -368,5 +370,7 @@ mod tests {
         assert_eq!(resolve("example.com", "moderne").unwrap().as_str(), "http://example.com/");
         assert_eq!(resolve("https://a.b/c", "moderne").unwrap().as_str(), "https://a.b/c");
         assert_eq!(display_url("http://web1998/p?u=http%3A%2F%2Fexample.com%2F"), "http://example.com/");
+        assert_eq!(resolve("tinyblog", "1998").unwrap().as_str(), "http://tinyblog/");
+        assert_eq!(resolve("tinyblog/alice", "moderne").unwrap().as_str(), "http://tinyblog/alice");
     }
 }

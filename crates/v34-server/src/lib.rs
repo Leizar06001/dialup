@@ -32,6 +32,7 @@ pub mod oracle;
 pub mod portail;
 pub mod salon;
 pub mod services;
+pub mod tinyblog;
 pub mod tunnel;
 pub mod web1998;
 

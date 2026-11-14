@@ -407,6 +407,10 @@ impl Web1998 {
             }
             "/compteur.gif" => Response::new(200, GIF, images::counter_gif(&param("n").unwrap_or_default()), 86_400),
             "/p" => match param("u").map(|u| user_url(&u)) {
+                // les blogs des abonnés : servis par le FAI lui-même, sans allègement
+                Some(Ok(url)) if url.host_str().is_some_and(|h| crate::tinyblog::is_virtual_host(h, url.port_or_known_default().unwrap_or(80))) => {
+                    Response::redirect(url.to_string())
+                }
                 Some(Ok(url)) => self.page(url, mode),
                 Some(Err(())) | None => Response::error(400, "Adresse invalide", "Tapez une adresse comme « fr.wikipedia.org » ou « lite.cnn.com », ou des mots-clés à chercher.", None),
             },

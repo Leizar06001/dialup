@@ -43,6 +43,7 @@ fn policy(echo_port: u16, allow_private: bool) -> TunnelPolicy {
         connect_timeout: Duration::from_secs(2),
         web1998: None,
         salon: Some(v34_server::salon::Salon::new()),
+        tinyblog: None,
     }
 }
 

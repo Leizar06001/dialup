@@ -85,6 +85,10 @@ pub const LISTE: &[Succes] = &[
     cache(c("chef", "Promotion", "Se connecter au ministère comme chef de service.")),
     cache(c("secret-etat", "Secret d'État", "Lire le dossier rouge du directeur.")),
     a("wardialer", "Balayeur", "Balayer 50 numéros d'affilée (AT*B)."),
+    // Tinyblog (http://tinyblog/, par le FAI)
+    c("blogueur", "Blogueur", "Publier un article sur son Tinyblog."),
+    c("coms", "Lâche tes com's", "Laisser 5 commentaires sur des Tinyblogs."),
+    c("star", "Star du net", "Recevoir 10 « j'kiffe » sur son Tinyblog."),
 ];
 
 pub fn trouver(id: &str) -> Option<&'static Succes> {

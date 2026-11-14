@@ -80,6 +80,7 @@
     <button class="big" id="b-fwd" title="Page suivante"><b>▶</b>Suivante</button>
     <button class="big" id="b-reload" title="Actualiser"><b>⟳</b>Actualiser</button>
     <button class="big" id="b-home" title="Accueil"><b>⌂</b>Accueil</button>
+    <button class="big" id="b-blog" title="Tinyblog : les blogs des abonnés (par le FAI seulement)"><b>✎</b>Tinyblog</button>
     <button class="big" id="b-stop" title="Arrêter le chargement"><b>■</b>Arrêter</button>
     <div class="sep"></div>
     <div class="seg" role="group" aria-label="Mode de navigation">
@@ -121,7 +122,7 @@
       $("m-msg").classList.toggle("on", msg);
       $("f-go").hidden = msg;
       $("r-msg").hidden = !msg;
-      for (const id of ["b-back", "b-fwd", "b-reload", "b-home"]) $(id).disabled = msg;
+      for (const id of ["b-back", "b-fwd", "b-reload", "b-home", "b-blog"]) $(id).disabled = msg;
       for (const id of ["m-1998", "m-mod"]) {
         $(id).disabled = !webOk;
         if (!webOk) $(id).title = "Le navigateur intégré demande macOS 14 (Sonoma) ou plus récent : ici, seulement la messagerie.";
@@ -150,6 +151,7 @@
     $("b-hang").onclick = () => T.core.invoke("at_command", { line: "ATH" });
     $("f-go").onsubmit = (e) => { e.preventDefault(); go($("addr").value); };
     $("b-home").onclick = () => { $("addr").value = ""; go(""); };
+    $("b-blog").onclick = () => { $("addr").value = "http://tinyblog/"; go("http://tinyblog/"); };
     for (const [id, cmd] of [["b-back", "back"], ["b-fwd", "forward"], ["b-reload", "reload"], ["b-stop", "stop"]])
       $(id).onclick = () => T.core.invoke("nav_cmd", { cmd });
     $("b-call").onclick = () => T.core.invoke("at_command", { line: "ATDT0836154286" });

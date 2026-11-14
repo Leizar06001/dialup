@@ -108,6 +108,7 @@
         [["TINYVERSE"], "Dans l'ANNUAIRE, ☎ APPELER : le FAI. Après CONNECT, « Tunnel Internet établi » : la ligne transporte maintenant tes connexions."],
         [["NAVIGATEUR"], "Le bouton-poussoir du haut, entre le terminal et l'annuaire : ouvre Tinyverse Navigator. Sa LED verte clignote quand Internet est prêt, jusqu'à ce que tu l'ouvres (il ne s'ouvre jamais tout seul) ; tout son trafic passe par le modem."],
         [["WEB 1998", "MODERNE", "MESSAGERIE"], "Les trois modes du navigateur : les deux façons de voir le web, et la messagerie (chat, fichiers, visio), sans web."],
+        [["Tinyblog"], "Le bouton de la barre du navigateur, ou l'adresse tinyblog : les blogs des abonnés, lisibles seulement par le modem. Écris des articles (une image, du texte mis en forme : [b]gras[/b], [couleur=rose]…[/couleur], [clignote]…[/clignote]), choisis ton thème, et lâche tes com's chez les autres. Une photo met une bonne minute à partir à 33 600 bit/s : c'était ça, 1998."],
         [["Salon du FAI"], "Pendant la session, la conversation de la MESSAGERIE parle à tous les abonnés connectés au FAI. `/qui` : qui est là ; `/aide` : l'aide du salon."],
         [["WEB 1998"], "Le FAI va chercher la page et te la sert allégée : HTML simple, images GIF en 256 couleurs. Ça tient dans 33,6k."],
         [["Images : V.Hallucination"], "Lien en haut des pages web 1998 : chaque image arrive en une cinquantaine de formes (≈ 2,5 Ko au lieu de 15), comme un souvenir flou. Garanti sans intelligence artificielle. « normales » pour revenir aux GIF."],

@@ -258,6 +258,11 @@ impl Server {
     /// Tickets de communication et succès dans `dir` (voir [`crate::facturation`]).
     pub fn with_facturation(mut self, dir: PathBuf) -> Server {
         self.facturation = Some(Facturation::ouvrir(dir.clone(), unix_now()));
+        // les Tinyblogs des abonnés, servis par le FAI (avant tout appel :
+        // la politique n'est pas encore partagée)
+        if let Some(p) = Arc::get_mut(&mut self.policy) {
+            p.tinyblog = Some(crate::tinyblog::Tinyblog::new(dir.join("tinyblog"), self.exploits.clone()));
+        }
         self.donnees = Some(dir);
         self
     }
