@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Visiophone : l'appli est signée avec le « runtime durci » ; sans ce
+	     droit, macOS refuse la caméra en silence (aucune demande, l'appli
+	     n'apparaît même pas dans Réglages > Confidentialité > Caméra). -->
+	<key>com.apple.security.device.camera</key>
+	<true/>
+</dict>
+</plist>

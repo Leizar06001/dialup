@@ -33,7 +33,7 @@
     "license": "MIT",
     "category": "Utility",
     "shortDescription": "Modem logiciel V.34 audible, façon années 90",
-    "longDescription": "Modem logiciel V.8 / V.34 qu'on entend négocier, dans une interface rétro : simulateur de ligne téléphonique, console AT, appels entre abonnés par un central téléphonique sur IP, accès Internet par modem à 33,6 kbit/s avec un navigateur « web 1998 », et salon de discussion.",
+    "longDescription": "Modem logiciel V.8 / V.34 / V.90 qu'on entend négocier, dans une interface rétro : simulateur de ligne téléphonique, console AT, appels entre abonnés par un central téléphonique sur IP, accès Internet par modem jusqu'à 56 kbit/s (56K) avec un navigateur « web 1998 », messagerie et visiophone entre abonnés, et le 3615 ORACLE.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,7 +42,8 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist"
     },
     "linux": {
       "deb": {
