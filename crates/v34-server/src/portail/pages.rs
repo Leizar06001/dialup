@@ -71,6 +71,14 @@ label{font:bold 14px Verdana,sans-serif}
 code{font:15px "Courier New",monospace;background:#eee;padding:0 3px}
 textarea{font:15px "Courier New",monospace;border:2px inset #c0c0c0;padding:3px 5px;width:100%;max-width:520px;box-sizing:border-box}
 table.fiche th{width:38%}
+.releve{border:2px dashed #808080;background:#fdfdf5;padding:8px 12px;margin:10px 0}
+.releve-tete{font:13px "Courier New",monospace;border-bottom:1px dotted #808080;padding-bottom:6px;margin-bottom:6px}
+table.detail{font-size:13px}
+table.detail td.montant,table.classement td:last-child{text-align:right;white-space:nowrap}
+table.succes td:first-child,table.classement td:first-child{width:1.5em;text-align:center}
+table.succes tr.eu td:first-child{color:#cc9900}
+table.succes tr.pas-eu{color:#808080}
+table.classement tr.moi{background:#ffffcc;font-weight:bold}
 .msg{border:2px groove #c0c0c0;background:#fffff0;padding:6px 10px;margin:8px 0;overflow-wrap:anywhere}
 .msg-t{font:12px Verdana,sans-serif;color:#555;border-bottom:1px dotted #c0c0c0;margin-bottom:4px}
 .pied p{margin:6px 0}
@@ -705,7 +713,7 @@ pub struct VueCompte<'a> {
     pub acces: Acces,
 }
 
-pub fn compte(v: &VueCompte, central: &str, csrf: &str, info: Option<&str>, erreur: Option<&str>) -> String {
+pub fn compte(v: &VueCompte, central: &str, csrf: &str, info: Option<&str>, erreur: Option<&str>, suite: &str) -> String {
     let mut h = String::from("<h2>Mon compte</h2>");
     if let Some(i) = info {
         let _ = write!(h, r#"<div class="ok">{}</div>"#, esc(i));
@@ -731,6 +739,8 @@ pub fn compte(v: &VueCompte, central: &str, csrf: &str, info: Option<&str>, erre
         let _ = write!(h, "<tr><th>Abonné depuis le</th><td>{}</td></tr>", esc(c));
     }
     let _ = write!(h, r#"<tr><th>Accès Internet</th><td>{acces}</td></tr><tr><th>Adresse du central</th><td><code>{}</code></td></tr></table>"#, esc(central));
+    // Facture du mois, succès, classement (voir `facture`)
+    h.push_str(suite);
     let csrf = format!(r#"<input type="hidden" name="csrf" value="{}">"#, esc(csrf));
     if v.courriel.is_some() {
         let _ = write!(

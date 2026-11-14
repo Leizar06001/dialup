@@ -181,6 +181,10 @@ fn run(path: PathBuf) -> ExitCode {
         info!("état publié pour le site dans {}", e.display());
         server = server.with_status_file(e);
     }
+    if let Some(d) = cfg.serveur.donnees_dir() {
+        info!("tickets de communication et succès dans {}", d.display());
+        server = server.with_facturation(d);
+    }
     info!(
         "v34-server {} à l'écoute sur UDP {} — {} abonné(s), numéros spéciaux : {}",
         env!("CARGO_PKG_VERSION"),

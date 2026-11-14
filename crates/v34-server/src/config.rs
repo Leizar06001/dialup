@@ -71,6 +71,15 @@ pub struct Serveur {
 
 impl Serveur {
     /// Chemin du fichier d'état, s'il faut en écrire un.
+    /// Dossier des données partagées avec le site (tickets de communication,
+    /// succès) : celui du fichier des comptes, à défaut celui du fichier
+    /// d'état. Sans l'un ni l'autre, pas de facturation.
+    pub fn donnees_dir(&self) -> Option<std::path::PathBuf> {
+        let c = self.comptes.trim();
+        let f = if c.is_empty() { self.etat_path()? } else { c.into() };
+        f.parent().filter(|d| !d.as_os_str().is_empty()).map(Into::into)
+    }
+
     pub fn etat_path(&self) -> Option<std::path::PathBuf> {
         match self.etat.trim() {
             "non" => None,

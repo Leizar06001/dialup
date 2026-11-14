@@ -74,6 +74,8 @@ pub trait Link: Send {
     fn net_answer(&mut self) {}
     /// Réseau : raccrocher côté central.
     fn net_hangup(&mut self) {}
+    /// Réseau : signaler un succès constaté par l'appli.
+    fn net_exploit(&mut self, _id: &str) {}
     /// Réseau : événements de signalisation.
     fn poll_net(&mut self) -> Vec<NetEvent> {
         Vec::new()
@@ -96,6 +98,8 @@ pub enum NetEvent {
     Busy(String),
     Unknown(String),
     HungUp(v34_net::signal::HangupReason, String),
+    /// Facture du mois et succès (centraux 0.1.7 et suivants)
+    Compte(v34_net::central::Compte),
 }
 
 /// État de la connexion au central (pour l'IHM).
@@ -114,6 +118,8 @@ pub struct NetInfo {
     /// Annuaire du central et numéros spéciaux (FAI, ligne de test)
     pub directory: Vec<v34_net::signal::DirEntry>,
     pub services: Vec<(String, String)>,
+    /// Facture du mois en cours et succès, d'après le central
+    pub compte: Option<v34_net::central::Compte>,
 }
 
 /// Mode réseau : un seul modem local, le son passe par le central
@@ -158,7 +164,7 @@ impl NetLink {
             pacer: v34_net::Pacer::new(),
             trace_prev: None,
             dump: std::env::var_os("V34_DUMP").and_then(|p| std::fs::File::create(p).ok()).map(std::io::BufWriter::new),
-            info: NetInfo { server: server.to_string(), user: user.to_string(), number: None, registered: false, error: None, isp_number: None, stats: None, rtt_ms: None, directory: Vec::new(), services: Vec::new() },
+            info: NetInfo { server: server.to_string(), user: user.to_string(), number: None, registered: false, error: None, isp_number: None, stats: None, rtt_ms: None, directory: Vec::new(), services: Vec::new(), compte: None },
         })
     }
 
@@ -295,6 +301,10 @@ impl Link for NetLink {
         self.pending_dial = false;
     }
 
+    fn net_exploit(&mut self, id: &str) {
+        self.central.exploit(id);
+    }
+
     fn poll_net(&mut self) -> Vec<NetEvent> {
         use v34_net::central::CentralEvent as E;
         let mut out = Vec::new();
@@ -334,6 +344,7 @@ impl Link for NetLink {
                     self.pending_dial = false;
                     NetEvent::Unknown(number)
                 }
+                E::Compte(c) => NetEvent::Compte(c),
                 E::HungUp { reason, .. } => {
                     self.pending_dial = false;
                     self.modem.command(ModemCommand::Hangup);
@@ -355,6 +366,7 @@ impl Link for NetLink {
         i.rtt_ms = self.central.rtt_ms();
         i.directory = self.central.directory().to_vec();
         i.services = self.central.services().to_vec();
+        i.compte = self.central.compte().cloned();
         Some(i)
     }
 }

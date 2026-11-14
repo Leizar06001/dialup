@@ -155,7 +155,31 @@ impl Portail {
                 acces: if *fai { pages::Acces::Accorde } else { pages::Acces::Refuse },
             },
         };
-        let mut r = self.page(statut, "Mon compte", &pages::compte(&v, &self.r.central, &self.csrf_abonne(jeton), info, erreur));
+        let suite = self.donnees().map(|d| super::facture::resume(&d, v.nom, maintenant())).unwrap_or_default();
+        let mut r = self.page(statut, "Mon compte", &pages::compte(&v, &self.r.central, &self.csrf_abonne(jeton), info, erreur, &suite));
+        r.entetes.push(("Cache-Control", "no-store".into()));
+        r
+    }
+
+    /// Dossier des données du central (tickets, succès) : celui des comptes.
+    fn donnees(&self) -> Option<std::path::PathBuf> {
+        self.r.comptes.parent().filter(|d| !d.as_os_str().is_empty()).map(Into::into)
+    }
+
+    /// GET /compte/facture?mois=AAAAMM : le relevé détaillé d'un mois.
+    pub(super) fn compte_facture(&self, q: &Requete) -> Reponse {
+        let Some((_, a)) = self.session_abonne(q) else { return self.compte_connexion_page(None, "", 200) };
+        let (nom, numero) = match &a {
+            Abonne::Site(c) => (c.nom.as_str(), c.numero.as_str()),
+            Abonne::Config { nom, numero, .. } => (nom.as_str(), numero.as_str()),
+        };
+        let now = maintenant();
+        let mois = q.param("mois").parse().ok().filter(|m| super::facture::mois_valide(*m)).unwrap_or_else(|| v34_net::tarif::mois(now));
+        let contenu = match self.donnees() {
+            Some(d) => super::facture::detail(&d, nom, numero, mois, now),
+            None => "<h2>Relevé de communications</h2><p>Ce central ne tient pas de factures.</p>".into(),
+        };
+        let mut r = self.page(200, "Ma facture", &contenu);
         r.entetes.push(("Cache-Control", "no-store".into()));
         r
     }

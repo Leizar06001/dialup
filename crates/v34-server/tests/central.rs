@@ -404,3 +404,42 @@ fn etat_publie_pour_le_site() {
     drop(server);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn facture_et_succes_apres_un_appel() {
+    let dir = std::env::temp_dir().join(format!("v34-facture-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    set_level(Level::Error);
+    let mut toml = String::from("[serveur]\necoute = \"127.0.0.1:0\"\n");
+    for (nom, pw, num) in [A, B] {
+        let h = PasswordHash::new(pw, 1000);
+        toml.push_str(&format!("[[abonnes]]\nnom = \"{nom}\"\nnumero = \"{num}\"\nmot_de_passe_hash = \"{h}\"\n"));
+    }
+    let server = Server::bind(Config::from_toml(&toml).unwrap()).unwrap().with_facturation(dir.clone()).spawn().unwrap();
+    let mut a = registered(&server, A);
+    let mut b = registered(&server, B);
+    a.dial(B.2).unwrap();
+    wait_for(&mut b, &mut [&mut a], "RING chez B", |e| matches!(e, CentralEvent::Incoming { .. }));
+    b.answer().unwrap();
+    wait_for(&mut a, &mut [&mut b], "ANSWER chez A", |e| matches!(e, CentralEvent::Answered { .. }));
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_millis(1100) {
+        a.poll().unwrap();
+        b.poll().unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    a.hangup().unwrap();
+    // L'appelant paie le crédit temps (0,74 F) ; l'appelé, rien
+    let ev = wait_for(&mut a, &mut [&mut b], "COMPTE de A", |e| matches!(e, CentralEvent::Compte(c) if c.centimes > 0));
+    let CentralEvent::Compte(c) = ev else { unreachable!() };
+    assert_eq!((c.centimes, c.secondes), (74, 1));
+    assert!(c.succes.iter().any(|s| s == "premier-appel"));
+    wait_for(&mut b, &mut [&mut a], "COMPTE de B", |e| matches!(e, CentralEvent::Compte(c) if c.succes.iter().any(|s| s == "recu") && c.centimes == 0));
+    // Un succès constaté par l'appli
+    a.exploit("v90");
+    wait_for(&mut a, &mut [&mut b], "v90 noté", |e| matches!(e, CentralEvent::Compte(c) if c.succes.iter().any(|s| s == "v90")));
+    assert_eq!(v34_server::facturation::lire_tickets(&dir, c.mois).len(), 1);
+    drop(server);
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -27,6 +27,12 @@ const Commentateur = (() => {
    * le nôtre ; {emet}/{recoit} : qui émet / reçoit le signal commenté.
    * Les majuscules initiales donnent la forme de début de phrase. */
   const P = {
+    succes: [
+      "★ SUCCÈS DÉBLOQUÉ : « {titre} » ! La tribune est debout !",
+      "Et c'est un succès ! « {titre} » rejoint l'armoire à trophées.",
+      "Trophée ! « {titre} ». Le président du club applaudit depuis la tribune d'honneur.",
+      "« {titre} » : succès débloqué ! On le passera au ralenti dans le résumé.",
+    ],
     accueil: [
       "Bonsoir à tous ! Le commentateur est en cabine. Coup d'envoi au premier ATDT.",
       "Bienvenue au stade de la ligne téléphonique ! Les modems s'échauffent.",
@@ -1170,6 +1176,8 @@ const Commentateur = (() => {
       /** Un appel est en cours (le voyant EN DIRECT clignote). */
       enDirect: () => !!(appel && !appel.clos && !appel.fini),
       accueil: () => dire("accueil", {}, { prio: 2 }),
+      /** Un succès vient d'être obtenu (événement v34:succes). */
+      succes: (s) => dire("succes", { titre: s.titre }, { prio: 2 }),
       retour: () => dire("retour_antenne", {}, { prio: 2 }),
     };
   }
@@ -1249,6 +1257,7 @@ const Commentateur = (() => {
 
     bridge.listen("v34:event", ({ side, event }) => moteur.evenement(side, event));
     bridge.listen("v34:console", (c) => moteur.console(c.text || ""));
+    bridge.listen("v34:succes", (s) => moteur.succes(s));
     bridge.listen("v34:state", (s) => {
       moteur.etat(s);
       if (actif) rendreKaraoke();

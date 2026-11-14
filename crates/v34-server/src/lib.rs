@@ -24,6 +24,7 @@ pub mod admin;
 pub mod central;
 pub mod comptes;
 pub mod config;
+pub mod facturation;
 pub mod filter;
 pub mod oracle;
 pub mod portail;

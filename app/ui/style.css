@@ -640,6 +640,7 @@ input[type=range]::-moz-range-thumb {
 /* ------------------------------------------------------------------ onglets chat / annuaire */
 .panel-tabs { position: absolute; right: 26px; top: 3px; z-index: 2; }
 .panel-tabs button { padding: 2px 10px; font-size: 10px; }
+#bbs-tabs button.unread { animation: led-blink 0.9s steps(2, jump-none) infinite; }
 .dir-view { padding: 8px 12px; gap: 6px; }
 .dir-head { display: flex; justify-content: space-between; color: var(--amber-dim); font-size: 15px;
   border-bottom: 1px dashed rgba(255,179,71,0.3); padding-bottom: 3px; }
@@ -659,6 +660,19 @@ input[type=range]::-moz-range-thumb {
 .dir-row .state { font-size: 13px; color: var(--amber-dim); text-align: center; }
 .dir-sep { margin: 6px 0 2px; color: var(--amber-dim); font-size: 14px; letter-spacing: 2px; }
 .dir-note { color: var(--amber-dim); text-shadow: none; padding: 10px 4px; line-height: 1.3; }
+/* Onglet SUCCÈS : la facture du mois puis les succès (★ obtenus, ☆ à gagner) */
+.facture-ligne { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 10px; padding: 4px 4px 6px;
+  border-bottom: 1px dashed rgba(255,179,71,0.3); margin-bottom: 4px; }
+.facture-ligne span { letter-spacing: 1px; }
+.facture-ligne b { font-weight: 400; color: #ffd9a0; }
+.facture-ligne small { grid-column: 1 / -1; color: var(--amber-dim); font-size: 14px; text-shadow: none; }
+.succes-row { display: grid; grid-template-columns: 18px minmax(0, auto) minmax(0, 1fr); align-items: baseline; gap: 10px;
+  padding: 2px 4px; color: var(--amber-dim); text-shadow: none; }
+.succes-row i { font-style: normal; text-align: center; }
+.succes-row .who { white-space: nowrap; }
+.succes-row small { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.succes-row.eu { color: var(--amber); text-shadow: 0 0 6px rgba(255,179,71,0.45); }
+.succes-row.eu i { color: #ffd9a0; }
 
 /* ------------------------------------------------------------------ boucle locale bien visible */
 body.mode-local .topbar {

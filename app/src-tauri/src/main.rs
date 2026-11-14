@@ -279,6 +279,12 @@ struct AppInfo {
     visio: Option<String>,
 }
 
+/// La liste des succès (titres, descriptions, cachés ou non).
+#[tauri::command]
+fn succes_liste() -> &'static [v34_net::succes::Succes] {
+    v34_net::succes::LISTE
+}
+
 #[tauri::command]
 fn app_info(webview: tauri::Webview, state: State<AppState>) -> AppInfo {
     // Une seule fois : si la fenêtre du modem est rechargée (vue web
@@ -389,6 +395,7 @@ fn main() {
             nav_display_url,
             nav_offline,
             nav_initial,
+            succes_liste,
             app_info
         ])
         .run(tauri::generate_context!())

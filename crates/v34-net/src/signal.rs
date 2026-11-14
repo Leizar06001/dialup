@@ -96,6 +96,10 @@ const T_BUSY: u8 = 0x25;
 const T_UNKNOWN: u8 = 0x26;
 const T_DIRECTORY_REQ: u8 = 0x30;
 const T_DIRECTORY: u8 = 0x31;
+const T_COMPTE: u8 = 0x32;
+const T_EXPLOITS: u8 = 0x33;
+/// Succès au plus dans COMPTE / EXPLOITS
+pub const MAX_SUCCES: usize = 64;
 /// Taille maximale d'un DIRECTORY encodé (pas de fragmentation IP)
 pub const MAX_DIRECTORY_BYTES: usize = 1200;
 
@@ -251,6 +255,14 @@ pub enum Msg {
     UnknownNumber { number: String },
     DirectoryReq,
     Directory { entries: Vec<DirEntry> },
+    /// Central → abonné (sans acquittement, répété avec chaque annuaire) :
+    /// la facture du mois en cours (`mois` = AAAAMM) et les succès obtenus.
+    /// Les clients d'avant le 0.1.7 l'ignorent.
+    Compte { mois: u32, centimes: u32, secondes: u32, succes: Vec<String> },
+    /// Abonné → central (sans acquittement, répété avec chaque demande
+    /// d'annuaire tant que COMPTE ne les cite pas) : succès constatés par
+    /// l'appli. Les centraux d'avant le 0.1.7 l'ignorent.
+    Exploits { ids: Vec<String> },
 }
 
 impl Msg {
@@ -273,6 +285,8 @@ impl Msg {
             Msg::UnknownNumber { .. } => T_UNKNOWN,
             Msg::DirectoryReq => T_DIRECTORY_REQ,
             Msg::Directory { .. } => T_DIRECTORY,
+            Msg::Compte { .. } => T_COMPTE,
+            Msg::Exploits { .. } => T_EXPLOITS,
         }
     }
 
@@ -283,7 +297,7 @@ impl Msg {
 
     /// Message à répéter jusqu'à acquittement.
     pub fn is_reliable(&self) -> bool {
-        !self.is_pre_auth() && !matches!(self, Msg::Ack { .. } | Msg::Welcome { .. } | Msg::DirectoryReq | Msg::Directory { .. })
+        !self.is_pre_auth() && !matches!(self, Msg::Ack { .. } | Msg::Welcome { .. } | Msg::DirectoryReq | Msg::Directory { .. } | Msg::Compte { .. } | Msg::Exploits { .. })
     }
 
     pub fn name(&self) -> &'static str {
@@ -305,6 +319,8 @@ impl Msg {
             Msg::UnknownNumber { .. } => "UNKNOWN_NUMBER",
             Msg::DirectoryReq => "DIRECTORY_REQ",
             Msg::Directory { .. } => "DIRECTORY",
+            Msg::Compte { .. } => "COMPTE",
+            Msg::Exploits { .. } => "EXPLOITS",
         }
     }
 }
@@ -349,6 +365,15 @@ pub fn peek_session(buf: &[u8]) -> Option<u32> {
 /// Numéro de téléphone valide : 1 à 20 chiffres.
 pub fn valid_number(s: &str) -> bool {
     !s.is_empty() && s.len() <= MAX_NUMBER_LEN && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Liste d'identifiants de succès (les invalides sont sautés).
+fn put_ids(out: &mut Vec<u8>, ids: &[String]) {
+    let ok: Vec<&String> = ids.iter().filter(|i| crate::succes::id_valide(i)).take(MAX_SUCCES).collect();
+    out.push(ok.len() as u8);
+    for i in ok {
+        put_str(out, i);
+    }
 }
 
 fn put_str(out: &mut Vec<u8>, s: &str) {
@@ -418,6 +443,13 @@ pub fn encode(frame: &Frame, key: Option<&SessionKey>) -> Vec<u8> {
             }
             out[count_at] = n;
         }
+        Msg::Compte { mois, centimes, secondes, succes } => {
+            out.extend_from_slice(&mois.to_be_bytes());
+            out.extend_from_slice(&centimes.to_be_bytes());
+            out.extend_from_slice(&secondes.to_be_bytes());
+            put_ids(&mut out, succes);
+        }
+        Msg::Exploits { ids } => put_ids(&mut out, ids),
         Msg::Ack { msg_id } => out.extend_from_slice(&msg_id.to_be_bytes()),
         Msg::Dial { number } | Msg::Busy { number } | Msg::UnknownNumber { number } => put_str(&mut out, number),
         Msg::Ringing { call_id } | Msg::Answer { call_id } => out.extend_from_slice(&call_id.to_be_bytes()),
@@ -473,6 +505,22 @@ impl<'a> Reader<'a> {
     fn string(&mut self) -> Result<String, SignalError> {
         let n = self.u8()? as usize;
         String::from_utf8(self.take(n)?.to_vec()).map_err(|_| SignalError::Malformed)
+    }
+    /// Liste d'identifiants de succès.
+    fn ids(&mut self) -> Result<Vec<String>, SignalError> {
+        let n = self.u8()? as usize;
+        if n > MAX_SUCCES {
+            return Err(SignalError::Malformed);
+        }
+        let mut v = Vec::with_capacity(n);
+        for _ in 0..n {
+            let s = self.string()?;
+            if !crate::succes::id_valide(&s) {
+                return Err(SignalError::Malformed);
+            }
+            v.push(s);
+        }
+        Ok(v)
     }
     /// Numéro de téléphone (1 à 20 chiffres).
     fn number(&mut self) -> Result<String, SignalError> {
@@ -573,6 +621,8 @@ pub fn decode(buf: &[u8], key: Option<&SessionKey>) -> Result<Frame, SignalError
             }
             Msg::Directory { entries }
         }
+        T_COMPTE => Msg::Compte { mois: r.u32()?, centimes: r.u32()?, secondes: r.u32()?, succes: r.ids()? },
+        T_EXPLOITS => Msg::Exploits { ids: r.ids()? },
         _ => return Err(SignalError::Malformed),
     };
     if r.i != r.b.len() {
@@ -743,7 +793,27 @@ mod tests {
                     DirEntry { name: "lagaffe".into(), number: "0700000000".into(), status: Presence::Absent },
                 ],
             },
+            Msg::Compte { mois: 202611, centimes: 12_345, secondes: 3600, succes: vec!["premier-appel".into(), "v90".into()] },
+            Msg::Compte { mois: 202612, centimes: 0, secondes: 0, succes: vec![] },
+            Msg::Exploits { ids: vec!["tempete".into()] },
         ]
+    }
+
+    #[test]
+    fn compte_et_exploits_sans_acquittement() {
+        let key = [7u8; 32];
+        let m = Msg::Exploits { ids: vec!["v90".into(), "Pas Valide".into(), "tempete".into()] };
+        assert!(!m.is_reliable());
+        // l'identifiant invalide n'est pas envoyé
+        let bytes = encode(&Frame { session: 1, msg_id: 0, msg: m }, Some(&key));
+        let Ok(Frame { msg: Msg::Exploits { ids }, .. }) = decode(&bytes, Some(&key)) else { panic!() };
+        assert_eq!(ids, ["v90", "tempete"]);
+        // tous les succès tiennent dans un datagramme
+        let tous: Vec<String> = crate::succes::LISTE.iter().map(|s| s.id.to_string()).collect();
+        let c = Msg::Compte { mois: 202611, centimes: u32::MAX, secondes: u32::MAX, succes: tous };
+        let bytes = encode(&Frame { session: 1, msg_id: 0, msg: c.clone() }, Some(&key));
+        assert!(bytes.len() <= MAX_DIRECTORY_BYTES);
+        assert_eq!(decode(&bytes, Some(&key)).map(|f| f.msg), Ok(c));
     }
 
     #[test]

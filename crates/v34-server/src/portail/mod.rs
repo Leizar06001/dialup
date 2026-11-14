@@ -23,6 +23,7 @@
 pub mod abonne;
 pub mod courriel;
 pub mod etat;
+pub mod facture;
 pub mod legal;
 pub mod livre;
 pub mod pages;
@@ -404,6 +405,7 @@ impl Portail {
             ("GET" | "HEAD", "/telechargement") => self.telechargement(),
             ("GET" | "HEAD", "/aide") => self.page(200, "Aide", &pages::aide(&self.r.central, &self.r.depot)),
             ("GET" | "HEAD", "/compte") => self.compte(q),
+            ("GET" | "HEAD", "/compte/facture") => self.compte_facture(q),
             ("POST", "/compte/connexion") => self.compte_connexion(q),
             ("POST", "/compte/mdp" | "/compte/supprimer" | "/compte/deconnexion") => self.compte_action(q),
             ("GET" | "HEAD", "/oubli") => self.oubli_page(),
@@ -435,7 +437,7 @@ impl Portail {
             ("GET" | "HEAD", "/favicon.ico") => Reponse::texte(404, ""),
             (
                 _,
-                "/" | "/inscription" | "/valider" | "/decision" | "/telechargement" | "/aide" | "/admin" | "/compte" | "/oubli" | "/reinitialiser" | "/mentions" | "/conditions" | "/confidentialite" | "/etat" | "/livre"
+                "/" | "/inscription" | "/valider" | "/decision" | "/telechargement" | "/aide" | "/admin" | "/compte" | "/compte/facture" | "/oubli" | "/reinitialiser" | "/mentions" | "/conditions" | "/confidentialite" | "/etat" | "/livre"
                 | "/webring" | "/webring/hasard",
             ) => Reponse::texte(405, "méthode non autorisée"),
             _ => self.message(404, "Fichier introuvable", "Cette page n'existe pas (ou elle est encore en construction).", false),

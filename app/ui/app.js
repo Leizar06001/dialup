@@ -543,6 +543,8 @@ function onState(s) {
   setText("p-rx", st.rx_signal || "—");
   const t = Math.floor(s.elapsed_s);
   setText("p-time", `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`);
+  setText("p-taxe", s.taxe ? francs(s.taxe.centimes) : "--");
+  renderSucces(s.net);
 
   const meter = (db) => `inset(0 ${100 - Math.max(0, Math.min(100, (db + 60) / 60 * 100))}% 0 0)`;
   $("m-tx").style.clipPath = meter(s.tx_level_db);
@@ -840,6 +842,8 @@ const TIPS = {
   messagerie: ["MESSAGERIE", "Ouvre la messagerie du navigateur : le chat (ou le salon du FAI), l'envoi de fichiers et le visiophone V.Hallucination, avec les contacts du central. Elle ne s'ouvre pas toute seule : quand un appel entre abonnés aboutit, sa LED verte clignote jusqu'à ce que tu l'ouvres, puis reste allumée tant que dure l'appel ; rouge qui clignote : un message t'attend, comme sur un répondeur."],
   nav: ["NAVIGATEUR", "Ouvre Tinyverse Navigator, sur le web 1998 ou moderne : tout son trafic passe par le modem. Appelle d'abord TINYVERSE, en tête de l'ANNUAIRE ; la LED clignote quand Internet est prêt, jusqu'à ce que tu ouvres le navigateur, puis reste allumée."],
   chat: ["CHAT ↗", "Le chat et l'envoi de fichiers ont déménagé dans la MESSAGERIE du navigateur, avec le visiophone : cet onglet l'ouvre. Il clignote quand un message t'y attend."],
+  taxe: ["TAXES", "Le compteur de Tinyverse Télécom, en francs de 1998 (jamais facturés) : communication locale 0,74 F les 3 premières minutes, puis 0,28 F la minute (0,14 F en heures creuses : 22 h – 8 h et le week-end) ; 3615 ORACLE 2,23 F la minute ; numéro vert gratuit. Seul l'appelant paie. La facture du mois est dans l'onglet SUCCÈS et sur le site."],
+  succes: ["SUCCÈS", "Tes succès d'abonné et ta facture du mois, tenus par le central. Certains sont cachés : à toi de les trouver. L'onglet clignote quand tu en gagnes un."],
   karaoke: ["♪ KARAOKÉ", "Les paroles de la chanson du modem, en direct : à gauche ce que notre modem émet, à droite ce qu'on entend de l'autre bout. La boule rebondit sur la syllabe en cours. Au ralenti (TEMPS ×0,1), on arrive presque à chanter juste."],
 };
 const tip = document.createElement("div");
@@ -856,6 +860,13 @@ function tipLive(key) {
   if (key === "nav") {
     const s = state;
     return s && s.proxy ? "● Internet prêt : clique !" : s && s.session === "internet" && s.call_state !== "idle" ? "◐ connexion au FAI…" : "○ pas d'Internet : appelle TINYVERSE dans l'ANNUAIRE";
+  }
+  if (key === "taxe" || key === "succes") {
+    const tx = state && state.taxe, c = state && state.net && state.net.compte;
+    const l = [];
+    if (tx) l.push(tx.recu ? "● appel reçu : c'est l'appelant qui paie" : `● ${tx.libelle}${tx.libelle === "Communication locale" ? (tx.heures_creuses ? ", heures creuses" : ", heures pleines") : ""} : ${tx.minute ? francs(tx.minute) + " la minute" : "gratuit"}${tx.fini ? " (appel terminé)" : ""}`);
+    if (c) l.push(`ce mois-ci : ${francs(c.centimes)} · ${(c.succes || []).length} succès`);
+    return l.join("\n") || "○ pas d'appel";
   }
   if (key === "messagerie" || key === "chat") {
     const v = state && state.visio;
@@ -1041,8 +1052,61 @@ function drawSpark() {
    messagerie du navigateur, où vivent maintenant le chat et les fichiers. */
 document.querySelectorAll("#bbs-tabs button").forEach((b) => b.addEventListener("click", () => {
   if (b.dataset.view === "chat") return openMessagerie();
-  invoke("net_directory").catch(() => {}); // l'annuaire se met à jour à chaque ouverture
+  vueBas(b.dataset.view);
+  invoke("net_directory").catch(() => {}); // annuaire et succès se mettent à jour à chaque ouverture
 }));
+/** Panneau sous le modem : l'annuaire ou les succès. */
+function vueBas(v) {
+  $("dir").hidden = v !== "dir";
+  $("succes").hidden = v !== "succes";
+  document.querySelectorAll("#bbs-tabs button").forEach((x) => x.classList.toggle("on", x.dataset.view === v));
+  if (v === "succes") document.querySelector('#bbs-tabs [data-view="succes"]').classList.remove("unread");
+}
+
+/* ---------------------------------------------------------------- facture et succès
+   Le central tient la facture du mois (tarifs de Tinyverse Télécom, en
+   francs) et les succès ; l'appli annonce les nouveaux (commentateur,
+   terminal) et fait clignoter l'onglet SUCCÈS. */
+const MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+/** 1234 → « 12,34 F » */
+function francs(c) {
+  return `${Math.floor(c / 100).toLocaleString("fr-FR")},${String(c % 100).padStart(2, "0")} F`;
+}
+/** 3720 → « 1 h 02 » */
+function dureeHm(sec) {
+  const m = Math.floor(sec / 60);
+  return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")}` : `${m} min`;
+}
+let succesListe = [], succesKey = "";
+invoke("succes_liste").then((l) => { succesListe = l || []; succesKey = ""; }).catch(() => {});
+bridge.listen("v34:succes", () => {
+  const tab = document.querySelector('#bbs-tabs [data-view="succes"]');
+  if ($("succes").hidden) tab.classList.add("unread");
+});
+function renderSucces(net) {
+  const c = net && net.compte;
+  const key = JSON.stringify([!!net, net && net.registered, c, succesListe.length]);
+  if (key === succesKey) return;
+  succesKey = key;
+  const esc = (t) => String(t).replace(/[&<>"]/g, (x) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[x]);
+  const eus = new Set((c && c.succes) || []);
+  setText("succes-count", succesListe.length ? `${eus.size}/${succesListe.length}` : "");
+  let html = "";
+  if (c) {
+    const m = MOIS[(c.mois % 100) - 1] || "";
+    html += `<div class="facture-ligne"><span>FACTURE DE ${m.toUpperCase()} ${Math.floor(c.mois / 100)}</span><b>${francs(c.centimes)}</b><small>${dureeHm(c.secondes)} d'appels passés · le détail : Mon compte, sur le site</small></div>`;
+  } else {
+    html += `<div class="dir-note">${net ? "Le central n'a pas encore envoyé ta facture (ou il est trop ancien pour en tenir une)." : "En boucle locale, pas de facture ni de succès : c'est le central qui les tient. Connecte-toi (badge en haut à droite)."}</div>`;
+  }
+  const tri = [...succesListe].sort((a, b) => (eus.has(b.id) ? 1 : 0) - (eus.has(a.id) ? 1 : 0));
+  for (const s of tri) {
+    const eu = eus.has(s.id);
+    const titre = eu || !s.cache ? esc(s.titre) : "???";
+    const desc = eu || !s.cache ? esc(s.description) : "Succès caché.";
+    html += `<div class="succes-row${eu ? " eu" : ""}"><i>${eu ? "★" : "☆"}</i><span class="who">${titre}</span><small>${desc}</small></div>`;
+  }
+  $("succes-list").innerHTML = html;
+}
 function dialFromDir(num) {
   $("dial-number").value = num;
   invoke("at_command", { line: "ATDT" + num });

@@ -29,6 +29,8 @@ pub mod packet;
 pub mod pace;
 pub mod port;
 pub mod signal;
+pub mod succes;
+pub mod tarif;
 pub mod tunnel;
 
 pub use jitter::{Concealment, FrameKind, JitterBuffer, JitterStats};

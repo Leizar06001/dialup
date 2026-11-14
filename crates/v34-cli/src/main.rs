@@ -630,6 +630,10 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
                 CentralEvent::ServerLost => println!("Central injoignable : ré-enregistrement…"),
                 CentralEvent::Registered { number, .. } => println!("Ré-enregistré auprès du central (numéro {number})."),
                 CentralEvent::AuthFailed { reason } => return Err(format!("connexion refusée : {}", reason.describe())),
+                CentralEvent::Compte(c) => {
+                    let francs = v34_net::tarif::francs(c.centimes as u64);
+                    println!("Facture du mois : {francs} · {} succès", c.succes.len());
+                }
             }
         }
         if ring_at.is_some_and(|r| r.elapsed().as_secs_f64() >= rings) {

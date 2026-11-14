@@ -113,6 +113,18 @@ pub enum CentralEvent {
     UnknownNumber { number: String },
     /// Fin de l'appel décidée par l'autre côté ou par le central
     HungUp { call_id: u32, reason: HangupReason },
+    /// Facture du mois et succès (centraux 0.1.7 et suivants)
+    Compte(Compte),
+}
+
+/// Facture du mois en cours et succès obtenus, d'après le central.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Compte {
+    /// AAAAMM
+    pub mois: u32,
+    pub centimes: u32,
+    pub secondes: u32,
+    pub succes: Vec<String>,
 }
 
 /// État de l'appel.
@@ -166,6 +178,11 @@ pub struct CentralClient {
     /// Annuaire du central (redemandé toutes les DIRECTORY_EVERY)
     directory: Vec<DirEntry>,
     next_directory: Instant,
+    /// Dernier COMPTE reçu
+    compte: Option<Compte>,
+    /// Succès constatés par l'appli, renvoyés avec chaque demande d'annuaire
+    /// tant que COMPTE ne les cite pas
+    exploits: Vec<String>,
     last_directory_req: Option<Instant>,
     /// Demande en attente de réponse (mesure de l'aller-retour)
     rtt_probe: Option<Instant>,
@@ -226,6 +243,8 @@ impl CentralClient {
             services: Vec::new(),
             directory: Vec::new(),
             next_directory: now,
+            compte: None,
+            exploits: Vec::new(),
             last_directory_req: None,
             rtt_probe: None,
             rtt_ms: None,
@@ -401,13 +420,20 @@ impl CentralClient {
                 }
             }
             Reg::Registered { session, key } => {
+                // Copies : `self` est réemprunté plus bas
+                let (session, key) = (*session, *key);
                 if now >= self.next_directory && self.last_directory_req.is_none_or(|t| now - t >= DIRECTORY_MIN_GAP) {
                     // Non fiable : pas de msg_id ni d'acquittement.
-                    let bytes = signal::encode(&Frame { session: *session, msg_id: 0, msg: Msg::DirectoryReq }, Some(key));
+                    let bytes = signal::encode(&Frame { session, msg_id: 0, msg: Msg::DirectoryReq }, Some(&key));
                     self.next_directory = now + DIRECTORY_EVERY;
                     self.last_directory_req = Some(now);
                     self.rtt_probe = Some(now);
                     self.send_raw(&bytes)?;
+                    if !self.exploits.is_empty() {
+                        let msg = Msg::Exploits { ids: self.exploits.clone() };
+                        let bytes = signal::encode(&Frame { session, msg_id: 0, msg }, Some(&key));
+                        self.send_raw(&bytes)?;
+                    }
                 }
                 if now >= self.next_keepalive {
                     self.next_keepalive = now + self.keepalive_every;
@@ -488,6 +514,15 @@ impl CentralClient {
                     if let Some(t) = self.rtt_probe.take() {
                         let r = t.elapsed().as_secs_f32() * 1000.0;
                         self.rtt_ms = Some(self.rtt_ms.map_or(r, |x| 0.6 * x + 0.4 * r));
+                    }
+                    return Ok(());
+                }
+                if let Msg::Compte { mois, centimes, secondes, succes } = f.msg {
+                    self.exploits.retain(|e| !succes.contains(e));
+                    let c = Compte { mois, centimes, secondes, succes };
+                    if self.compte.as_ref() != Some(&c) {
+                        self.compte = Some(c.clone());
+                        self.events.push_back(CentralEvent::Compte(c));
                     }
                     return Ok(());
                 }
@@ -713,6 +748,22 @@ impl CentralClient {
     }
 
     /// Redemande l'annuaire au prochain `poll` (au plus une fois par seconde).
+    /// Facture du mois et succès (`None` : pas encore reçus, ou central
+    /// d'avant le 0.1.7).
+    pub fn compte(&self) -> Option<&Compte> {
+        self.compte.as_ref()
+    }
+
+    /// Signale au central un succès constaté par l'appli (envoyé avec la
+    /// prochaine demande d'annuaire, répété jusqu'à ce qu'il le note).
+    pub fn exploit(&mut self, id: &str) {
+        if !crate::succes::id_valide(id) || self.exploits.iter().any(|e| e == id) || self.compte.as_ref().is_some_and(|c| c.succes.iter().any(|s| s == id)) {
+            return;
+        }
+        self.exploits.push(id.to_string());
+        self.next_directory = Instant::now();
+    }
+
     pub fn refresh_directory(&mut self) {
         self.next_directory = Instant::now();
     }

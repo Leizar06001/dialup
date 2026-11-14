@@ -36,6 +36,7 @@ use v34_net::signal::{
 
 use crate::comptes::Comptes;
 use crate::config::{Annuaire, Config, Service};
+use crate::facturation::{Facturation, Ticket};
 use crate::oracle::Oracle;
 use crate::services::{self, ModemCall, ModemInput, ModemNotice};
 use crate::tunnel::TunnelPolicy;
@@ -93,6 +94,12 @@ struct Call {
     callee: Callee,
     state: CallState,
     created: Instant,
+    /// Pour le ticket : appelant (nom, numéro), numéro composé, appelé (nom
+    /// ou service), et le décroché (horloge, secondes Unix)
+    appelant: (String, String),
+    numero: String,
+    appele: String,
+    debut: Option<(Instant, u64)>,
     /// Simulateurs de ligne : [appelant → appelé, appelé → appelant]
     sims: Option<Box<[LineSim; 2]>>,
 }
@@ -131,6 +138,8 @@ pub struct Server {
     comptes: Option<ComptesSource>,
     /// Fichier d'état pour le site (« État du réseau »), réécrit chaque seconde
     etat: Option<(PathBuf, Instant)>,
+    /// Tickets de communication et succès (dossier partagé avec le site)
+    facturation: Option<Facturation>,
     /// Démarrage (secondes Unix)
     depuis: u64,
     stop: Arc<AtomicBool>,
@@ -205,6 +214,7 @@ impl Server {
             watch: None,
             comptes: None,
             etat: None,
+            facturation: None,
             depuis: unix_now(),
             stop: Arc::new(AtomicBool::new(false)),
             stats: Arc::new(Mutex::new(Stats::default())),
@@ -239,6 +249,12 @@ impl Server {
 
     /// Publie l'état du central dans ce fichier JSON (chaque seconde) :
     /// la page « État du réseau » du site le lit.
+    /// Tickets de communication et succès dans `dir` (voir [`crate::facturation`]).
+    pub fn with_facturation(mut self, dir: PathBuf) -> Server {
+        self.facturation = Some(Facturation::ouvrir(dir, unix_now()));
+        self
+    }
+
     pub fn with_status_file(mut self, path: PathBuf) -> Server {
         self.etat = Some((path, Instant::now()));
         self
@@ -416,6 +432,15 @@ impl Server {
             let msg = Msg::Directory { entries: self.directory() };
             let bytes = signal::encode(&Frame { session, msg_id: 0, msg }, Some(&key));
             self.send_to(&bytes, addr);
+            self.send_compte(session);
+            return;
+        }
+        if let Msg::Exploits { ids } = &f.msg {
+            let nom = reg.name.clone();
+            if self.facturation.as_mut().is_some_and(|fa| fa.exploits(&nom, ids, unix_now())) {
+                info!("{nom} : succès {}", ids.join(", "));
+                self.send_compte(session);
+            }
             return;
         }
         if !f.msg.is_reliable() {
@@ -489,7 +514,20 @@ impl Server {
         self.by_name.insert(name.clone(), session);
         self.by_number.insert(number.clone(), session);
         info!("{name} enregistré au {number} depuis {from}");
+        if let Some(f) = self.facturation.as_mut() {
+            f.connexion(&name, unix_now());
+        }
         self.send_welcome(session);
+    }
+
+    /// Facture du mois et succès (sans acquittement : repart avec chaque
+    /// annuaire ; les clients d'avant le 0.1.7 l'ignorent).
+    fn send_compte(&mut self, session: u32) {
+        let (Some(f), Some(reg)) = (self.facturation.as_mut(), self.regs.get(&session)) else { return };
+        let r = f.releve(&reg.name, unix_now());
+        let msg = Msg::Compte { mois: r.mois, centimes: r.centimes, secondes: r.secondes, succes: r.succes };
+        let b = signal::encode(&Frame { session, msg_id: 0, msg }, Some(&reg.key));
+        self.send_to(&b, reg.addr);
     }
 
     fn send_welcome(&self, session: u32) {
@@ -607,7 +645,9 @@ impl Server {
             let answer_at = now + Duration::from_millis(self.cfg.modems.delai_decroche_ms);
             let sims = self.line_sims();
             let callee = Callee::Modem { service, answer_at, tx: None };
-            self.calls.insert(id, Call { caller: session, callee, state: CallState::Ringing, created: now, sims });
+            let appelant = (reg.name.clone(), reg.number.clone());
+            let appele = service.name().to_string();
+            self.calls.insert(id, Call { caller: session, callee, state: CallState::Ringing, created: now, sims, appelant, numero: number.clone(), appele, debut: None });
             if let Some(r) = self.regs.get_mut(&session) {
                 r.call = Some(id);
             }
@@ -624,7 +664,9 @@ impl Server {
         }
         let id = self.new_call_id();
         let sims = self.line_sims();
-        self.calls.insert(id, Call { caller: session, callee: Callee::Client(callee), state: CallState::Ringing, created: now, sims });
+        let appelant = self.regs.get(&session).map(|r| (r.name.clone(), r.number.clone())).unwrap_or_default();
+        let appele = self.regs.get(&callee).map(|r| r.name.clone()).unwrap_or_default();
+        self.calls.insert(id, Call { caller: session, callee: Callee::Client(callee), state: CallState::Ringing, created: now, sims, appelant, numero: number.clone(), appele, debut: None });
         let caller_number = self.regs.get(&session).map(|r| r.number.clone()).unwrap_or_default();
         for s in [session, callee] {
             if let Some(r) = self.regs.get_mut(&s) {
@@ -642,6 +684,7 @@ impl Server {
             return;
         }
         call.state = CallState::Active;
+        call.debut = Some((Instant::now(), unix_now()));
         let caller = call.caller;
         info!("appel {call_id:08x} : décroché");
         self.send_reliable(caller, Msg::Answer { call_id });
@@ -650,6 +693,10 @@ impl Server {
     /// Termine un appel ; prévient toutes les parties sauf `by`.
     fn end_call(&mut self, call_id: u32, by: Option<u32>, reason: HangupReason) {
         let Some(call) = self.calls.remove(&call_id) else { return };
+        let service = match &call.callee {
+            Callee::Modem { service, .. } => Some(service.name()),
+            Callee::Client(_) => None,
+        };
         let mut parties = vec![call.caller];
         match call.callee {
             Callee::Client(s) => parties.push(s),
@@ -669,6 +716,17 @@ impl Server {
             }
         }
         info!("appel {call_id:08x} terminé ({})", reason.describe());
+        // Ticket de communication (appel abouti seulement) ; seul l'appelant paie
+        if let (Some((t0, debut)), Some(f)) = (call.debut, self.facturation.as_mut()) {
+            let (nom, num) = (&call.appelant.0, &call.appelant.1);
+            let t = Ticket::nouveau(debut, t0.elapsed().as_secs() as u32, (nom, num), &call.numero, &call.appele, service);
+            info!("ticket : {nom} → {} ({}), {} s, {}", call.numero, call.appele, t.duree_s, v34_net::tarif::francs(t.centimes as u64));
+            for n in f.appel(t) {
+                if let Some(&s) = self.by_name.get(&n) {
+                    self.send_compte(s);
+                }
+            }
+        }
     }
 
     fn start_modem(&mut self, call_id: u32) {
@@ -706,6 +764,7 @@ impl Server {
                     *slot = Some(tx);
                 }
                 call.state = CallState::Active;
+                call.debut = Some((Instant::now(), unix_now()));
                 let caller = call.caller;
                 self.send_reliable(caller, Msg::Answer { call_id });
             }

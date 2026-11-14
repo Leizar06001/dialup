@@ -13,6 +13,8 @@ use v34_core::{
     LineParams, ModemCommand, ModemConfig, ModemEvent, ModemStatus, Phase, Role, SAMPLE_RATE,
 };
 
+use v34_net::tarif::{self, Categorie};
+
 use crate::audio::Speaker;
 use crate::fft;
 use crate::link::{Link, LocalLoop, Side};
@@ -241,7 +243,12 @@ pub struct UiState {
     pub visio: crate::visio::VisioUi,
     /// L'appel en cours est pour 3615 ORACLE
     pub oracle: bool,
+    /// Compteur de taxes de l'appel en cours (ou du dernier)
+    pub taxe: Option<TaxeUi>,
 }
+
+/// Préréglage « Orage » (succès « Dans la tempête »)
+static ORAGE: std::sync::LazyLock<LineParams> = std::sync::LazyLock::new(|| LineParams::preset("Orage").expect("préréglage Orage"));
 
 #[derive(Clone, Serialize)]
 struct ConsoleLine {
@@ -344,6 +351,49 @@ pub struct Engine {
     /// Numéro déjà annoncé dans la messagerie : une reconnexion au central
     /// (même compte) ne le répète pas
     numero_annonce: Option<String>,
+    /// Compteur de taxes de l'appel en cours (ou du dernier, figé)
+    taxe: Option<Taxe>,
+    /// Catégorie tarifaire de l'appel qu'on compose (`None` : appel reçu)
+    taxe_cat: Option<Categorie>,
+    /// Succès déjà connus : on n'annonce que les nouveaux (`None` avant le
+    /// premier COMPTE du central)
+    succes_connus: Option<std::collections::BTreeSet<String>>,
+    /// Exploits de l'appel en cours : temps en données sur la ligne Orage,
+    /// réentraînements
+    orage_s: f32,
+    retrains: u32,
+}
+
+/// Compteur de taxes d'un appel (tarifs : [`v34_net::tarif`]).
+struct Taxe {
+    cat: Categorie,
+    debut_unix: u64,
+    debut: Instant,
+    fin: Option<Instant>,
+    /// Appel reçu : c'est l'appelant qui paie
+    recu: bool,
+}
+
+/// Le compteur, pour l'IHM (ligne TAXES du panneau).
+#[derive(Clone, Serialize)]
+pub struct TaxeUi {
+    pub centimes: u32,
+    /// Tarif à la minute en ce moment (centimes)
+    pub minute: u32,
+    pub libelle: &'static str,
+    pub heures_creuses: bool,
+    pub recu: bool,
+    pub fini: bool,
+}
+
+impl Taxe {
+    fn ui(&self) -> TaxeUi {
+        let fin = self.fin.unwrap_or_else(Instant::now);
+        let s = fin.saturating_duration_since(self.debut).as_secs() as u32;
+        let now = self.debut_unix + s as u64;
+        let (centimes, minute) = if self.recu { (0, 0) } else { (tarif::cout_centimes(self.cat, self.debut_unix, s), tarif::tarif_minute(self.cat, now)) };
+        TaxeUi { centimes, minute, libelle: self.cat.libelle(), heures_creuses: tarif::heures_creuses(now), recu: self.recu, fini: self.fin.is_some() }
+    }
 }
 
 fn fmt_speed(x: f64) -> String {
@@ -408,6 +458,11 @@ impl Engine {
             visio: Default::default(),
             oracle_call: false,
             numero_annonce: None,
+            taxe: None,
+            taxe_cat: None,
+            succes_connus: None,
+            orage_s: 0.0,
+            retrains: 0,
         }
     }
 
@@ -425,6 +480,7 @@ impl Engine {
                 }
             }
             self.tick();
+            self.suivre_appel(n as u64);
             n += 1;
             // Démo / tests : V34_AUTODIAL=1 compose tout seul 1 s après le
             // démarrage (V34_AUTODIAL=Campagne choisit aussi la ligne).
@@ -762,6 +818,9 @@ impl Engine {
 
     fn reset_call_flags(&mut self) {
         self.offhook_since = Some(Instant::now());
+        self.taxe = None;
+        self.orage_s = 0.0;
+        self.retrains = 0;
         self.counters = Counters::default();
         self.local_was_active = false;
         self.remote_was_active = false;
@@ -787,10 +846,25 @@ impl Engine {
                 if self.numero_annonce.as_deref() != Some(number.as_str()) {
                     self.chat("system", format!("Central : votre numéro est le {number}. Le FAI est au {ISP_NUMBER}."));
                     self.numero_annonce = Some(number);
+                    // autre compte : ses succès ne sont pas « nouveaux »
+                    self.succes_connus = None;
                 }
             }
             N::AuthFailed(r) => self.console(&format!("Central : connexion refusée ({r})"), "result"),
             N::ServerLost => self.console("Central injoignable — nouvelle tentative…", "info"),
+            N::Compte(c) => {
+                let nouveaux: Vec<String> = match &self.succes_connus {
+                    Some(k) => c.succes.iter().filter(|s| !k.contains(*s)).cloned().collect(),
+                    None => Vec::new(),
+                };
+                self.succes_connus = Some(c.succes.iter().cloned().collect());
+                for id in nouveaux {
+                    if let Some(s) = v34_net::succes::trouver(&id) {
+                        self.console(&format!("★ SUCCÈS : {} — {}", s.titre, s.description), "info");
+                        let _ = self.app.emit("v34:succes", s);
+                    }
+                }
+            }
             N::Incoming { from } => {
                 if self.is_busy() {
                     return;
@@ -798,6 +872,7 @@ impl Engine {
                 self.link.new_call(Role::Answer, &self.cfg);
                 self.session = Session::Bbs;
                 self.oracle_call = false;
+                self.taxe_cat = None;
                 self.stop_tunnel();
                 self.reset_call_flags();
                 if self.auto_answer {
@@ -1091,6 +1166,12 @@ impl Engine {
                 let out = self.outgoing.pop_front().unwrap();
                 self.chat("system", format!("« {} » envoyé et acquitté ({:.2} Ko/s)", out.name, rate));
                 self.file_event("tx", &out.name, out.size, out.size, rate, "done");
+                if !self.oracle_call {
+                    self.exploit("fichier");
+                    if out.size >= v34_net::succes::GROS_COLIS {
+                        self.exploit("gros-colis");
+                    }
+                }
             } else {
                 self.file_event("tx", &out.name, done, out.size, rate, "progress");
                 break;
@@ -1118,6 +1199,17 @@ impl Engine {
         // boucle locale, le distant simulé le joue (hors ligne).
         let services = self.link.net_info().map(|i| i.services).unwrap_or_default();
         self.oracle_call = digits == ORACLE_NUMBER || services.iter().any(|(n, k)| *n == digits && k == "oracle");
+        // Compteur de taxes : le FAI au tarif local, l'oracle (et les 08 36)
+        // au kiosque, les numéros verts gratuits. Le central fait foi.
+        self.taxe_cat = Some(if self.session == Session::Internet {
+            Categorie::Local
+        } else if self.oracle_call || (digits.starts_with("0836") && !services.iter().any(|(n, _)| *n == digits)) {
+            Categorie::Kiosque
+        } else if digits.starts_with("0800") || services.iter().any(|(n, k)| *n == digits && k == "echo") {
+            Categorie::Vert
+        } else {
+            Categorie::Local
+        });
         self.link.set_remote_service(match self.session {
             Session::Internet => crate::link::RemoteService::Isp,
             Session::Bbs if self.oracle_call => crate::link::RemoteService::Oracle,
@@ -1162,6 +1254,7 @@ impl Engine {
         }
         self.script = ToneScript::incoming();
         self.script_kind = ScriptKind::Ringing;
+        self.taxe_cat = None;
         self.reset_call_flags();
         self.console("Appel entrant simulé…", "info");
         true
@@ -1226,6 +1319,45 @@ impl Engine {
                 }
                 let r = self.status.params.data_rate_rx.unwrap_or(0);
                 self.console(&format!("Connecté à TINYVERSE à {r} bit/s — bonne navigation !"), "result");
+            }
+        }
+    }
+
+    /// Succès constaté par l'appli : le central le note (mode réseau).
+    fn exploit(&mut self, id: &str) {
+        if self.link.is_network() {
+            self.link.net_exploit(id);
+        }
+    }
+
+    /// Compteur de taxes et exploits de l'appel en cours (à chaque tic de 20 ms).
+    fn suivre_appel(&mut self, n: u64) {
+        let en_appel = in_call(self.status.phase);
+        match &mut self.taxe {
+            None if en_appel && self.offhook_since.is_some() => {
+                let cat = self.taxe_cat.unwrap_or(Categorie::Local);
+                let debut_unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+                self.taxe = Some(Taxe { cat, debut_unix, debut: Instant::now(), fin: None, recu: self.taxe_cat.is_none() });
+            }
+            Some(t) if t.fin.is_none() && !en_appel => t.fin = Some(Instant::now()),
+            _ => {}
+        }
+        if self.status.phase != Phase::Data {
+            return;
+        }
+        if self.orage_s < v34_net::succes::TEMPETE_S && self.line == *ORAGE {
+            self.orage_s += 0.02;
+            if self.orage_s >= v34_net::succes::TEMPETE_S {
+                self.exploit("tempete");
+            }
+        }
+        if self.retrains >= v34_net::succes::TENACE_RETRAINS {
+            self.exploit("tenace");
+        }
+        if n % 50 == 0 {
+            let v = self.visio.ui(&self.visio_ctx(), Instant::now());
+            if v.online && v.camera && v.peer_camera {
+                self.exploit("visio");
             }
         }
     }
@@ -1313,7 +1445,10 @@ impl Engine {
         }
         self.speaker.push(&out);
 
-        if !offhook && !in_call(self.status.phase) {
+        // Réseau : entre la numérotation et le décroché du correspondant, le
+        // modem n'est pas encore en ligne mais l'appel continue (retour
+        // d'appel) ; sans ça, DURÉE repartait de zéro et restait à 00:00.
+        if !offhook && !in_call(self.status.phase) && !self.ringback {
             self.offhook_since = None;
         }
     }
@@ -1348,9 +1483,17 @@ impl Engine {
     fn on_event(&mut self, side: Side, ev: ModemEvent) {
         if side == Side::Local {
             match &ev {
-                ModemEvent::PhaseChanged(Phase::Retrain) => self.counters.recoveries += 1,
+                ModemEvent::PhaseChanged(Phase::Retrain) => {
+                    self.counters.recoveries += 1;
+                    self.retrains += 1;
+                }
                 ModemEvent::Connected { tx_rate, rx_rate } => {
                     self.console(&format!("CONNECT {rx_rate}/V34 (TX {tx_rate})"), "result");
+                    if *rx_rate > 33_600 {
+                        self.exploit("v90");
+                    } else if *rx_rate == 33_600 {
+                        self.exploit("v34");
+                    }
                     if self.session == Session::Internet && self.tunnel.is_none() {
                         self.start_tunnel(*tx_rate);
                     }
@@ -1484,6 +1627,7 @@ impl Engine {
             audio_device: self.speaker.device_name(),
             visio: self.visio.ui(&self.visio_ctx(), Instant::now()),
             oracle: self.oracle_call && self.session == Session::Bbs,
+            taxe: self.taxe.as_ref().map(Taxe::ui),
         };
         let _ = self.app.emit("v34:state", state);
     }

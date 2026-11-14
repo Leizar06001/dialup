@@ -628,3 +628,37 @@ fn reglages_et_dates() {
     assert_eq!(pages::duree_fr(93_784), "1 j 02 h 03 min");
     assert_eq!(pages::duree_fr(30), "moins d'une minute");
 }
+
+#[test]
+fn facture_succes_et_classement_dans_l_espace_abonne() {
+    use crate::facturation::{Facturation, Ticket};
+    let b = banc();
+    let p = &b.p;
+    let maintenant = crate::comptes::maintenant();
+    // Le central a noté deux appels de raziel et un de prunelle ce mois-ci
+    let mut f = Facturation::ouvrir(b.dir.clone(), maintenant);
+    let debut = maintenant - 7200;
+    if v34_net::tarif::mois(debut) != v34_net::tarif::mois(maintenant) {
+        return; // tout début de mois : les appels seraient sur le relevé précédent
+    }
+    f.appel(Ticket::nouveau(debut, 600, ("raziel", "0142424242"), "0836672253", "oracle", Some("oracle")));
+    f.appel(Ticket::nouveau(debut + 1000, 120, ("raziel", "0142424242"), "0143434343", "prunelle", None));
+    f.appel(Ticket::nouveau(debut + 2000, 60, ("prunelle", "0143434343"), "0142424242", "raziel", None));
+    let session = connexion(p, "raziel", "mdp-raziel", "192.0.2.1");
+    let page = texte(&get_avec(p, "/compte", &session));
+    // 3615 ORACLE 10 min (22,30 F) + appel local (0,74 F) = 23,04 F
+    for attendu in ["Ma facture de", "2 appels", "23,04 F", "Mes succès", "Consultation", "Allô ?", "Les plus grosses factures", "/compte/facture?mois="] {
+        assert!(page.contains(attendu), "{attendu} absent de la page");
+    }
+    assert!(page.contains("???"), "les succès cachés restent cachés");
+    // Le relevé détaillé : ses appels seulement
+    let mois = v34_net::tarif::mois(maintenant);
+    let releve = texte(&get_avec(p, &format!("/compte/facture?mois={mois}"), &session));
+    for attendu in ["Relevé de communications", "3615 ORACLE", "prunelle", "Kiosque 08 36", "22,30 F", "23,04 F", "jamais"] {
+        assert!(releve.contains(attendu), "{attendu} absent du relevé");
+    }
+    assert_eq!(releve.matches("<tr><td>").count(), 2, "les appels de prunelle n'y sont pas");
+    // Sans session : le formulaire de connexion ; mois absurde : le mois en cours
+    assert!(texte(&get(p, "/compte/facture")).contains("action=\"/compte/connexion\""));
+    assert!(texte(&get_avec(p, "/compte/facture?mois=999999", &session)).contains("23,04 F"));
+}

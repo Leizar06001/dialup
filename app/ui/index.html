@@ -115,6 +115,7 @@
           <div class="vfd-row sig"><span>TX ▸</span><b id="p-tx">—</b></div>
           <div class="vfd-row sig"><span>RX ◂</span><b id="p-rx">—</b></div>
           <div class="vfd-row"><span>DURÉE</span><b id="p-time">00:00</b></div>
+          <div class="vfd-row" data-tip="taxe"><span>TAXES</span><b id="p-taxe">--</b></div>
         </div>
 
         <div class="scope-box screen-green">
@@ -197,7 +198,12 @@
       <h2 class="panel-title" id="bbs-title">ANNUAIRE</h2>
       <div class="panel-tabs seg small" id="bbs-tabs" role="tablist">
         <button data-view="chat" role="tab" data-tip="chat">CHAT ↗</button>
+        <button data-view="succes" role="tab" data-tip="succes">SUCCÈS</button>
         <button data-view="dir" class="on" role="tab">ANNUAIRE</button>
+      </div>
+      <div class="amber dir-view" id="succes" hidden>
+        <div class="dir-head"><span id="succes-title">SUCCÈS</span><span id="succes-count"></span></div>
+        <div class="dir-list" id="succes-list"></div>
       </div>
       <div class="amber dir-view" id="dir">
         <div class="dir-head"><span id="dir-title">ANNUAIRE DU CENTRAL</span><span id="dir-count"></span></div>
