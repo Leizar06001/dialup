@@ -132,7 +132,8 @@ pub enum EngineCmd {
     /// Envoi d'un fichier (nom, contenu)
     SendFile(String, Vec<u8>),
     /// Panneau CONFIG : configuration des prochains appels (voir `modem_config`)
-    SetConfig(ModemConfig),
+    /// Panneau CONFIG : configuration du modem, réponse automatique
+    SetConfig(ModemConfig, bool),
 }
 
 /// Débit le plus bas du V.90 (sens descendant), en bit/s : en dessous, le
@@ -151,6 +152,7 @@ const V90_MIN_RATE: u32 = 28000;
 ///
 /// Les autres réglages gardent leurs valeurs par défaut.
 pub fn modem_config(v90: bool, max_rate: u32) -> ModemConfig {
+    // (la réponse automatique, DIP 2, est un réglage de l'appli, pas du modem)
     ModemConfig {
         max_rate: max_rate.min(33600),
         v90: v90 && max_rate >= V90_MIN_RATE,
@@ -201,6 +203,8 @@ pub struct UiState {
     pub counters: Counters,
     /// Avancement des chargements du navigateur (session Internet)
     pub nav: Option<v34_net::tunnel::Progress>,
+    /// Appel entrant qui sonne (réponse manuelle) : numéro de l'appelant
+    pub incoming: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -250,6 +254,10 @@ pub struct Engine {
     app: AppHandle,
     link: Box<dyn Link>,
     cfg: ModemConfig,
+    /// Interrupteur DIP 2 : décrocher tout seul aux appels entrants
+    auto_answer: bool,
+    /// Appel entrant qui sonne, en attente de ATA (réponse manuelle)
+    ringing_from: Option<String>,
     line: LineParams,
     line_response: Vec<(f32, f32)>,
     speaker: Speaker,
@@ -312,6 +320,8 @@ impl Engine {
             app,
             link,
             cfg: ModemConfig::default(),
+            auto_answer: true,
+            ringing_from: None,
             line,
             line_response,
             speaker,
@@ -434,6 +444,9 @@ impl Engine {
                     }
                 }
                 ModemCommand::Answer => {
+                    if self.answer_ringing() {
+                        return;
+                    }
                     if !self.start_incoming() {
                         self.console("ERROR", "result");
                     }
@@ -512,7 +525,10 @@ impl Engine {
             }
             // Comme les interrupteurs d'un vrai modem : lus au décroché, donc
             // pris en compte au prochain `new_call` (l'appel en cours continue).
-            EngineCmd::SetConfig(cfg) => self.cfg = cfg,
+            EngineCmd::SetConfig(cfg, auto) => {
+                self.cfg = cfg;
+                self.auto_answer = auto;
+            }
             EngineCmd::SendFile(name, data) => {
                 if !matches!(self.status.phase, Phase::Data | Phase::Retrain) {
                     self.chat("system", "Pas de porteuse : connecte-toi d'abord (ATDT…)".into());
@@ -580,6 +596,11 @@ impl Engine {
                     i = body.len();
                 }
                 'A' => {
+                    if self.answer_ringing() {
+                        responded = true;
+                        i = body.len();
+                        continue;
+                    }
                     if !self.start_incoming() {
                         self.console("ERROR", "result");
                         return;
@@ -697,7 +718,13 @@ impl Engine {
                 self.session = Session::Bbs;
                 self.stop_tunnel();
                 self.reset_call_flags();
-                self.script = ToneScript::ringing_net(&from);
+                if self.auto_answer {
+                    self.script = ToneScript::ringing_net(&from);
+                } else {
+                    // DIP 2 sur OFF : ça sonne jusqu'à ATA
+                    self.script = ToneScript::ringing_manual(&from);
+                    self.ringing_from = Some(from);
+                }
                 self.script_kind = ScriptKind::Ringing;
             }
             N::Ringing => self.console("Ça sonne chez votre correspondant…", "info"),
@@ -707,24 +734,45 @@ impl Engine {
                 self.console("Décroché", "info");
             }
             N::Busy(n) => {
+                // Tonalité d'occupation, puis BUSY (le modem l'a « entendue »)
                 self.ringback = false;
-                self.script.clear();
-                self.console(&format!("BUSY ({n} est occupé)"), "result");
-                self.link.command_local(ModemCommand::Hangup);
+                self.script = ToneScript::busy(format!("BUSY ({n} est occupé)"));
+                self.script_kind = ScriptKind::Dialing;
             }
             N::Unknown(n) => {
+                // Les trois notes du numéro non attribué
                 self.ringback = false;
-                self.script.clear();
-                self.console(&format!("NO ANSWER — le {n} n'est pas attribué"), "result");
-                self.link.command_local(ModemCommand::Hangup);
+                self.script = ToneScript::unassigned(format!("NO ANSWER — le {n} n'est pas attribué"));
+                self.script_kind = ScriptKind::Dialing;
             }
-            N::HungUp(r) => {
+            N::HungUp(reason, r) => {
+                use v34_net::signal::HangupReason as H;
                 self.ringback = false;
                 self.script.clear();
                 self.stop_tunnel();
-                if !self.user_hangup {
-                    self.console(&format!("NO CARRIER ({r})"), "result");
+                if self.ringing_from.take().is_some() {
+                    self.console("L'appelant a raccroché avant qu'on décroche", "info");
                     self.user_hangup = true;
+                    return;
+                }
+                if self.user_hangup {
+                    return;
+                }
+                self.user_hangup = true;
+                let connected = matches!(self.status.phase, Phase::Data | Phase::Phase2 | Phase::Phase3 | Phase::Phase4 | Phase::Retrain | Phase::Cleardown);
+                match reason {
+                    // FAI non activé : il « sonne occupé » (comme le dit le site)
+                    H::Forbidden if !connected => {
+                        self.script = ToneScript::busy(format!("BUSY ({r})"));
+                        self.script_kind = ScriptKind::Dialing;
+                    }
+                    // Plus de modem libre, limite atteinte : réseau encombré
+                    H::Rejected if !connected => {
+                        self.script = ToneScript::congestion(format!("NO CARRIER ({r})"));
+                        self.script_kind = ScriptKind::Dialing;
+                    }
+                    H::NoAnswer => self.console("NO ANSWER", "result"),
+                    _ => self.console(&format!("NO CARRIER ({r})"), "result"),
                 }
             }
         }
@@ -988,6 +1036,17 @@ impl Engine {
         true
     }
 
+    /// ATA pendant qu'un appel du central sonne (réponse manuelle).
+    fn answer_ringing(&mut self) -> bool {
+        if self.ringing_from.take().is_none() {
+            return false;
+        }
+        self.script.clear();
+        self.console("Décroché", "info");
+        self.link.net_answer();
+        true
+    }
+
     fn start_incoming(&mut self) -> bool {
         if self.is_busy() {
             return false;
@@ -1002,6 +1061,7 @@ impl Engine {
 
     fn hangup(&mut self) {
         self.user_hangup = true;
+        self.ringing_from = None;
         self.script.clear();
         self.ringback = false;
         if self.link.is_network() && self.status.phase != Phase::Data {
@@ -1029,6 +1089,10 @@ impl Engine {
             }
             SetupAction::NetAnswer => {
                 self.link.net_answer();
+            }
+            SetupAction::Fail(result) => {
+                self.console(&result, "result");
+                self.link.command_local(ModemCommand::Hangup);
             }
         }
     }
@@ -1261,6 +1325,7 @@ impl Engine {
             counters: self.counters,
             proxy: self.tunnel.as_ref().filter(|_| self.tunnel_ready).map(|t| t.client.local_addr().to_string()),
             nav: self.tunnel.as_ref().map(|t| t.client.progress()),
+            incoming: self.ringing_from.clone(),
             audio_device: self.speaker.device_name(),
         };
         let _ = self.app.emit("v34:state", state);

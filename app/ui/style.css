@@ -952,3 +952,12 @@ button.dip-col:focus-visible .dip-slot { outline: 2px solid var(--vfd); outline-
 @media (min-width: 1400px) and (min-height: 840px) {
   .phases .call-pill { min-width: 96px; }
 }
+
+/* Interrupteur 2 (réponse automatique) : le ruban « NE PAS MODIFIER » ne
+   couvre plus que les 3 à 8, la légende gagne une colonne. */
+.dip-tape { left: 71px; }
+.dip-legend { grid-template-columns: 26px 26px 1fr; }
+
+/* APPELER devenu DÉCROCHER : ça sonne ! */
+#btn-dial.ringing { animation: sonne 0.5s steps(2) infinite; }
+@keyframes sonne { 50% { filter: brightness(1.45); transform: translateX(1px); } }

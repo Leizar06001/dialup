@@ -24,6 +24,9 @@ pub enum SetupAction {
     NetDial(String),
     /// Réseau : on décroche l'appel entrant.
     NetAnswer,
+    /// Fin d'un appel qui n'aboutit pas (après la tonalité) : code
+    /// résultat, et le modem raccroche.
+    Fail(String),
 }
 
 #[derive(Clone, Debug)]
@@ -129,6 +132,59 @@ impl ToneScript {
             s.steps.push_back(Step::Silence(ms(800)));
         }
         s.steps.push_back(Step::Action(SetupAction::NetAnswer));
+        s
+    }
+
+    /// Réseau, réponse automatique coupée : ça sonne (une trentaine de
+    /// secondes au plus) jusqu'à ce que l'utilisateur décroche (ATA).
+    pub fn ringing_manual(from: &str) -> Self {
+        let mut s = Self::default();
+        for _ in 0..15 {
+            s.steps.push_back(Step::Action(SetupAction::Console(format!("RING (appel de {from}) — ATA pour décrocher"))));
+            s.steps.push_back(Step::Tone { f1: 425.0, f2: 450.0, samples: ms(1200), level: 0.15 });
+            s.steps.push_back(Step::Silence(ms(800)));
+        }
+        s
+    }
+
+    /// Tonalité d'occupation française : 440 Hz, 0,5 s sur 1 s, puis le
+    /// code résultat.
+    pub fn busy(result: String) -> Self {
+        let mut s = Self::default();
+        s.steps.push_back(Step::Silence(ms(200)));
+        for _ in 0..4 {
+            s.steps.push_back(Step::Tone { f1: 440.0, f2: 0.0, samples: ms(500), level: 0.14 });
+            s.steps.push_back(Step::Silence(ms(500)));
+        }
+        s.steps.push_back(Step::Action(SetupAction::Fail(result)));
+        s
+    }
+
+    /// Réseau encombré : la même note, en cadence rapide.
+    pub fn congestion(result: String) -> Self {
+        let mut s = Self::default();
+        s.steps.push_back(Step::Silence(ms(200)));
+        for _ in 0..8 {
+            s.steps.push_back(Step::Tone { f1: 440.0, f2: 0.0, samples: ms(250), level: 0.14 });
+            s.steps.push_back(Step::Silence(ms(250)));
+        }
+        s.steps.push_back(Step::Action(SetupAction::Fail(result)));
+        s
+    }
+
+    /// Numéro non attribué : les trois notes montantes d'information
+    /// spéciale (950, 1400, 1800 Hz), qui précédaient le message enregistré.
+    pub fn unassigned(result: String) -> Self {
+        let mut s = Self::default();
+        s.steps.push_back(Step::Silence(ms(300)));
+        for _ in 0..3 {
+            for f in [950.0, 1400.0, 1800.0] {
+                s.steps.push_back(Step::Tone { f1: f, f2: 0.0, samples: ms(330), level: 0.13 });
+                s.steps.push_back(Step::Silence(ms(30)));
+            }
+            s.steps.push_back(Step::Silence(ms(1000)));
+        }
+        s.steps.push_back(Step::Action(SetupAction::Fail(result)));
         s
     }
 

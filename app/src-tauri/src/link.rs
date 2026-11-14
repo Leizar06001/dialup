@@ -89,7 +89,7 @@ pub enum NetEvent {
     Answered,
     Busy(String),
     Unknown(String),
-    HungUp(String),
+    HungUp(v34_net::signal::HangupReason, String),
 }
 
 /// État de la connexion au central (pour l'IHM).
@@ -305,7 +305,7 @@ impl Link for NetLink {
                 E::HungUp { reason, .. } => {
                     self.pending_dial = false;
                     self.modem.command(ModemCommand::Hangup);
-                    NetEvent::HungUp(match reason {
+                    NetEvent::HungUp(reason, match reason {
                         v34_net::signal::HangupReason::Forbidden => {
                             "accès Internet non activé pour ce compte : l'opérateur doit l'accorder (voir le site du fournisseur d'accès)".to_string()
                         }

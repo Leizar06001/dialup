@@ -78,7 +78,7 @@ $("crt").addEventListener("click", () => {
   if (!window.getSelection().toString()) $("crt-input").focus();
 });
 
-$("btn-dial").addEventListener("click", () => sendAt("ATDT" + $("dial-number").value.trim()));
+$("btn-dial").addEventListener("click", () => sendAt(state && state.incoming ? "ATA" : "ATDT" + $("dial-number").value.trim()));
 $("dial-number").addEventListener("keydown", (e) => {
   if (e.key === "Enter") sendAt("ATDT" + e.target.value.trim());
 });
@@ -267,6 +267,7 @@ const RATES = [56000, 53333, 50667, 48000, 45333, 42667, 40000, 37333, 33600, 31
   24000, 21600, 19200, 16800, 14400, 12000, 9600, 7200, 4800, 2400];
 const cfg = {
   v90: store.get("cfg-v90") !== "0",
+  auto: store.get("cfg-auto") !== "0",
   rate: RATES.includes(+store.get("cfg-debit")) ? +store.get("cfg-debit") : RATES[0],
   eff: null, // configuration obtenue, renvoyée par le moteur
   seq: 0,
@@ -274,9 +275,10 @@ const cfg = {
 const cfgModal = $("cfg-modal");
 function cfgSend() {
   store.set("cfg-v90", cfg.v90 ? "1" : "0");
+  store.set("cfg-auto", cfg.auto ? "1" : "0");
   store.set("cfg-debit", String(cfg.rate));
   const seq = ++cfg.seq;
-  invoke("set_modem_config", { v90: cfg.v90, maxRate: cfg.rate })
+  invoke("set_modem_config", { v90: cfg.v90, maxRate: cfg.rate, autoAnswer: cfg.auto })
     .then((c) => { if (seq === cfg.seq && c) { cfg.eff = c; cfgRender(); } })
     .catch((e) => crt("Configuration : " + e, "ev warn"));
 }
@@ -293,6 +295,9 @@ function cfgRender() {
   const sw = $("dip1");
   sw.classList.toggle("on", cfg.v90);
   sw.setAttribute("aria-checked", String(cfg.v90));
+  const sw2 = $("dip2");
+  sw2.classList.toggle("on", cfg.auto);
+  sw2.setAttribute("aria-checked", String(cfg.auto));
   const i = RATES.indexOf(cfg.rate);
   // Sur le tambour, une vraie espace fine : l'espace insécable étroite y est invisible.
   const fin = (v) => frInt(v).replace(/\s/g, "\u2009");
@@ -321,6 +326,7 @@ function cfgStep(d) {
   cfgSend();
 }
 $("dip1").addEventListener("click", () => { cfg.v90 = !cfg.v90; cfgRender(); cfgSend(); });
+$("dip2").addEventListener("click", () => { cfg.auto = !cfg.auto; cfgRender(); cfgSend(); });
 $("rate-up").addEventListener("click", () => cfgStep(1));
 $("rate-down").addEventListener("click", () => cfgStep(-1));
 $("rate-prev").addEventListener("click", () => cfgStep(1));
@@ -503,6 +509,10 @@ function onState(s) {
   pillEl.className = "call-pill " + cls;
 
   // Touche NAVIGATEUR : s'allume quand le tunnel Internet est prêt.
+  // Appel entrant qui sonne (réponse manuelle) : APPELER devient DÉCROCHER
+  const dial = $("btn-dial");
+  setText("btn-dial", s.incoming ? "DÉCROCHER" : "APPELER");
+  dial.classList.toggle("ringing", !!s.incoming);
   const web = $("btn-browser"), dialingIsp = s.session === "internet" || (s.call_state !== "idle" && $("dial-number").value.trim() === "0836154286");
   web.classList.toggle("ready", !!s.proxy);
   // Session Internet : le chat n'a pas de destinataire (la ligne porte le tunnel).
@@ -772,7 +782,8 @@ const TIPS = {
   Data: ["Données", "Les octets sont codés en treillis à 16 états, répartis sur une constellation jusqu'à 960 points (shell mapping) et protégés par LAPM : trames avec contrôle d'erreur et retransmission. Le modem surveille la qualité et renégocie si la ligne se dégrade (le « kshhhh »)."],
   cfg: ["CONFIG · Face arrière", "Les interrupteurs DIP du dos du modem : 56K V.90 et débit maximum. Ils sont lus au décroché : un changement vaut pour l'appel suivant."],
   dip1: ["DIP 1 · 56K V.90", "ON : le modem propose le V.90 pendant la négociation V.8 et peut recevoir jusqu'à 56 000 bit/s d'un FAI raccordé en numérique (l'émission reste en V.34). OFF : V.34 seul, 33 600 bit/s au mieux."],
-  dipres: ["DIP 2 à 8 · Réservé", "Réservé usine — ne pas modifier. Réglés en usine et sans effet sur ce modèle ; le technicien qui savait à quoi ils servaient est parti avec le mode d'emploi."],
+  dip2: ["DIP 2 · Réponse automatique", "ON : quand un abonné t'appelle, le modem décroche tout seul après deux sonneries (comme ATS0=2). OFF : ça sonne jusqu'à ce que tu décroches, avec ATA ou le bouton DÉCROCHER."],
+  dipres: ["DIP 3 à 8 · Réservé", "Réservé usine — ne pas modifier. Réglés en usine et sans effet sur ce modèle ; le technicien qui savait à quoi ils servaient est parti avec le mode d'emploi."],
   debit: ["DÉBIT MAX", "Plafond du débit négocié, pour imiter un modem plus ancien ou brider la ligne. Le V.34 s'arrête à 33 600 bit/s ; au-dessus, seul le 56K (V.90) monte, par paliers de 2 667 bit/s, et il ne descend pas sous 28 000. Molette de la souris, ▲ ▼ ou flèches du clavier."],
   cast: ["COMMENTAIRES", "Le modem commente sa propre négociation comme un match à la télé : ANSam, sondage, débit symbole, CONNECT… Les phrases sont tirées au hasard dans des banques écrites à la main, avec les vraies valeurs mesurées. Aucune intelligence artificielle n'a été dérangée."],
   karaoke: ["♪ KARAOKÉ", "Les paroles de la chanson du modem, en direct : à gauche ce que notre modem émet, à droite ce qu'on entend de l'autre bout. La boule rebondit sur la syllabe en cours. Au ralenti (TEMPS ×0,1), on arrive presque à chanter juste."],
@@ -793,6 +804,7 @@ function tipLive(key) {
     const s = state && state.status;
     return s ? `TX ▸ ${s.tx_signal || "—"} · RX ◂ ${s.rx_signal || "—"}` : "";
   }
+  if (key === "dip2") return cfg.auto ? "● ON — décroche après 2 sonneries" : "○ OFF — décroche avec ATA";
   if (key === "dip1") {
     if (!cfg.v90) return "○ OFF — V.34 seul";
     return cfg.eff && !cfg.eff.v90 ? `● ON, mais débit max sous ${kbit(28000)} : 56K coupé` : "● ON — 56K proposé au prochain appel";
