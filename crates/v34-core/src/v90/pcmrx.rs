@@ -50,6 +50,8 @@ pub enum RxEvent {
     DataStarted,
     /// Échec (calage impossible…)
     Lost(String),
+    /// En données : la réception ne vaut plus rien depuis une demi-seconde
+    Degraded { sigma: f64 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,6 +166,12 @@ fn trn2d_symbols(map: &Mapping, n: usize) -> Vec<Symbol> {
     v
 }
 
+/// Plus petit écart entre niveaux signés d'un jeu (tous intervalles).
+fn min_dmin(m: &Mapping) -> f64 {
+    let levels: [f64; UCODES] = std::array::from_fn(|u| codes::linear(m.law, u as u8) as f64);
+    m.sets.iter().map(|s| super::design::min_distance(s, &levels)).fold(f64::MAX, f64::min)
+}
+
 /// Décision : niveau signé le plus proche dans un ensemble de Ucodes.
 fn slice(y: f64, set: &[u8], law: Law) -> Symbol {
     let a = y.abs() * codes::SCALE as f64;
@@ -234,6 +242,10 @@ pub struct PcmRx {
     pub data: Vec<bool>,
     /// Erreur quadratique moyenne de décision en données (linéaire 16 bits)
     pub mse: f64,
+    /// Plus petit écart entre niveaux du jeu en cours (linéaire 16 bits)
+    dmin: f64,
+    /// Symboles de données consécutifs avec une erreur trop forte
+    bad_run: u32,
 }
 
 impl PcmRx {
@@ -285,6 +297,8 @@ impl PcmRx {
             in_data: false,
             data: Vec::new(),
             mse: 0.0,
+            dmin: f64::MAX,
+            bad_run: 0,
         }
     }
 
@@ -300,11 +314,13 @@ impl PcmRx {
     /// Jeu de la phase 4 (notre CPt) : à fixer avant la fin de Ri.
     pub fn set_train_map(&mut self, m: Mapping) {
         self.trn2d = trn2d_symbols(&m, TRN2D_LEN);
+        self.dmin = self.dmin.min(min_dmin(&m));
         self.train_map = Some(m);
     }
 
     /// Jeu du mode données (notre CP).
     pub fn set_data_map(&mut self, m: Mapping) {
+        self.dmin = self.dmin.min(min_dmin(&m));
         self.data_map = Some(m);
     }
 
@@ -566,7 +582,20 @@ impl PcmRx {
         if ku >= TRAIN_MIN {
             let e = (y - v) * codes::SCALE as f64;
             self.mse = 0.995 * self.mse + 0.005 * e * e;
-            self.dfe.mu = 0.0005;
+            // Suivi lent du canal, seulement sur les décisions sûres : une
+            // erreur de décision ne doit pas entraîner l'égaliseur (sinon il
+            // s'emballe et ne s'en remet pas).
+            self.dfe.mu = if e.abs() < self.dmin / 4.0 { 0.0001 } else { 0.0 };
+            // Réception perdue (canal changé, échantillons perdus qui ont
+            // décalé les trames…) : signalée après une demi-seconde.
+            if self.in_data && self.mse.sqrt() > self.dmin / 3.0 {
+                self.bad_run += 1;
+                if self.bad_run == 4000 {
+                    self.events.push(RxEvent::Degraded { sigma: self.mse.sqrt() });
+                }
+            } else {
+                self.bad_run = 0;
+            }
         }
         self.dfe.decided(y, v);
         self.frame.push(s);

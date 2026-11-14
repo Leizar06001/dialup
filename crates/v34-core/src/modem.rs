@@ -530,8 +530,12 @@ impl Modem {
                 if f.ansam {
                     self.rx_name("ANSam");
                     self.log(LogLevel::Info, "ANSam détecté (2100 Hz modulé 15 Hz, inversions de phase)");
-                    self.log(LogLevel::Detail, "Silence Te = 1 s (neutralisation des annuleurs d'écho du réseau)");
-                    self.t_mark = self.n + 1000 * MS;
+                    // Modem 56k d'époque : il écoute l'ANSam plus longtemps
+                    // avant de répondre (comme ceux de 1999), dans les 5 s
+                    // que l'appelé lui accorde.
+                    let te = if self.cfg.v90 && !self.cfg.express { 2300 } else { 1000 };
+                    self.log(LogLevel::Detail, &format!("Silence Te = {:.1} s (neutralisation des annuleurs d'écho du réseau)", te as f32 / 1000.0));
+                    self.t_mark = self.n + te * MS;
                     self.goto(St::CallTe);
                 } else if self.elapsed() > 15_000 * MS {
                     self.fail("pas de réponse (aucune tonalité ANSam)");

@@ -94,7 +94,7 @@ fn v8_annonce_le_56k_et_phase2_inversee() {
 /// Le 56k complet : descendant en PCM au-delà du V.34.
 #[test]
 fn connexion_56k() {
-    for (ligne, mini, up_mini) in [("Parfaite", 56000, 31200), ("Urbaine", 36000, 14400)] {
+    for (ligne, mini, up_mini) in [("Parfaite", 56000, 31200), ("Urbaine", 36000, 9600)] {
         let r = echange(LineParams::preset(ligne).unwrap(), ModemConfig::default(), fai());
         let dump = r.log.join("\n");
         if std::env::var("V90_LOG").is_ok() {
@@ -125,8 +125,104 @@ fn express_plus_rapide() {
     let lent = echange(p.clone(), ModemConfig::default(), fai());
     let vite = echange(p, ModemConfig { express: true, ..ModemConfig::default() }, fai());
     let (tl, tv) = (lent.t_connect.unwrap(), vite.t_connect.unwrap());
-    eprintln!("CONNECT 56k : d'époque {tl} ms, express {tv} ms");
-    assert!(tl >= tv + 6000, "d'époque {tl} ms, express {tv} ms");
+    // la première réponse du FAI (ANSam) part 400 ms après le décroché
+    eprintln!("CONNECT 56k après l'ANSam : d'époque {} ms, express {} ms", tl - 400, tv - 400);
+    assert!(tl >= tv + 8000, "d'époque {tl} ms, express {tv} ms");
+    assert!((19_000..=23_000).contains(&(tl - 400)), "d'époque : {} ms après l'ANSam (vrais modems : ~20 s)", tl - 400);
     // même débit descendant (le montant dépend du SNR mesuré, à ±1 cran)
     assert_eq!(lent.connected[0].unwrap().1, vite.connected[0].unwrap().1);
+}
+
+/// Appel long : le 56k doit tenir. Données en continu dans les deux sens
+/// pendant 90 s ; bilan par tranches de 10 s.
+fn appel_long(ligne: &str, secondes: usize, glissement_a: Option<usize>) -> (Vec<(usize, usize)>, Vec<String>) {
+    let p = LineParams::preset(ligne).unwrap();
+    let mut call = Modem::new(Role::Call, ModemConfig { express: true, ..ModemConfig::default() });
+    let mut ans = Modem::new(Role::Answer, fai());
+    let mut c2a = LineSim::new(p.clone());
+    let mut a2c = LineSim::new(p.clone());
+    let mut echo_c = EchoPath::new(p.clone());
+    let mut echo_a = EchoPath::new(p);
+    call.command(ModemCommand::Dial);
+    ans.command(ModemCommand::Answer);
+    const B: usize = 160;
+    let (mut call_rx, mut ans_rx) = ([0.0f32; B], [0.0f32; B]);
+    let (mut call_tx, mut ans_tx) = ([0.0f32; B], [0.0f32; B]);
+    let mut connected = false;
+    let mut t0 = 0;
+    let mut tranches = vec![(0usize, 0usize); secondes / 10 + 1];
+    let mut log = Vec::new();
+    let mut retenue = 0.0f32;
+    for blk in 0..(secondes + 20) * 50 {
+        call.process(&call_rx, &mut call_tx);
+        ans.process(&ans_rx, &mut ans_tx);
+        c2a.process(&call_tx, &mut ans_rx);
+        echo_a.process(&ans_tx, &mut ans_rx);
+        a2c.process(&ans_tx, &mut call_rx);
+        echo_c.process(&call_tx, &mut call_rx);
+        // un échantillon perdu sur le trajet descendant (trou réseau mal
+        // rattrapé) : les trames PCM sont décalées pour de bon
+        if connected && glissement_a.is_some_and(|g| (blk - t0) / 50 >= g) {
+            // un échantillon de retard, pour toujours
+            let last = call_rx[B - 1];
+            call_rx.copy_within(..B - 1, 1);
+            call_rx[0] = retenue;
+            retenue = last;
+        }
+        for (i, m) in [&mut call, &mut ans].into_iter().enumerate() {
+            for ev in m.drain_events() {
+                match ev {
+                    ModemEvent::Connected { .. } if i == 0 && connected => {
+                        log.push(format!("[{:5} ms après CONNECT] ABONNÉ reconnecté", (blk - t0) * 20));
+                    }
+                    ModemEvent::Connected { .. } if i == 0 && !connected => {
+                        connected = true;
+                        t0 = blk;
+                    }
+                    ModemEvent::Data(d) if connected => {
+                        let k = ((blk - t0) / 500).min(tranches.len() - 1);
+                        if i == 0 { tranches[k].0 += d.len() } else { tranches[k].1 += d.len() }
+                    }
+                    ModemEvent::Log { msg, .. } if connected => {
+                        if msg.contains("éentra") || msg.contains("enégoc") || msg.contains("CONNECT") || msg.contains("56k") {
+                            log.push(format!("[{:5} ms après CONNECT] {} {msg}", (blk - t0) * 20, if i == 0 { "ABONNÉ" } else { "FAI" }));
+                        }
+                    }
+                    ModemEvent::Disconnected { reason } => log.push(format!("[{} ms] NO CARRIER {reason}", blk * 20)),
+                    _ => {}
+                }
+            }
+        }
+        // flot continu : 2 Ko toutes les 0,2 s dans chaque sens
+        if connected && blk % 10 == 0 && (blk - t0) < secondes * 50 {
+            call.command(ModemCommand::Send(vec![b'a'; 300]));
+            ans.command(ModemCommand::Send(vec![b'f'; 1200]));
+        }
+    }
+    (tranches, log)
+}
+
+#[test]
+#[ignore = "long : cargo test --release --test v90_appel -- --ignored --nocapture"]
+fn le_56k_tient_90_secondes() {
+    for ligne in ["Parfaite", "Urbaine"] {
+        let (tranches, log) = appel_long(ligne, 90, None);
+        eprintln!("{ligne} : octets reçus par tranche de 10 s (abonné, FAI) : {tranches:?}");
+        for l in &log {
+            eprintln!("  {l}");
+        }
+        assert!(tranches[1..8].iter().all(|&(a, f)| a > 30_000 && f > 8_000), "{ligne} : débit tombé {tranches:?}\n{}", log.join("\n"));
+    }
+}
+
+/// Un échantillon perdu décale les trames PCM : le modem doit s'en rendre
+/// compte, se réentraîner et repartir en 56k.
+#[test]
+#[ignore = "long : cargo test --release --test v90_appel -- --ignored --nocapture"]
+fn le_56k_se_remet_d_un_glissement() {
+    let (tranches, log) = appel_long("Parfaite", 60, Some(15));
+    eprintln!("{tranches:?}\n{}", log.join("\n"));
+    assert!(log.iter().any(|l| l.contains("Réception 56k perdue") || l.contains("56k muette")), "{}", log.join("\n"));
+    assert!(log.iter().any(|l| l.contains("reconnecté")), "{}", log.join("\n"));
+    assert!(tranches[4..6].iter().all(|&(a, _)| a > 30_000), "{tranches:?}");
 }

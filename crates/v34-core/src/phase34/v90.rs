@@ -32,7 +32,7 @@ const STALL_MS: u64 = 9000;
 /// - d'époque : 64 segments (un Ucode sur deux), plus longs pour les petits
 ///   niveaux (le bruit y pèse le plus), un symbole de référence sur quatre
 ///   comme les modems de 1999 qui guettaient bits volés et atténuateurs
-///   numériques — 1,1 s par passage, écouté trois fois.
+///   numériques — 1,1 s par passage, écouté quatre fois.
 pub(crate) fn our_dil(express: bool) -> DilDescriptor {
     let sp = (0..13).map(|i| (0b1_0110_0101_1101_u32 >> i) & 1 == 1).collect();
     if express {
@@ -50,11 +50,11 @@ pub(crate) fn our_dil(express: bool) -> DilDescriptor {
 /// Pauses du modem analogique en mode d'époque (ms) : réflexion après Jd
 /// (§9.3.2.7 : jusqu'à 5 s permises), SCR pendant le calcul des niveaux
 /// (§9.4.2.2 : jusqu'à 4 s).
-const THINK_AFTER_JD_MS: u64 = 1500;
-const SCR_BEFORE_CP_MS: f64 = 3500.0;
+const THINK_AFTER_JD_MS: u64 = 2000;
+const SCR_BEFORE_CP_MS: f64 = 4000.0;
 /// TRN de phase 3 de l'abonné en mode d'époque (≥ 512T ; la norme permet
 /// jusqu'à 4 s de MD + TRN) : long souffle, et l'annuleur d'écho en profite.
-const TRN3_EPOQUE: usize = 4096;
+const TRN3_EPOQUE: usize = 8000;
 
 /// Débit montant : le plus grand activé des deux côtés, sous `limit`.
 fn up_rate(mask: u16, limit: u32) -> u32 {
@@ -134,6 +134,9 @@ pub(crate) struct V90 {
     // --- commun
     connected: bool,
     t_progress: u64,
+    /// Surveillance de la liaison en données : (instant, trames bonnes,
+    /// trames rejetées) au début de la fenêtre
+    watch: (u64, u64, u64),
 }
 
 impl V90 {
@@ -181,6 +184,7 @@ impl V90 {
             data_rx: false,
             connected: false,
             t_progress: 0,
+            watch: (0, 0, 0),
         }
     }
 }
@@ -194,7 +198,7 @@ impl P34 {
         let power = info0d.map_or(0, |d| d.max_power);
         let mut v = V90::new(false, law, max_pcm, max_up, power, express);
         let mut prx = PcmRx::new(law, UINFO, Some(v.dil.clone()));
-        prx.set_dil_passes(if express { 1 } else { 3 });
+        prx.set_dil_passes(if express { 1 } else { 4 });
         v.prx = Some(prx);
         v.t_progress = self.n;
         self.v90 = Some(Box::new(v));
@@ -267,6 +271,24 @@ impl P34 {
             if self.n >= t {
                 self.hangup_at = None;
                 self.act(P34Action::Hangup("raccrochage".into()));
+            }
+        }
+        // En données : rien de bon ne passe plus depuis 3 s, mais des trames
+        // fausses arrivent (trames PCM décalées par un échantillon perdu,
+        // émission montante détruite…) → réentraînement.
+        if self.v90.as_ref().unwrap().connected {
+            let st = self.link.stats();
+            let n = self.n;
+            let v = self.v90.as_mut().unwrap();
+            if st.frames_rx > v.watch.1 || v.watch.0 == 0 {
+                v.watch = (n, st.frames_rx, st.fcs_errors);
+            } else if n - v.watch.0 > 3 * 8000 {
+                let bad = st.fcs_errors - v.watch.2;
+                v.watch = (n, st.frames_rx, st.fcs_errors);
+                if bad >= 3 {
+                    self.log(format!("Liaison 56k muette depuis 3 s ({bad} trames fausses) : réentraînement"));
+                    self.act(P34Action::Retrain("liaison 56k muette".into()));
+                }
             }
         }
         if digital {
@@ -484,6 +506,10 @@ impl P34 {
                 self.v90_check_connected();
             }
             RxEvent::Lost(why) => self.act(P34Action::NoV90(format!("56k : {why}"))),
+            RxEvent::Degraded { sigma } => {
+                self.log(format!("Réception 56k perdue (erreur {sigma:.0}) : réentraînement"));
+                self.act(P34Action::Retrain("réception 56k perdue".into()));
+            }
         }
     }
 
