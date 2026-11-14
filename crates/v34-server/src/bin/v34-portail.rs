@@ -8,6 +8,7 @@ use std::process::ExitCode;
 use v34_server::comptes::Comptes;
 use v34_server::log::{self, Level};
 use v34_server::portail::courriel::SmtpConfig;
+use v34_server::portail::livre::Livre;
 use v34_server::portail::{Portail, Reglages};
 use v34_server::{error, warn};
 
@@ -40,6 +41,12 @@ fn main() -> ExitCode {
     if r.admin.is_empty() || r.admin_courriel.is_empty() {
         warn!("PORTAIL_ADMIN ou PORTAIL_ADMIN_COURRIEL vide : personne ne recevra les demandes d'accès Internet");
     }
+    if r.contact.is_empty() {
+        warn!("PORTAIL_CONTACT (ou PORTAIL_ADMIN_COURRIEL) vide : les pages légales n'ont pas d'adresse de contact");
+    }
+    if r.hebergeur.is_empty() {
+        warn!("PORTAIL_HEBERGEUR vide : les mentions légales doivent nommer l'hébergeur (nom, adresse, téléphone)");
+    }
     let comptes = match Comptes::ouvrir(&r.comptes) {
         Ok(c) => c,
         Err(e) => {
@@ -47,7 +54,14 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match Portail::new(r, comptes, smtp).servir() {
+    let livre = match Livre::ouvrir(&r.livre) {
+        Ok(l) => l,
+        Err(e) => {
+            error!("livre d'or : {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match Portail::new(r, comptes, livre, smtp).servir() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             error!("serveur HTTP : {e}");

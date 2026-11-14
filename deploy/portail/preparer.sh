@@ -107,7 +107,7 @@ else
     fi
     chown "$QUI" "$ENV"
     chmod 600 "$ENV"
-    echo "   créé ; à relire : PORTAIL_ADMIN, PORTAIL_ADMIN_COURRIEL, SMTP_*"
+    echo "   créé ; à relire : PORTAIL_ADMIN, PORTAIL_ADMIN_COURRIEL, PORTAIL_HEBERGEUR, SMTP_*"
 fi
 
 say "4. Caddy : https://$DOMAINE → 127.0.0.1:$PORT"

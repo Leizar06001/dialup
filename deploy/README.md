@@ -134,10 +134,24 @@ leur compte :
 - le site propose aussi le téléchargement de l'appli, d'après la dernière
   version publiée sur GitHub.
 
+| Page | Contenu |
+|---|---|
+| `/` | accueil, rubrique « Quoi de neuf ? » (3 dernières versions publiées sur GitHub + ouverture du site) |
+| `/inscription`, `/valider` | inscription, validation de l'adresse e-mail |
+| `/compte` | **espace abonné** : connexion (nom d'abonné + mot de passe du logiciel, 5 essais par IP et par quart d'heure), numéro, état de l'accès Internet, adresse du central ; pour les comptes du site : changer de mot de passe, résilier (le numéro est libéré). Les abonnés de `config.toml` y sont en lecture seule (« gérés par l'opérateur ») |
+| `/oubli`, `/reinitialiser` | **mot de passe oublié** : lien par e-mail valable 1 h, à usage unique, annulé par tout changement de mot de passe ; réponse identique que l'adresse soit abonnée ou non ; 3 demandes par IP et par heure |
+| `/etat` | **état du réseau** d'après le fichier que le central réécrit chaque seconde (`etat.json` à côté des comptes, voir `[serveur] etat`) : en service depuis…, abonnés connectés, appels, modems du FAI, présents au salon ; « hors service » si le fichier a plus de 30 s |
+| `/livre` | **livre d'or** : messages publiés après relecture dans `/admin` (Publier / Supprimer) ; 3 messages par IP et par heure, 500 messages au plus (`/var/lib/v34-server/livre-dor.toml`) |
+| `/mentions`, `/conditions`, `/confidentialite` | pages légales (LCEN, CGU, RGPD), liées en bas de toutes les pages |
+| `/telechargement`, `/aide`, `/webring` | logiciel, aide, membres du « Webring du Web rétro » (`/webring/hasard` : un membre au hasard) |
+| `/admin` | administration : accès Internet, comptes, modération du livre d'or |
+
 Le site tourne dans un conteneur, derrière Caddy :
-- il écrit les comptes dans `/var/lib/v34-server/comptes.toml` ;
+- il écrit les comptes dans `/var/lib/v34-server/comptes.toml` (et le livre
+  d'or à côté, en 0640) ;
 - le central lit ce fichier (clé `comptes` de la section `[serveur]`) et le
-  relit dès qu'il change ;
+  relit dès qu'il change ; il publie son état dans
+  `/var/lib/v34-server/etat.json`, que le site lit ;
 - les abonnés de `config.toml` gardent la priorité, et le site ne modifie
   jamais ce fichier.
 
@@ -157,12 +171,28 @@ Le script (on peut le relancer sans risque) :
    (après `caddy validate`) ;
 5. lance `docker compose up -d --build`.
 
+Réglages du `.env` propres aux pages légales :
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `PORTAIL_EDITEUR` | « Un particulier — identité communiquée à l'hébergeur (LCEN, art. 6-III-2) » | éditeur du site (mentions légales, responsable du traitement) |
+| `PORTAIL_CONTACT` | `PORTAIL_ADMIN_COURRIEL` | adresse de contact des pages légales |
+| `PORTAIL_HEBERGEUR` | (vide : avertissement au démarrage) | nom, adresse et téléphone de l'hébergeur ; `\n` pour aller à la ligne. **Obligatoire** si l'éditeur reste anonyme |
+| `V34_ETAT` | `/var/lib/v34-server/etat.json` | état publié par le central |
+| `V34_LIVRE` | `/var/lib/v34-server/livre-dor.toml` | livre d'or |
+
 Pour l'envoi des e-mails, il faut un serveur SMTP authentifié pour le
 domaine de l'expéditeur (sinon : dossier spam). Avec `SMTP_HOST=journal`,
 les e-mails sont écrits dans `docker compose logs portail` au lieu d'être
-envoyés : pratique pour un essai.
+envoyés : pratique pour un essai. Tous les e-mails du site (validation,
+mot de passe, notifications) partagent un plafond de 60 par heure.
 
-Mise à jour du site : `git pull && docker compose up -d --build`.
+Mise à jour du site : `git pull && docker compose up -d --build`. Mettez à
+jour le central en même temps (section 5) : un central plus ancien ne
+connaît ni le fichier d'état ni la section `[[reinitialisation]]` que le
+site ajoute au fichier des comptes pendant une demande de mot de passe
+oublié (il garderait alors son annuaire précédent jusqu'à la fin de la
+demande).
 
 ## 5. Mettre à jour
 

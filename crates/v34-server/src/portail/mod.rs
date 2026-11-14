@@ -5,7 +5,11 @@
 //! - le compte est créé SANS accès Internet : l'administrateur reçoit un
 //!   e-mail avec deux liens signés [Accorder] / [Refuser], et dispose d'une
 //!   page /admin (connexion avec son mot de passe d'abonné) ;
-//! - page de téléchargement d'après la dernière version publiée sur GitHub.
+//! - page de téléchargement d'après la dernière version publiée sur GitHub ;
+//! - espace abonné (/compte) et mot de passe oublié ([`abonne`]) ;
+//! - état du réseau d'après le fichier publié par le central ([`etat`]) ;
+//! - livre d'or modéré ([`livre`]), pages légales ([`legal`]), et le
+//!   folklore de 1998 : badges 88×31, webring, « Quoi de neuf ? ».
 //!
 //! Les comptes sont écrits dans le fichier partagé avec le central
 //! ([`crate::comptes`]) ; la configuration du central est lue (lecture
@@ -16,7 +20,11 @@
 //! (POST) : un antivirus ou un aperçu de messagerie qui « visite » le lien
 //! ne déclenche rien.
 
+pub mod abonne;
 pub mod courriel;
+pub mod etat;
+pub mod legal;
+pub mod livre;
 pub mod pages;
 
 use std::collections::HashMap;
@@ -24,7 +32,7 @@ use url::form_urlencoded;
 use std::io::Read;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -36,6 +44,7 @@ use crate::config::Config;
 use crate::{debug, info, warn};
 
 use courriel::{Lettre, Postier, SmtpConfig};
+use livre::Livre;
 use pages::{esc, numero_lisible};
 
 /// Corps de requête accepté au maximum (formulaires)
@@ -46,6 +55,10 @@ const SESSION_S: u64 = 12 * 3600;
 const DECISION_S: u64 = 30 * 24 * 3600;
 /// E-mails envoyés au maximum par heure (tout le site)
 const COURRIELS_PAR_HEURE: usize = 60;
+/// Éditeur par défaut des mentions légales (particulier anonyme)
+pub const EDITEUR_PAR_DEFAUT: &str = "Un particulier — identité communiquée à l'hébergeur (LCEN, art. 6-III-2)";
+/// Ouverture du site (rubrique « Quoi de neuf ? »)
+const OUVERTURE: &str = "2026-11-14";
 const NOMS_RESERVES: &[&str] = &["admin", "administrateur", "root", "fai", "salon", "web1998", "operateur", "opérateur", "support", "postmaster", "abuse"];
 
 /// Réglages du site (variables d'environnement, voir `deploy/portail/.env.example`).
@@ -70,6 +83,16 @@ pub struct Reglages {
     pub comptes: PathBuf,
     /// Croire l'en-tête X-Forwarded-For (derrière Caddy)
     pub proxy_de_confiance: bool,
+    /// Éditeur du site (mentions légales)
+    pub editeur: String,
+    /// Adresse de contact (pages légales) ; par défaut, celle de l'administrateur
+    pub contact: String,
+    /// Hébergeur (mentions légales), une ligne par élément
+    pub hebergeur: String,
+    /// État publié par le central (page /etat)
+    pub etat: PathBuf,
+    /// Livre d'or
+    pub livre: PathBuf,
 }
 
 impl Reglages {
@@ -80,12 +103,19 @@ impl Reglages {
             return Err("PORTAIL_URL : adresse publique du site, par ex. https://dialup.example.org (sans / final)".into());
         }
         let hote = url.split("://").nth(1).unwrap_or("").split(['/', ':']).next().unwrap_or("").to_string();
+        let admin_courriel = v("PORTAIL_ADMIN_COURRIEL", "");
         let r = Reglages {
             ecoute: v("PORTAIL_ECOUTE", "0.0.0.0:8034"),
             nom: v("PORTAIL_NOM", "Tinyverse Dialup"),
             central: v("PORTAIL_CENTRAL", &format!("{hote}:3434")),
             admin: v("PORTAIL_ADMIN", ""),
-            admin_courriel: v("PORTAIL_ADMIN_COURRIEL", ""),
+            editeur: v("PORTAIL_EDITEUR", EDITEUR_PAR_DEFAUT),
+            contact: v("PORTAIL_CONTACT", &admin_courriel),
+            // « \n » (deux caractères) pour aller à la ligne dans le fichier .env
+            hebergeur: v("PORTAIL_HEBERGEUR", "").trim_matches('"').replace("\\n", "\n").lines().map(str::trim).collect::<Vec<_>>().join("\n"),
+            etat: PathBuf::from(v("V34_ETAT", "/var/lib/v34-server/etat.json")),
+            livre: PathBuf::from(v("V34_LIVRE", "/var/lib/v34-server/livre-dor.toml")),
+            admin_courriel,
             depot: v("PORTAIL_DEPOT", ""),
             inscriptions_par_heure: v("PORTAIL_INSCRIPTIONS_PAR_HEURE", "3").parse().map_err(|_| "PORTAIL_INSCRIPTIONS_PAR_HEURE invalide")?,
             config: PathBuf::from(v("V34_CONFIG", crate::config::DEFAULT_PATH)),
@@ -94,6 +124,9 @@ impl Reglages {
             url,
         };
         r.ecoute.parse::<SocketAddr>().map_err(|_| format!("PORTAIL_ECOUTE invalide : {}", r.ecoute))?;
+        if get("PORTAIL_CONTACT").is_some_and(|c| !c.trim().is_empty()) && !courriel_valide(&r.contact) {
+            return Err(format!("PORTAIL_CONTACT : adresse e-mail invalide « {} »", r.contact));
+        }
         Ok(r)
     }
 }
@@ -150,16 +183,86 @@ struct Version {
     fichiers: Vec<pages::Fichier>,
 }
 
+/// Données publiques lues sur GitHub, gardées en cache 10 min. Après un
+/// échec, on réessaie 2 min plus tard, en gardant d'ici là la dernière
+/// valeur obtenue.
+struct CacheGitHub<T> {
+    /// (prochaine vérification, dernière valeur obtenue)
+    valeur: Mutex<Option<(Instant, Option<Arc<T>>)>>,
+    /// Une mise à jour en arrière-plan est en cours
+    en_cours: AtomicBool,
+}
+
+impl<T: Send + Sync + 'static> CacheGitHub<T> {
+    fn new() -> Arc<Self> {
+        Arc::new(CacheGitHub { valeur: Mutex::new(None), en_cours: AtomicBool::new(false) })
+    }
+
+    /// `Some(valeur)` si le cache est encore frais.
+    fn frais(&self) -> Option<Option<Arc<T>>> {
+        let c = self.valeur.lock().unwrap();
+        let (echeance, v) = c.as_ref()?;
+        (Instant::now() < *echeance).then(|| v.clone())
+    }
+
+    fn ranger(&self, quoi: &str, r: Result<T, String>) -> Option<Arc<T>> {
+        let mut c = self.valeur.lock().unwrap();
+        let (v, ttl) = match r {
+            Ok(v) => (Some(Arc::new(v)), 600),
+            Err(e) => {
+                warn!("{quoi} : {e}");
+                (c.as_ref().and_then(|(_, v)| v.clone()), 120)
+            }
+        };
+        *c = Some((Instant::now() + Duration::from_secs(ttl), v.clone()));
+        v
+    }
+
+    /// Valeur à jour, quitte à attendre GitHub.
+    fn obtenir(&self, quoi: &str, f: impl FnOnce() -> Result<T, String>) -> Option<Arc<T>> {
+        match self.frais() {
+            Some(v) => v,
+            None => self.ranger(quoi, f()),
+        }
+    }
+
+    /// Valeur en cache, même ancienne, sans attendre : la mise à jour se
+    /// fait en arrière-plan (pour les pages qui ne doivent pas traîner).
+    fn sans_attendre(self: &Arc<Self>, quoi: String, f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Option<Arc<T>> {
+        if let Some(v) = self.frais() {
+            return v;
+        }
+        let actuelle = self.valeur.lock().unwrap().as_ref().and_then(|(_, v)| v.clone());
+        if !self.en_cours.swap(true, Ordering::AcqRel) {
+            let c = self.clone();
+            let lance = std::thread::Builder::new().name("github".into()).spawn(move || {
+                c.ranger(&quoi, f());
+                c.en_cours.store(false, Ordering::Release);
+            });
+            if lance.is_err() {
+                self.en_cours.store(false, Ordering::Release);
+            }
+        }
+        actuelle
+    }
+}
+
 pub struct Portail {
     r: Reglages,
     comptes: Arc<Comptes>,
+    livre: Livre,
     postier: Postier,
     config: Mutex<CacheConfig>,
     /// Horodatages des actions limitées, par clé (« inscription:IP »…)
     limites: Mutex<HashMap<String, Vec<u64>>>,
     /// Sessions d'administration : empreinte du jeton → expiration
     sessions: Mutex<HashMap<String, u64>>,
-    versions: Mutex<Option<(Instant, Option<Arc<Version>>)>>,
+    /// Sessions de l'espace abonné : empreinte du jeton → (abonné, expiration)
+    sessions_abonnes: Mutex<HashMap<String, (String, u64)>>,
+    /// Dernière version publiée (page de téléchargement, état du réseau)
+    versions: Arc<CacheGitHub<Version>>,
+    /// Dernières versions publiées (« Quoi de neuf ? »)
+    nouvelles: Arc<CacheGitHub<Vec<pages::Nouvelle>>>,
     visites: AtomicU64,
 }
 
@@ -168,15 +271,18 @@ fn empreinte(s: &str) -> String {
 }
 
 impl Portail {
-    pub fn new(r: Reglages, comptes: Arc<Comptes>, smtp: Option<SmtpConfig>) -> Arc<Portail> {
+    pub fn new(r: Reglages, comptes: Arc<Comptes>, livre: Livre, smtp: Option<SmtpConfig>) -> Arc<Portail> {
         Arc::new(Portail {
             r,
             comptes,
+            livre,
             postier: Postier::new(smtp),
             config: Mutex::new(CacheConfig { modifie: None, verifie: Instant::now() - Duration::from_secs(60), cfg: None }),
             limites: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
-            versions: Mutex::new(None),
+            sessions_abonnes: Mutex::new(HashMap::new()),
+            versions: CacheGitHub::new(),
+            nouvelles: CacheGitHub::new(),
             visites: AtomicU64::new(0),
         })
     }
@@ -231,6 +337,38 @@ impl Portail {
         to_hex(&hmac_sha256(self.comptes.secret(), &p))
     }
 
+    /// Jeton de temps d'un formulaire public (anti-robot) : horodatage
+    /// signé, propre à chaque formulaire (`usage`).
+    fn jeton_temps(&self, usage: &str) -> String {
+        let ts = maintenant().to_string();
+        format!("{ts}.{}", &self.signer(&[usage, &ts])[..20])
+    }
+
+    /// Contrôle anti-robot d'un formulaire public : champ piège `site`
+    /// vide, jeton de temps valable, formulaire rempli en plus de 3 s et
+    /// moins de 3 h.
+    fn controle_robot(&self, q: &Requete, usage: &str) -> Result<(), String> {
+        let t = q.champ("t");
+        let age = t
+            .split_once('.')
+            .filter(|(ts, sig)| ct_eq(sig.as_bytes(), &self.signer(&[usage, ts]).as_bytes()[..20]))
+            .and_then(|(ts, _)| ts.parse::<u64>().ok())
+            .map(|ts| maintenant().saturating_sub(ts));
+        if !q.champ("site").is_empty() || age.is_none_or(|a| a < 3) {
+            debug!("formulaire « {usage} » refusé (robot ?) depuis {}", q.ip);
+            return Err("Formulaire invalide : rechargez la page et réessayez.".into());
+        }
+        if age.is_some_and(|a| a > 3 * 3600) {
+            return Err("Le formulaire a expiré : réessayez.".into());
+        }
+        Ok(())
+    }
+
+    /// Éditeur, contact et hébergeur, pour les pages légales.
+    fn editeur(&self) -> legal::Editeur<'_> {
+        legal::Editeur { nom: &self.r.nom, editeur: &self.r.editeur, contact: &self.r.contact, hebergeur: &self.r.hebergeur, depot: &self.r.depot }
+    }
+
     fn page(&self, statut: u16, titre: &str, contenu: &str) -> Reponse {
         let n = self.visites.load(Ordering::Relaxed);
         Reponse { statut, type_contenu: "text/html; charset=utf-8", corps: pages::gabarit(&self.r.nom, titre, n, contenu).into_bytes(), entetes: Vec::new() }
@@ -245,7 +383,7 @@ impl Portail {
         match (q.methode.as_str(), q.chemin.as_str()) {
             ("GET" | "HEAD", "/") => {
                 self.visites.fetch_add(1, Ordering::Relaxed);
-                self.page(200, "Accueil", &pages::accueil(&self.r.nom, &self.r.central, self.inscriptions_ouvertes()))
+                self.page(200, "Accueil", &pages::accueil(&self.r.nom, &self.r.central, self.inscriptions_ouvertes(), &self.quoi_de_neuf()))
             }
             ("GET" | "HEAD", "/inscription") => self.formulaire(&pages::Formulaire::default(), &[]),
             ("POST", "/inscription") => self.inscrire(q),
@@ -258,17 +396,41 @@ impl Portail {
             ("POST", "/decision") => self.decision(q, true),
             ("GET" | "HEAD", "/telechargement") => self.telechargement(),
             ("GET" | "HEAD", "/aide") => self.page(200, "Aide", &pages::aide(&self.r.central, &self.r.depot)),
+            ("GET" | "HEAD", "/compte") => self.compte(q),
+            ("POST", "/compte/connexion") => self.compte_connexion(q),
+            ("POST", "/compte/mdp" | "/compte/supprimer" | "/compte/deconnexion") => self.compte_action(q),
+            ("GET" | "HEAD", "/oubli") => self.oubli_page(),
+            ("POST", "/oubli") => self.oubli(q),
+            ("GET" | "HEAD", "/reinitialiser") => self.reinitialiser_page(q),
+            ("POST", "/reinitialiser") => self.reinitialiser(q),
+            ("GET" | "HEAD", "/mentions") => self.page(200, "Mentions légales", &legal::mentions(&self.editeur())),
+            ("GET" | "HEAD", "/conditions") => self.page(200, "Conditions générales", &legal::conditions(&self.editeur())),
+            ("GET" | "HEAD", "/confidentialite") => self.page(200, "Confidentialité", &legal::confidentialite(&self.editeur())),
+            ("GET" | "HEAD", "/etat") => self.etat(),
+            ("GET" | "HEAD", "/livre") => self.livre_page(q),
+            ("POST", "/livre") => self.livre_signer(q),
+            ("GET" | "HEAD", "/webring") => self.page(200, "Webring", &pages::webring()),
+            ("GET" | "HEAD", "/webring/hasard") => {
+                let i = u32::from_le_bytes(random_bytes()) as usize % pages::WEBRING.len();
+                let mut r = Reponse::redirection(pages::WEBRING[i].0);
+                r.entetes.push(("Cache-Control", "no-store".into()));
+                r
+            }
             ("GET" | "HEAD", "/admin") => self.admin(q, None),
             ("POST", "/admin/connexion") => self.admin_connexion(q),
-            ("POST", "/admin/fai") | ("POST", "/admin/supprimer") | ("POST", "/admin/deconnexion") => self.admin_action(q),
+            ("POST", "/admin/fai" | "/admin/supprimer" | "/admin/deconnexion" | "/admin/livre/publier" | "/admin/livre/supprimer") => self.admin_action(q),
             ("GET" | "HEAD", "/construction.gif") => gif(crate::web1998::images::construction_gif()),
             ("GET" | "HEAD", "/compteur.gif") => {
                 let n: String = q.param("n").chars().filter(char::is_ascii_digit).take(9).collect();
                 gif(crate::web1998::images::counter_gif(&n))
             }
-            ("GET" | "HEAD", "/robots.txt") => Reponse::texte(200, "User-agent: *\nDisallow: /valider\nDisallow: /decision\nDisallow: /admin\n"),
+            ("GET" | "HEAD", "/robots.txt") => Reponse::texte(200, "User-agent: *\nDisallow: /valider\nDisallow: /decision\nDisallow: /admin\nDisallow: /compte\nDisallow: /oubli\nDisallow: /reinitialiser\nDisallow: /webring/hasard\n"),
             ("GET" | "HEAD", "/favicon.ico") => Reponse::texte(404, ""),
-            (_, "/" | "/inscription" | "/valider" | "/decision" | "/telechargement" | "/aide" | "/admin") => Reponse::texte(405, "méthode non autorisée"),
+            (
+                _,
+                "/" | "/inscription" | "/valider" | "/decision" | "/telechargement" | "/aide" | "/admin" | "/compte" | "/oubli" | "/reinitialiser" | "/mentions" | "/conditions" | "/confidentialite" | "/etat" | "/livre"
+                | "/webring" | "/webring/hasard",
+            ) => Reponse::texte(405, "méthode non autorisée"),
             _ => self.message(404, "Fichier introuvable", "Cette page n'existe pas (ou elle est encore en construction).", false),
         }
     }
@@ -299,8 +461,7 @@ impl Portail {
             return self.message(503, "Inscriptions fermées", "Les inscriptions sont momentanément fermées. Revenez plus tard !", false);
         }
         let cfg = self.config();
-        let ts = maintenant().to_string();
-        let jeton = format!("{ts}.{}", &self.signer(&["formulaire", &ts])[..20]);
+        let jeton = self.jeton_temps("formulaire");
         self.page(if erreurs.is_empty() { 200 } else { 400 }, "Inscription", &pages::inscription(f, erreurs, &self.suggestions(cfg.as_deref(), 4), &jeton))
     }
 
@@ -311,14 +472,8 @@ impl Portail {
         let numero: String = q.champ("numero").chars().filter(|c| !matches!(c, ' ' | '.' | '-')).collect();
         let f = pages::Formulaire { nom: q.champ("nom").trim().to_string(), courriel: q.champ("courriel").trim().to_string(), numero: numero.clone() };
         // Robots : champ piège rempli, ou formulaire envoyé trop vite / trop vieux.
-        let t = q.champ("t");
-        let age = t.split_once('.').filter(|(ts, sig)| ct_eq(sig.as_bytes(), self.signer(&["formulaire", ts])[..20].as_bytes())).and_then(|(ts, _)| ts.parse::<u64>().ok()).map(|ts| maintenant().saturating_sub(ts));
-        if !q.champ("site").is_empty() || age.is_none_or(|a| a < 3) {
-            debug!("inscription refusée (robot ?) depuis {}", q.ip);
-            return self.formulaire(&f, &["Formulaire invalide : rechargez la page et réessayez.".into()]);
-        }
-        if age.is_some_and(|a| a > 3 * 3600) {
-            return self.formulaire(&f, &["Le formulaire a expiré : réessayez.".into()]);
+        if let Err(e) = self.controle_robot(q, "formulaire") {
+            return self.formulaire(&f, &[e]);
         }
         let mut erreurs = Vec::new();
         let annuaire = cfg.annuaire().ok();
@@ -485,29 +640,18 @@ impl Portail {
         let Some(jeton) = self.session(q) else {
             return self.page(200, "Administration", &pages::admin_connexion(&self.r.admin, None));
         };
-        let jour = |t: u64| {
-            let j = t / 86_400;
-            // date civile (algorithme de Howard Hinnant)
-            let z = j as i64 + 719_468;
-            let era = z.div_euclid(146_097);
-            let doe = z - era * 146_097;
-            let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-            let mp = (5 * doy + 2) / 153;
-            let d = doy - (153 * mp + 2) / 5 + 1;
-            let m = if mp < 10 { mp + 3 } else { mp - 9 };
-            format!("{d:02}/{m:02}/{}", yoe + era * 400 + i64::from(m <= 2))
-        };
         let mut comptes: Vec<pages::LigneAdmin> = self
             .comptes
             .liste()
             .into_iter()
-            .map(|c| pages::LigneAdmin { nom: c.nom, numero: c.numero, courriel: c.courriel, cree: jour(c.cree), fai: c.fai, decide: c.fai_decide })
+            .map(|c| pages::LigneAdmin { nom: c.nom, numero: c.numero, courriel: c.courriel, cree: pages::date_fr(c.cree), fai: c.fai, decide: c.fai_decide })
             .collect();
         comptes.sort_by(|a, b| (a.decide, &a.nom).cmp(&(b.decide, &b.nom)));
         let attente: Vec<(String, String, String)> = self.comptes.en_attente().into_iter().map(|i| (i.nom, i.numero, i.courriel)).collect();
         let config: Vec<(String, String)> = self.config().map(|c| c.abonnes.iter().map(|a| (a.nom.clone(), a.numero.clone())).collect()).unwrap_or_default();
-        let mut r = self.page(200, "Administration", &pages::admin_tableau(&self.csrf(&jeton), &comptes, &attente, &config, info));
+        let a_relire = self.livre.en_attente();
+        let publies: Vec<livre::Message> = self.livre.publies().into_iter().take(20).collect();
+        let mut r = self.page(200, "Administration", &pages::admin_tableau(&self.csrf(&jeton), &comptes, &attente, &config, (&a_relire, &publies), info));
         r.entetes.push(("Cache-Control", "no-store".into()));
         r
     }
@@ -557,13 +701,29 @@ impl Portail {
                     r
                 }
             }
-            _ => match self.comptes.supprimer(&nom) {
+            "/admin/supprimer" => match self.comptes.supprimer(&nom) {
                 Ok(c) => {
+                    self.sessions_abonnes.lock().unwrap().retain(|_, (n, _)| *n != c.nom);
                     info!("compte supprimé par l'administrateur : {} ({})", c.nom, c.numero);
                     self.admin(q, Some(&format!("Compte {} supprimé ; le numéro {} est libéré.", c.nom, numero_lisible(&c.numero))))
                 }
                 Err(e) => self.message(400, "Impossible", &e, false),
             },
+            "/admin/livre/publier" => match self.livre.publier(&q.champ("id")) {
+                Ok(m) => {
+                    info!("livre d'or : message de « {} » publié", m.pseudo);
+                    self.admin(q, Some(&format!("Message de {} publié dans le livre d'or.", m.pseudo)))
+                }
+                Err(e) => self.message(400, "Impossible", &e, false),
+            },
+            "/admin/livre/supprimer" => match self.livre.supprimer(&q.champ("id")) {
+                Ok(m) => {
+                    info!("livre d'or : message de « {} » supprimé", m.pseudo);
+                    self.admin(q, Some(&format!("Message de {} supprimé du livre d'or.", m.pseudo)))
+                }
+                Err(e) => self.message(400, "Impossible", &e, false),
+            },
+            _ => Reponse::texte(404, ""),
         }
     }
 
@@ -578,29 +738,34 @@ impl Portail {
         self.page(200, "Logiciel", &pages::telechargement(version, fichiers, &self.r.depot))
     }
 
-    /// Dernière version publiée (API GitHub, en cache 10 min ; 2 min après un échec).
+    /// Dernière version publiée (API GitHub, en cache 10 min).
     fn version(&self) -> Option<Arc<Version>> {
         if self.r.depot.is_empty() {
             return None;
         }
-        {
-            let c = self.versions.lock().unwrap();
-            if let Some((t, v)) = c.as_ref() {
-                let ttl = if v.is_some() { 600 } else { 120 };
-                if t.elapsed() < Duration::from_secs(ttl) {
-                    return v.clone();
-                }
-            }
+        self.versions.obtenir(&format!("versions de {}", self.r.depot), || recuperer_version(&self.r.depot))
+    }
+
+    /// Comme [`Portail::version`], sans attendre GitHub (cache seulement ;
+    /// mise à jour en arrière-plan).
+    fn version_sans_attendre(&self) -> Option<Arc<Version>> {
+        if self.r.depot.is_empty() {
+            return None;
         }
-        let v = match recuperer_version(&self.r.depot) {
-            Ok(v) => Some(Arc::new(v)),
-            Err(e) => {
-                warn!("versions de {} : {e}", self.r.depot);
-                None
-            }
+        let depot = self.r.depot.clone();
+        self.versions.sans_attendre(format!("versions de {depot}"), move || recuperer_version(&depot))
+    }
+
+    /// Rubrique « Quoi de neuf ? » : les 3 dernières versions publiées
+    /// (cache, sans attendre GitHub) et l'ouverture du site.
+    fn quoi_de_neuf(&self) -> Vec<pages::Nouvelle> {
+        let publiees = if self.r.depot.is_empty() {
+            None
+        } else {
+            let depot = self.r.depot.clone();
+            self.nouvelles.sans_attendre(format!("dernières versions de {depot}"), move || recuperer_nouvelles(&depot))
         };
-        *self.versions.lock().unwrap() = Some((Instant::now(), v.clone()));
-        v
+        quoi_de_neuf(publiees.as_deref().map(|v| &v[..]).unwrap_or(&[]))
     }
 
     // ───────────────────────── serveur HTTP ─────────────────────────
@@ -688,12 +853,56 @@ fn courriel_valide(s: &str) -> bool {
         && s.chars().all(|c| c.is_ascii_graphic() && !matches!(c, '<' | '>' | '"' | '\\' | ',' | ';'))
 }
 
+/// Requête à l'API publique de GitHub (sans authentification).
+fn api_github(url: &str) -> Result<serde_json::Value, String> {
+    let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build();
+    let rep = agent.get(url).set("User-Agent", "v34-portail").set("Accept", "application/vnd.github+json").call().map_err(|e| e.to_string())?;
+    serde_json::from_reader(rep.into_reader().take(2 << 20)).map_err(|e| e.to_string())
+}
+
+/// Les 3 dernières versions publiées (API GitHub `releases?per_page=5`).
+fn recuperer_nouvelles(depot: &str) -> Result<Vec<pages::Nouvelle>, String> {
+    let v = api_github(&format!("https://api.github.com/repos/{depot}/releases?per_page=5"))?;
+    if !v.is_array() {
+        return Err("réponse inattendue de GitHub".into());
+    }
+    Ok(analyser_nouvelles(&v))
+}
+
+/// Versions publiées (ni brouillons, ni dates illisibles), 3 au plus.
+fn analyser_nouvelles(v: &serde_json::Value) -> Vec<pages::Nouvelle> {
+    let mut n = Vec::new();
+    for r in v.as_array().map(|a| &a[..]).unwrap_or(&[]) {
+        let date = r["published_at"].as_str().and_then(|d| d.get(..10)).unwrap_or("");
+        let b = date.as_bytes();
+        let date_ok = b.len() == 10 && b[4] == b'-' && b[7] == b'-' && b.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit());
+        let tag = r["tag_name"].as_str().unwrap_or("");
+        let nom = r["name"].as_str().map(str::trim).filter(|s| !s.is_empty()).unwrap_or(tag);
+        if r["draft"].as_bool() == Some(true) || !date_ok || nom.is_empty() {
+            continue;
+        }
+        let pre = if r["prerelease"].as_bool() == Some(true) { " (préversion)" } else { "" };
+        let lien = r["html_url"].as_str().filter(|u| u.starts_with("https://github.com/")).unwrap_or("");
+        n.push(pages::Nouvelle { titre: format!("Nouvelle version du logiciel : {nom}{pre}"), date: date.into(), lien: lien.into() });
+        if n.len() == 3 {
+            break;
+        }
+    }
+    n
+}
+
+/// Versions publiées + ouverture du site, de la plus récente à la plus
+/// ancienne.
+fn quoi_de_neuf(publiees: &[pages::Nouvelle]) -> Vec<pages::Nouvelle> {
+    let mut n: Vec<pages::Nouvelle> = publiees.iter().take(3).cloned().collect();
+    n.push(pages::Nouvelle { titre: "Ouverture du site : les premiers modems chantent !".into(), date: OUVERTURE.into(), lien: String::new() });
+    n.sort_by(|a, b| b.date.cmp(&a.date));
+    n
+}
+
 /// Interroge l'API GitHub (`releases/latest`) et classe les fichiers par système.
 fn recuperer_version(depot: &str) -> Result<Version, String> {
-    let url = format!("https://api.github.com/repos/{depot}/releases/latest");
-    let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build();
-    let rep = agent.get(&url).set("User-Agent", "v34-portail").set("Accept", "application/vnd.github+json").call().map_err(|e| e.to_string())?;
-    let v: serde_json::Value = serde_json::from_reader(rep.into_reader().take(2 << 20)).map_err(|e| e.to_string())?;
+    let v = api_github(&format!("https://api.github.com/repos/{depot}/releases/latest"))?;
     let tag = v["tag_name"].as_str().unwrap_or("?").to_string();
     let page = v["html_url"].as_str().unwrap_or("").to_string();
     let mut fichiers = Vec::new();
@@ -753,3 +962,30 @@ fn ordre(systeme: &str) -> usize {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tests_cache {
+    use super::*;
+
+    #[test]
+    fn cache_github_garde_la_derniere_valeur() {
+        let c: Arc<CacheGitHub<u32>> = CacheGitHub::new();
+        assert_eq!(c.obtenir("essai", || Ok(1)).as_deref(), Some(&1));
+        assert_eq!(c.obtenir("essai", || Ok(2)).as_deref(), Some(&1), "encore frais");
+        *c.valeur.lock().unwrap() = Some((Instant::now(), Some(Arc::new(1))));
+        assert_eq!(c.obtenir("essai", || Err("GitHub en panne".into())).as_deref(), Some(&1), "échec : dernière valeur gardée");
+        assert!(c.frais().is_some(), "nouvel essai dans 2 min seulement");
+        let vide: Arc<CacheGitHub<u32>> = CacheGitHub::new();
+        assert!(vide.obtenir("essai", || Err("GitHub en panne".into())).is_none());
+        // Sans attendre : rien tout de suite, la valeur arrive en arrière-plan.
+        let fond: Arc<CacheGitHub<u32>> = CacheGitHub::new();
+        assert!(fond.sans_attendre("essai".into(), || Ok(7)).is_none());
+        for _ in 0..100 {
+            if fond.frais().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(fond.sans_attendre("essai".into(), || Ok(8)).as_deref(), Some(&7));
+    }
+}

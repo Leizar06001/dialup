@@ -12,6 +12,12 @@
 //! 2. validation : le compte est créé, **sans accès Internet** ;
 //! 3. l'administrateur accorde (ou non) l'accès Internet (FAI).
 //!
+//! Mot de passe oublié : une demande de réinitialisation (empreinte d'un
+//! jeton envoyé par e-mail, valable 1 h, à usage unique) est gardée EN
+//! MÉMOIRE par le site (un redémarrage l'annule : on en refait une). Le
+//! format du fichier ne change donc pas pour le central. Tout changement
+//! de mot de passe ou la suppression du compte l'annule.
+//!
 //! Le fichier contient aussi le secret du site (signature des liens envoyés
 //! à l'administrateur et des sessions) : il doit rester lisible par le seul
 //! serveur (le service tourne avec `UMask=0077`).
@@ -30,6 +36,8 @@ use v34_net::crypto::random_bytes;
 pub const ATTENTE_MAX_S: u64 = 48 * 3600;
 /// Inscriptions en attente au maximum (toutes adresses confondues)
 const ATTENTE_MAX: usize = 500;
+/// Validité d'un lien de réinitialisation du mot de passe (s)
+pub const REINIT_S: u64 = 3600;
 
 pub fn maintenant() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
@@ -65,6 +73,17 @@ pub struct Inscription {
     pub expire: u64,
 }
 
+/// Une demande de réinitialisation du mot de passe (« mot de passe
+/// oublié »).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Reinitialisation {
+    pub nom: String,
+    /// SHA-256 (hex) du jeton envoyé par e-mail
+    pub jeton: String,
+    pub expire: u64,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Fichier {
@@ -77,6 +96,15 @@ struct Fichier {
     inscription: Vec<Inscription>,
 }
 
+/// Lecture côté central : seuls les comptes validés comptent, et les
+/// sections inconnues (ajoutées par une version plus récente du site) sont
+/// ignorées au lieu de faire refuser tout le fichier.
+#[derive(Deserialize)]
+struct FichierLu {
+    #[serde(default)]
+    compte: Vec<Compte>,
+}
+
 pub struct Comptes {
     path: Option<PathBuf>,
     data: Mutex<Fichier>,
@@ -84,6 +112,8 @@ pub struct Comptes {
     /// Augmente à chaque modification des comptes validés (le central
     /// recharge alors son annuaire)
     generation: AtomicU64,
+    /// Demandes de réinitialisation du mot de passe (en mémoire seulement)
+    reinit: Mutex<Vec<Reinitialisation>>,
 }
 
 impl std::fmt::Debug for Comptes {
@@ -100,7 +130,7 @@ fn empreinte(jeton: &str) -> String {
 /// central ; seul le site écrit ce fichier). Fichier absent : aucun compte.
 pub fn lire_comptes(path: &Path) -> Result<Vec<Compte>, String> {
     match std::fs::read_to_string(path) {
-        Ok(t) => toml::from_str::<Fichier>(&t).map(|f| f.compte).map_err(|e| format!("{} : {e}", path.display())),
+        Ok(t) => toml::from_str::<FichierLu>(&t).map(|f| f.compte).map_err(|e| format!("{} : {e}", path.display())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(e) => Err(format!("lecture de {} : {e}", path.display())),
     }
@@ -116,7 +146,7 @@ impl Comptes {
         };
         let neuf = f.secret.is_empty();
         let secret = Self::secret_de(&mut f)?;
-        let c = Comptes { path: Some(path.to_path_buf()), data: Mutex::new(f), secret, generation: AtomicU64::new(1) };
+        let c = Comptes { path: Some(path.to_path_buf()), data: Mutex::new(f), secret, generation: AtomicU64::new(1), reinit: Mutex::new(Vec::new()) };
         if neuf {
             let d = c.data.lock().unwrap();
             c.ecrire(&d)?;
@@ -128,7 +158,7 @@ impl Comptes {
     pub fn en_memoire() -> Arc<Comptes> {
         let mut f = Fichier::default();
         let secret = Self::secret_de(&mut f).expect("secret neuf");
-        Arc::new(Comptes { path: None, data: Mutex::new(f), secret, generation: AtomicU64::new(1) })
+        Arc::new(Comptes { path: None, data: Mutex::new(f), secret, generation: AtomicU64::new(1), reinit: Mutex::new(Vec::new()) })
     }
 
     fn secret_de(f: &mut Fichier) -> Result<[u8; 32], String> {
@@ -250,19 +280,71 @@ impl Comptes {
         })
     }
 
-    /// Change le mot de passe d'un compte du site.
+    /// Change le mot de passe d'un compte du site (les demandes de
+    /// réinitialisation en cours sont annulées).
     pub fn changer_mot_de_passe(&self, nom: &str, hash: &str) -> Result<(), String> {
         self.modifier(true, |d| {
             let c = d.compte.iter_mut().find(|c| c.nom == nom).ok_or("compte inconnu")?;
             c.mot_de_passe_hash = hash.into();
             Ok(())
-        })
+        })?;
+        self.reinit.lock().unwrap().retain(|r| r.nom != nom);
+        Ok(())
     }
 
     pub fn supprimer(&self, nom: &str) -> Result<Compte, String> {
         self.modifier(true, |d| {
             let i = d.compte.iter().position(|c| c.nom == nom).ok_or("compte inconnu")?;
             Ok(d.compte.remove(i))
+        })
+        .inspect(|_| self.reinit.lock().unwrap().retain(|r| r.nom != nom))
+    }
+
+    /// Le compte du site qui utilise cette adresse e-mail (sans tenir
+    /// compte des majuscules).
+    pub fn compte_par_courriel(&self, courriel: &str) -> Option<Compte> {
+        self.data.lock().unwrap().compte.iter().find(|c| c.courriel.eq_ignore_ascii_case(courriel)).cloned()
+    }
+
+    /// Ouvre une demande de réinitialisation du mot de passe ; renvoie le
+    /// jeton à envoyer par e-mail (seule son empreinte est gardée). Une
+    /// nouvelle demande remplace la précédente.
+    pub fn demander_reinitialisation(&self, nom: &str) -> Result<String, String> {
+        let jeton = to_hex(&random_bytes::<24>());
+        let now = maintenant();
+        if !self.data.lock().unwrap().compte.iter().any(|c| c.nom == nom) {
+            return Err("compte inconnu".to_string());
+        }
+        let mut r = self.reinit.lock().unwrap();
+        r.retain(|r| r.expire > now && r.nom != nom);
+        r.push(Reinitialisation { nom: nom.into(), jeton: empreinte(&jeton), expire: now + REINIT_S });
+        Ok(jeton)
+    }
+
+    /// Le compte visé par un jeton de réinitialisation encore valable (sans
+    /// le consommer).
+    pub fn reinitialisation(&self, jeton: &str) -> Option<Compte> {
+        let e = empreinte(jeton);
+        let now = maintenant();
+        let nom = self.reinit.lock().unwrap().iter().find(|r| r.jeton == e && r.expire > now)?.nom.clone();
+        self.data.lock().unwrap().compte.iter().find(|c| c.nom == nom).cloned()
+    }
+
+    /// Consomme le jeton et change le mot de passe.
+    pub fn reinitialiser(&self, jeton: &str, hash: &str) -> Result<Compte, String> {
+        let e = empreinte(jeton);
+        let now = maintenant();
+        let nom = {
+            let mut r = self.reinit.lock().unwrap();
+            let nom = r.iter().find(|r| r.jeton == e && r.expire > now).map(|r| r.nom.clone()).ok_or("lien invalide, déjà utilisé ou expiré (1 heure)")?;
+            // usage unique : retiré avant même d'essayer
+            r.retain(|x| x.nom != nom && x.expire > now);
+            nom
+        };
+        self.modifier(true, |d| {
+            let i = d.compte.iter().position(|c| c.nom == nom).ok_or("compte inconnu")?;
+            d.compte[i].mot_de_passe_hash = hash.into();
+            Ok(d.compte[i].clone())
         })
     }
 
@@ -289,13 +371,21 @@ impl Comptes {
              # Ne pas modifier pendant que le serveur tourne.\n\n",
         );
         text.push_str(&toml::to_string(d).map_err(|e| e.to_string())?);
-        let tmp = path.with_extension("toml.tmp");
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("{} : {e}", dir.display()))?;
-        }
-        write_private(&tmp, text.as_bytes()).map_err(|e| format!("écriture de {} : {e}", tmp.display()))?;
-        std::fs::rename(&tmp, path).map_err(|e| format!("écriture de {} : {e}", path.display()))
+        ecrire_atomique(path, text.as_bytes())
     }
+}
+
+/// Remplace un fichier de façon atomique (fichier temporaire à côté, puis
+/// renommage), lisible par son propriétaire et son groupe seulement.
+pub(crate) fn ecrire_atomique(path: &Path, data: &[u8]) -> Result<(), String> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{} : {e}", dir.display()))?;
+    }
+    write_private(&tmp, data).map_err(|e| format!("écriture de {} : {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("écriture de {} : {e}", path.display()))
 }
 
 /// Écrit un fichier lisible par son propriétaire et son groupe seulement
@@ -347,6 +437,50 @@ mod tests {
         assert!(g.fai && g.fai_decide);
         c2.supprimer("gaston").unwrap();
         assert!(Comptes::ouvrir(&path).unwrap().liste().is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reinitialisation_du_mot_de_passe() {
+        let dir = std::env::temp_dir().join(format!("v34-comptes-{}", to_hex(&random_bytes::<6>())));
+        let path = dir.join("comptes.toml");
+        // Fichier d'une version précédente (sans section de réinitialisation) : relu tel quel.
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            &path,
+            format!(
+                "secret = \"{}\"\n\n[[compte]]\nnom = \"gaston\"\nnumero = \"0612345678\"\nmot_de_passe_hash = \"h1\"\ncourriel = \"gaston@example.org\"\nfai = false\ncree = 1\n",
+                to_hex(&[7u8; 32])
+            ),
+        )
+        .unwrap();
+        let c = Comptes::ouvrir(&path).unwrap();
+        assert_eq!(c.compte_par_courriel("Gaston@Example.ORG").unwrap().nom, "gaston");
+        assert!(c.compte_par_courriel("autre@example.org").is_none());
+        assert!(c.demander_reinitialisation("inconnu").is_err());
+
+        let avant = std::fs::read_to_string(&path).unwrap();
+        let j1 = c.demander_reinitialisation("gaston").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), avant, "demande gardée en mémoire : fichier inchangé");
+        assert_eq!(c.reinitialisation(&j1).unwrap().nom, "gaston");
+        // Une nouvelle demande remplace la précédente.
+        let j2 = c.demander_reinitialisation("gaston").unwrap();
+        assert!(c.reinitialisation(&j1).is_none());
+        assert!(c.reinitialiser(&j1, "h2").is_err());
+        assert_eq!(c.reinitialiser(&j2, "h2").unwrap().mot_de_passe_hash, "h2");
+        assert!(c.reinitialiser(&j2, "h3").is_err(), "jeton à usage unique");
+
+        // Un changement de mot de passe annule la demande en cours.
+        let j3 = c.demander_reinitialisation("gaston").unwrap();
+        c.changer_mot_de_passe("gaston", "h4").unwrap();
+        assert!(c.reinitialisation(&j3).is_none());
+        // La suppression du compte aussi.
+        let j4 = c.demander_reinitialisation("gaston").unwrap();
+        c.supprimer("gaston").unwrap();
+        assert!(c.reinitialisation(&j4).is_none());
+        // Le central lit un fichier contenant une section qu'il ne connaît pas.
+        std::fs::write(&path, format!("{}\n[[nouveaute]]\nx = 1\n", std::fs::read_to_string(&path).unwrap())).unwrap();
+        assert!(lire_comptes(&path).is_ok());
         let _ = std::fs::remove_dir_all(dir);
     }
 
