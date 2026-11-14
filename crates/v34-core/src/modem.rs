@@ -134,6 +134,12 @@ pub struct Modem {
     pub(crate) v90: bool,
     /// Le 56k a échoué sur cet appel : on se contente du V.34
     pub(crate) v90_refused: bool,
+    /// Télécopie en cours (à la place de la liaison de données)
+    pub(crate) fax: Option<Box<crate::fax::session::Fax>>,
+    /// Page préparée : le prochain Dial l'envoie par fax
+    pub(crate) fax_page: Option<(Vec<Vec<bool>>, bool)>,
+    /// Appelé : écoute du CNG (1100 Hz) d'un télécopieur qui appelle
+    pub(crate) cng: Option<(ToneDetector, PowerMeter, u64)>,
 }
 
 impl Modem {
@@ -190,6 +196,9 @@ impl Modem {
             pending_rev: None,
             v90: false,
             v90_refused: false,
+            fax: None,
+            fax_page: None,
+            cng: None,
         }
     }
 
@@ -206,6 +215,19 @@ impl Modem {
 
     pub fn command(&mut self, cmd: ModemCommand) {
         match cmd {
+            ModemCommand::PreparerFax { lignes, fine } => {
+                self.fax_page = Some((lignes, fine));
+            }
+            ModemCommand::Dial if self.fax_page.is_some() => {
+                let (lignes, fine) = self.fax_page.take().unwrap_or_default();
+                self.reset_link();
+                self.role = Role::Call;
+                self.status.role = Role::Call;
+                self.status.leds.oh = true;
+                self.set_phase(Phase::Fax);
+                self.log(LogLevel::Info, &format!("Télécopie : {} lignes à envoyer — CNG, en attente du télécopieur", lignes.len()));
+                self.fax = Some(Box::new(crate::fax::session::Fax::emetteur(&lignes, &self.cfg.ident, fine)));
+            }
             ModemCommand::Dial => {
                 self.reset_link();
                 self.role = Role::Call;
@@ -227,6 +249,12 @@ impl Modem {
                 self.t_mark = self.n + self.cfg.answer_silence_ms.max(200) as u64 * MS;
                 self.goto(St::AnsSilence);
                 self.set_tx(TxMode::Silence, "silence");
+                // Un télécopieur qui appelle se reconnaît à son CNG (1100 Hz pur)
+                self.cng = Some((ToneDetector::new(1100.0, 320), PowerMeter::new(320), 0));
+            }
+            ModemCommand::Hangup if self.fax.is_some() => {
+                self.fax = None;
+                self.hangup("raccroché");
             }
             ModemCommand::Hangup => {
                 if self.st == St::P3 {
@@ -263,8 +291,15 @@ impl Modem {
     /// Traite un bloc audio : `rx` = ce qui arrive de la ligne,
     /// `tx` = ce que le modem émet (même longueur).
     pub fn process(&mut self, rx: &[f32], tx: &mut [f32]) {
-        for (r, t) in rx.iter().zip(tx.iter_mut()) {
+        if self.fax.is_some() {
+            return self.process_fax(rx, tx);
+        }
+        for (i, (r, t)) in rx.iter().zip(tx.iter_mut()).enumerate() {
             *t = self.step(*r);
+            if self.ecouter_cng(*r) {
+                // Le reste du bloc part en télécopie
+                return self.process_fax(&rx[i + 1..], &mut tx[i + 1..]);
+            }
         }
         if let Some(p) = self.p34.as_ref() {
             self.status.constellation = p.constellation();
@@ -272,6 +307,61 @@ impl Modem {
             self.status.link = Some(p.link_stats());
         } else if let Some(l) = self.saved_link.as_ref() {
             self.status.link = Some(l.stats());
+        }
+    }
+
+    /// Appelé, avant la fin de la négociation V.8 : un CNG (1100 Hz pur
+    /// pendant 300 ms) ? Alors c'est un télécopieur : on passe en réception
+    /// de fax (notre ANSam a servi de CED).
+    fn ecouter_cng(&mut self, r: f32) -> bool {
+        let Some((det, pm, duree)) = self.cng.as_mut() else { return false };
+        if !matches!(self.status.phase, Phase::Phase1) {
+            self.cng = None;
+            return false;
+        }
+        det.push(r);
+        let p = pm.push(r);
+        // ton pur : presque toute la puissance reçue est à 1100 Hz (le CM
+        // d'un modem de données, à 980/1180 Hz, ne passe pas)
+        let pur = det.amplitude() > TONE_MIN_AMP && det.amplitude() * det.amplitude() > 1.4 * p;
+        *duree = if pur { *duree + 1 } else { 0 };
+        if *duree < 300 * MS {
+            return false;
+        }
+        self.cng = None;
+        self.reset_link();
+        self.role = Role::Answer;
+        self.status.role = Role::Answer;
+        self.status.leds.oh = true;
+        self.set_phase(Phase::Fax);
+        self.log(LogLevel::Info, "CNG entendu : c'est un télécopieur, réception d'une télécopie");
+        self.fax = Some(Box::new(crate::fax::session::Fax::recepteur(&self.cfg.ident, true)));
+        true
+    }
+
+    fn process_fax(&mut self, rx: &[f32], tx: &mut [f32]) {
+        let Some(f) = self.fax.as_mut() else { return };
+        f.process(rx, tx);
+        self.n += rx.len() as u64;
+        let evs = f.evenements();
+        let etape = f.etape();
+        let fini = f.fini();
+        let emet = tx.iter().any(|x| x.abs() > 1e-6);
+        self.status.leds.sd = emet;
+        self.status.leds.rd = !emet;
+        self.status.leds.cd = true;
+        if self.status.tx_signal != etape {
+            self.status.tx_signal = etape.to_string();
+        }
+        for e in evs {
+            if let crate::fax::session::FaxEvenement::Fin { ok, raison } = &e {
+                self.log(if *ok { LogLevel::Info } else { LogLevel::Warn }, &format!("Télécopie : {raison}"));
+            }
+            self.events.push(ModemEvent::Fax(e));
+        }
+        if fini {
+            self.fax = None;
+            self.hangup("télécopie terminée");
         }
     }
 
@@ -292,9 +382,11 @@ impl Modem {
         let cfg = self.cfg.clone();
         let n = self.n;
         let events = std::mem::take(&mut self.events);
+        let fax_page = self.fax_page.take();
         *self = Modem::new(role, cfg);
         self.n = n;
         self.events = events;
+        self.fax_page = fax_page;
     }
 
     pub(crate) fn hangup(&mut self, reason: &str) {

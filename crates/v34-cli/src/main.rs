@@ -189,6 +189,10 @@ fn fmt_event(ev: &ModemEvent) -> String {
         ModemEvent::Connected { tx_rate, rx_rate } => format!("*** CONNECT {tx_rate}/{rx_rate} bit/s ***"),
         ModemEvent::Disconnected { reason } => format!("*** NO CARRIER ({reason}) ***"),
         ModemEvent::Data(d) => format!("données {} octets : {:?}", d.len(), String::from_utf8_lossy(d)),
+        ModemEvent::Fax(f) => match f {
+            v34_core::fax::session::FaxEvenement::Ligne(_) => "fax     ligne reçue".into(),
+            autre => format!("fax     {autre:?}"),
+        },
     }
 }
 

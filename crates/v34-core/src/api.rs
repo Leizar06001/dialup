@@ -38,6 +38,8 @@ pub enum Phase {
     Cleardown,
     /// Échec de la négociation
     Failed,
+    /// Télécopie (T.30 / V.29) en cours
+    Fax,
 }
 
 /// Les LEDs d'un modem externe des années 90.
@@ -106,6 +108,8 @@ pub enum ModemEvent {
     Disconnected { reason: String },
     /// Octets reçus de l'autre modem (mode données)
     Data(Vec<u8>),
+    /// Télécopie : étapes, lignes de la page reçue, fin
+    Fax(crate::fax::session::FaxEvenement),
 }
 
 /// Commandes envoyées au moteur.
@@ -124,6 +128,10 @@ pub enum ModemCommand {
     Retrain,
     /// Forcer une renégociation de débit
     Renegotiate,
+    /// Prépare une télécopie : le prochain `Dial` envoie cette page (lignes
+    /// de 1728 points, vrai = noir ; `fine` : 7,7 lignes/mm) au lieu de
+    /// négocier une liaison de données
+    PreparerFax { lignes: Vec<Vec<bool>>, fine: bool },
 }
 
 /// Configuration du modem.
@@ -150,6 +158,9 @@ pub struct ModemConfig {
     /// lenteurs d'origine : long DIL avec symboles de référence écouté deux
     /// fois, temps de réflexion après Jd, SCR pendant le calcul des niveaux.
     pub express: bool,
+    /// Identité du télécopieur (TSI/CSI) : le numéro de l'abonné
+    #[serde(default)]
+    pub ident: String,
 }
 
 impl Default for ModemConfig {
@@ -164,6 +175,7 @@ impl Default for ModemConfig {
             digital: false,
             max_rate_pcm: 56000,
             express: false,
+            ident: String::new(),
         }
     }
 }

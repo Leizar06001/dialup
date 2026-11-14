@@ -43,7 +43,7 @@ const ESSAIS: u32 = 3;
 const AMPLITUDE: f32 = NOMINAL_RMS * SQRT_2;
 
 /// Ce qui se passe, pour l'affichage.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum FaxEvenement {
     /// Étape de la procédure (« CNG », « DIS reçu », « DCS 9600 »…)
     Etape(String),
