@@ -33,6 +33,9 @@ fn run_with(p: LineParams, abonne: ModemConfig, fai: ModemConfig, seconds: f32, 
     let mut r = Run { connected: [None, None], t_connect: None, got: [Vec::new(), Vec::new()], log: Vec::new() };
     let mut sent = [false, false];
     let blocks = (seconds * 8000.0 / B as f32) as usize;
+    // V90_WAV=fichier.wav : le son de la ligne côté abonné (ce qu'entendrait
+    // le haut-parleur : notre émission + ce qui arrive), 8 kHz mono
+    let mut wav: Vec<i16> = Vec::new();
     for blk in 0..blocks {
         call.process(&call_rx, &mut call_tx);
         ans.process(&ans_rx, &mut ans_tx);
@@ -40,6 +43,9 @@ fn run_with(p: LineParams, abonne: ModemConfig, fai: ModemConfig, seconds: f32, 
         echo_a.process(&ans_tx, &mut ans_rx);
         a2c.process(&ans_tx, &mut call_rx);
         echo_c.process(&call_tx, &mut call_rx);
+        if std::env::var("V90_WAV").is_ok() && r.t_connect.is_none() {
+            wav.extend(call_rx.iter().zip(&call_tx).map(|(a, b)| ((a + 0.5 * b).clamp(-1.0, 1.0) * 32767.0) as i16));
+        }
         for (i, m) in [&mut call, &mut ans].into_iter().enumerate() {
             for ev in m.drain_events() {
                 match ev {
@@ -65,6 +71,23 @@ fn run_with(p: LineParams, abonne: ModemConfig, fai: ModemConfig, seconds: f32, 
         if r.got[0].len() >= payload[1].len() && r.got[1].len() >= payload[0].len() && sent[0] && sent[1] {
             break;
         }
+    }
+    if let Ok(chemin) = std::env::var("V90_WAV") {
+        let mut f = Vec::new();
+        let n = (wav.len() * 2) as u32;
+        f.extend_from_slice(b"RIFF");
+        f.extend_from_slice(&(36 + n).to_le_bytes());
+        f.extend_from_slice(b"WAVEfmt ");
+        f.extend_from_slice(&[16, 0, 0, 0, 1, 0, 1, 0]);
+        f.extend_from_slice(&8000u32.to_le_bytes());
+        f.extend_from_slice(&16000u32.to_le_bytes());
+        f.extend_from_slice(&[2, 0, 16, 0]);
+        f.extend_from_slice(b"data");
+        f.extend_from_slice(&n.to_le_bytes());
+        for x in &wav {
+            f.extend_from_slice(&x.to_le_bytes());
+        }
+        std::fs::write(chemin, f).unwrap();
     }
     r
 }
@@ -225,4 +248,12 @@ fn le_56k_se_remet_d_un_glissement() {
     assert!(log.iter().any(|l| l.contains("Réception 56k perdue") || l.contains("56k muette")), "{}", log.join("\n"));
     assert!(log.iter().any(|l| l.contains("reconnecté")), "{}", log.join("\n"));
     assert!(tranches[4..6].iter().all(|&(a, _)| a > 30_000), "{tranches:?}");
+}
+
+/// Pour écouter : `V90_WAV=/tmp/56k.wav cargo test --release --test v90_appel son_de_la_connexion -- --ignored`
+#[test]
+#[ignore = "écrit un fichier son"]
+fn son_de_la_connexion() {
+    let r = echange(LineParams::preset("Urbaine").unwrap(), ModemConfig::default(), fai());
+    assert!(r.connected[0].is_some());
 }

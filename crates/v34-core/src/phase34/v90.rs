@@ -25,35 +25,45 @@ pub(crate) const UINFO: u8 = 96;
 /// Silence d'une séquence de l'autre au-delà duquel on abandonne (ms).
 const STALL_MS: u64 = 9000;
 
-/// Le DIL que l'abonné demande : un Ucode d'apprentissage par segment, du
-/// plus faible au plus fort.
-/// - express : 31 segments de 96 symboles (Ucodes 4 à 124) — 0,4 s ;
-/// - d'époque : 64 segments (un Ucode sur deux), plus longs pour les petits
-///   niveaux (le bruit y pèse le plus) — 1,1 s par passage, écouté quatre
-///   fois : quatre crescendos.
+/// Motif pseudo-aléatoire de `n` bits (registre à décalage, polynôme
+/// x^7 + x^6 + 1), à peu près autant de 1 que de 0.
+fn motif(n: usize, graine: u8) -> Vec<bool> {
+    let mut r = graine | 1;
+    (0..n)
+        .map(|_| {
+            let b = ((r >> 6) ^ (r >> 5)) & 1;
+            r = ((r << 1) | b) & 0x7F;
+            b == 1
+        })
+        .collect()
+}
+
+/// Le DIL que l'abonné demande, à la manière des modems de 1999 (voir
+/// l'enregistrement d'une vraie connexion) : des motifs de signes et de
+/// références de 120 symboles, répétés dans chaque segment de 720 symboles
+/// — le signal est périodique, on entend un « peigne » de raies espacées
+/// de 67 Hz, ce bourdonnement caractéristique de la fin d'une connexion
+/// 56k. Une moitié des symboles sont des références (UINFO) : le volume
+/// reste à peu près constant. Les Ucodes d'apprentissage couvrent toute
+/// l'échelle, dans le désordre.
+/// - express : 8 segments (0,7 s) ;
+/// - d'époque : 28 segments (2,5 s).
 pub(crate) fn our_dil(express: bool) -> DilDescriptor {
-    // Signes alternés « + − » : un sifflement à 4 kHz, dont le volume monte
-    // avec les niveaux (du plus faible au plus fort) — le crescendo aigu de
-    // la fin d'une connexion 56k. À 4 kHz, son écho tombe hors de la bande
-    // du récepteur V.34 du FAI (porteuse 1959 Hz ± 1,9 kHz) : il ne peut
-    // pas y passer pour le S qui annonce la fin du DIL.
-    let sp = vec![true, false];
-    if express {
-        return DilDescriptor { sp, tp: vec![true], h: [15; 8], refs: [UINFO; 8], train: (4..128).step_by(4).map(|u| u as u8).collect() };
+    let n = if express { 8 } else { 28 };
+    // Ucodes répartis de 6 à 123, mélangés (pas de crescendo)
+    let mut train: Vec<u8> = (0..n).map(|k| (6 + k * 117 / (n - 1)) as u8).collect();
+    let mut r = 0x5Du32;
+    for k in (1..train.len()).rev() {
+        r = r.wrapping_mul(1103515245).wrapping_add(12345);
+        train.swap(k, (r >> 16) as usize % (k + 1));
     }
-    DilDescriptor {
-        sp,
-        tp: vec![true],
-        h: [31, 31, 23, 23, 15, 15, 15, 15],
-        refs: [104; 8],
-        train: (1..128).step_by(2).map(|u| u as u8).collect(),
-    }
+    DilDescriptor { sp: motif(120, 0x2B), tp: motif(120, 0x47), h: [119; 8], refs: [UINFO; 8], train }
 }
 
 /// Pauses du modem analogique en mode d'époque (ms) : réflexion après Jd
 /// (§9.3.2.7 : jusqu'à 5 s permises), SCR pendant le calcul des niveaux
 /// (§9.4.2.2 : jusqu'à 4 s).
-const THINK_AFTER_JD_MS: u64 = 2000;
+const THINK_AFTER_JD_MS: u64 = 2500;
 const SCR_BEFORE_CP_MS: f64 = 4000.0;
 /// TRN de phase 3 de l'abonné en mode d'époque (≥ 512T ; la norme permet
 /// jusqu'à 4 s de MD + TRN) : long souffle, et l'annuleur d'écho en profite.
@@ -201,7 +211,7 @@ impl P34 {
         let power = info0d.map_or(0, |d| d.max_power);
         let mut v = V90::new(false, law, max_pcm, max_up, power, express);
         let mut prx = PcmRx::new(law, UINFO, Some(v.dil.clone()));
-        prx.set_dil_passes(if express { 1 } else { 4 });
+        prx.set_dil_passes(1);
         v.prx = Some(prx);
         v.t_progress = self.n;
         self.v90 = Some(Box::new(v));
