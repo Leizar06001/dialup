@@ -84,6 +84,7 @@
         [["NAVIGATEUR"], "Ouvre Tinyverse Navigator. Sa LED s'allume et la touche pulse quand Internet est prêt ; tout son trafic passe par le modem."],
         [["SALON DU FAI"], "Pendant la session, le chat parle à tous les abonnés connectés au FAI. `/qui` : qui est là ; `/aide` : l'aide du salon."],
         [["WEB 1998"], "Le FAI va chercher la page et te la sert allégée : HTML simple, images GIF en 256 couleurs. Ça tient dans 33,6k."],
+        [["Images : V.Hallucination"], "Lien en haut des pages web 1998 : chaque image arrive en une cinquantaine de formes (≈ 2,5 Ko au lieu de 15), comme un souvenir flou. Garanti sans intelligence artificielle. « normales » pour revenir aux GIF."],
         [["MODERNE"], "Le vrai web, tel quel… à 33,6 kbit/s. Prévois un café. Le mode choisi est mémorisé."],
         [["Adresse :", "Aller"], "Tape `fr.wikipedia.org/wiki/Modem` ou une adresse complète, puis Entrée."],
         [["◀ Précédente", "▶ Suivante", "⟳ Actualiser", "■ Arrêter"], "Comme en 1998, en plus lent."],
@@ -126,7 +127,8 @@
       id: "config", titre: "CONFIG : la face arrière", court: "CONFIG",
       items: [
         [["CONFIG"], "Retourne le modem : interrupteurs DIP et molette de débit. Réglages mémorisés sur ce PC et lus au décroché : ils valent pour l'appel suivant."],
-        [["DIP 1 · 56K V.90"], "ON : le modem propose le 56K (V.90) au FAI ; OFF : V.34 seul. Le 56K est en cours de finition et prendra effet bientôt ; d'ici là, les appels restent en V.34."],
+        [["DIP 1 · 56K V.90"], "ON : le modem propose le 56K (V.90) au FAI ; OFF : V.34 seul. En 56K, la descente passe en PCM (jusqu'à 56 000 bit/s sur une ligne parfaite, ~40 000 sur une ligne urbaine) et la montée reste en V.34. Poignée de main plus longue, avec le fameux DIL. Les appels entre abonnés restent en V.34 : il faut un bout numérique, le FAI."],
+        [null, "Le 56K tombe en V.34 tout seul si la ligne est trop bruitée ou si elle décale les fréquences (« Longue distance ») : il exige une liaison numérique jusqu'à ton central, comme en 1998."],
         [["DIP 2", "…", "8"], "Réservés usine, sous le ruban « NE PAS MODIFIER ». On a dit : ne pas modifier."],
         [["DÉBIT MAX"], "Plafond du débit, de 2 400 à 56 000 bit/s, pour imiter un modem plus ancien. Le V.34 s'arrête à 33 600 ; sous 28 000, le 56K se coupe."],
         [["▲", "▼", "molette"], "Tournent la molette ; au clavier : flèches (un cran), `Pg↑` `Pg↓` (quatre), `Début` `Fin` (les extrêmes). Clique un cran voisin pour y aller."],
