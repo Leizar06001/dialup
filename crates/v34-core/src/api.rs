@@ -146,6 +146,10 @@ pub struct ModemConfig {
     pub digital: bool,
     /// Débit descendant max en V.90 (bit/s, de 28 000 à 56 000)
     pub max_rate_pcm: u32,
+    /// 56k « express » : DIL court, aucune pause. Sinon (par défaut), les
+    /// lenteurs d'origine : long DIL avec symboles de référence écouté deux
+    /// fois, temps de réflexion après Jd, SCR pendant le calcul des niveaux.
+    pub express: bool,
 }
 
 impl Default for ModemConfig {
@@ -159,6 +163,7 @@ impl Default for ModemConfig {
             v90: true,
             digital: false,
             max_rate_pcm: 56000,
+            express: false,
         }
     }
 }

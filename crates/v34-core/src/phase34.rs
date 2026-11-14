@@ -67,6 +67,8 @@ enum TxSt {
     SForever,
     /// V.90, modem analogique : séquence de bits répétée (Ja, CPt, CP)
     V90Seq,
+    /// V.90, modem analogique : SCR (uns brouillés) pendant `left` symboles
+    V90Scr { left: usize },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -399,6 +401,15 @@ impl P34 {
                     self.tx.push(&v);
                 }
                 TxSt::V90Seq => self.v90_fill_seq(),
+                TxSt::V90Scr { left } => {
+                    let p = self.mapper.diff_symbol(&[true, true]);
+                    self.tx.push(&[p]);
+                    if left <= 1 {
+                        self.v90_scr_done();
+                    } else {
+                        self.tx_st = TxSt::V90Scr { left: left - 1 };
+                    }
+                }
                 TxSt::E => {
                     // 20 uns
                     let bps = self.mapper.bits_per_symbol();
@@ -961,7 +972,7 @@ impl P34 {
                     Some(_) => 0.05,
                 };
             }
-            if v.digital {
+            if v.digital || v.ec_done {
                 return 0.0;
             }
         }
@@ -1287,7 +1298,7 @@ impl Modem {
         if answer {
             self.log(LogLevel::Info, &format!("Phase 3 (56k) — émission V.34 {:.0} bauds / porteuse {:.0} Hz, réception PCM 8000 symboles/s", SYMBOL_RATES[up], carrier_hz(up, high)));
             let i0d = self.info0_remote.as_ref().and_then(|i| i.v90d);
-            p.start_v90_analog(i0d, self.cfg.max_rate_pcm, self.cfg.max_rate);
+            p.start_v90_analog(i0d, self.cfg.max_rate_pcm, self.cfg.max_rate, self.cfg.express);
         } else {
             self.log(LogLevel::Info, &format!("Phase 3 (56k) — émission PCM 8000 symboles/s, réception V.34 {:.0} bauds / porteuse {:.0} Hz", SYMBOL_RATES[up], carrier_hz(up, high)));
             p.start_v90_digital(self.cfg.max_rate_pcm, self.cfg.max_rate);

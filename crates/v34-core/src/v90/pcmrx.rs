@@ -217,6 +217,8 @@ pub struct PcmRx {
     dil_n: [u32; UCODES],
     dil_e2: f64,
     dil_cnt: u64,
+    /// Passages du DIL à écouter avant de conclure
+    dil_passes: usize,
     pub sigma: f64,
     // --- phase 4 et données
     train_map: Option<Mapping>,
@@ -270,6 +272,7 @@ impl PcmRx {
             dil_n: [0; UCODES],
             dil_e2: 0.0,
             dil_cnt: 0,
+            dil_passes: 1,
             sigma: 0.0,
             train_map: None,
             data_map: None,
@@ -287,6 +290,11 @@ impl PcmRx {
 
     pub fn take_events(&mut self) -> Vec<RxEvent> {
         std::mem::take(&mut self.events)
+    }
+
+    /// Nombre de passages complets du DIL à écouter (1 par défaut).
+    pub fn set_dil_passes(&mut self, n: usize) {
+        self.dil_passes = n.max(1);
     }
 
     /// Jeu de la phase 4 (notre CPt) : à fixer avant la fin de Ri.
@@ -527,7 +535,7 @@ impl PcmRx {
         self.dil_n[u as usize] += 1;
         self.dil_e2 += (y - v) * (y - v);
         self.dil_cnt += 1;
-        if j + 1 >= self.dil_sched.len() {
+        if j + 1 >= self.dil_sched.len() * self.dil_passes {
             // un passage complet : gain moyen mesuré / nominal, et bruit
             let mut g = 0.0;
             let mut w = 0.0;

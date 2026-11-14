@@ -5,6 +5,8 @@ use v34_core::{EchoPath, LineParams, LineSim, Modem, ModemCommand, ModemConfig, 
 
 struct Run {
     connected: [Option<(u32, u32)>; 2],
+    /// Instant du CONNECT de l'abonné (ms)
+    t_connect: Option<usize>,
     got: [Vec<u8>; 2],
     log: Vec<String>,
 }
@@ -28,7 +30,7 @@ fn run_with(p: LineParams, abonne: ModemConfig, fai: ModemConfig, seconds: f32, 
     const B: usize = 160;
     let (mut call_rx, mut ans_rx) = ([0.0f32; B], [0.0f32; B]);
     let (mut call_tx, mut ans_tx) = ([0.0f32; B], [0.0f32; B]);
-    let mut r = Run { connected: [None, None], got: [Vec::new(), Vec::new()], log: Vec::new() };
+    let mut r = Run { connected: [None, None], t_connect: None, got: [Vec::new(), Vec::new()], log: Vec::new() };
     let mut sent = [false, false];
     let blocks = (seconds * 8000.0 / B as f32) as usize;
     for blk in 0..blocks {
@@ -41,7 +43,12 @@ fn run_with(p: LineParams, abonne: ModemConfig, fai: ModemConfig, seconds: f32, 
         for (i, m) in [&mut call, &mut ans].into_iter().enumerate() {
             for ev in m.drain_events() {
                 match ev {
-                    ModemEvent::Connected { tx_rate, rx_rate } => r.connected[i] = Some((tx_rate, rx_rate)),
+                    ModemEvent::Connected { tx_rate, rx_rate } => {
+                        r.connected[i] = Some((tx_rate, rx_rate));
+                        if i == 0 {
+                            r.t_connect.get_or_insert(blk * 20);
+                        }
+                    }
                     ModemEvent::Data(d) => r.got[i].extend(d),
                     ModemEvent::Log { msg, .. } => r.log.push(format!("[{:6} ms] {} {msg}", blk * 20, if i == 0 { "ABONNÉ" } else { "FAI   " })),
                     ModemEvent::TxSignal(t) => r.log.push(format!("[{:6} ms] {} → {t}", blk * 20, if i == 0 { "ABONNÉ" } else { "FAI   " })),
@@ -108,4 +115,17 @@ fn sans_56k_v34_classique() {
         let r = echange(LineParams::preset("Urbaine").unwrap(), abonne, f);
         assert!(!r.log.join("\n").contains("modem analogique"));
     }
+}
+
+/// Interrupteur « 56K EXPRESS » : sans les lenteurs d'époque, la poignée de
+/// main est nettement plus courte ; même débit.
+#[test]
+fn express_plus_rapide() {
+    let p = LineParams::preset("Parfaite").unwrap();
+    let lent = echange(p.clone(), ModemConfig::default(), fai());
+    let vite = echange(p, ModemConfig { express: true, ..ModemConfig::default() }, fai());
+    let (tl, tv) = (lent.t_connect.unwrap(), vite.t_connect.unwrap());
+    eprintln!("CONNECT 56k : d'époque {tl} ms, express {tv} ms");
+    assert!(tl >= tv + 2000, "d'époque {tl} ms, express {tv} ms");
+    assert_eq!(lent.connected[0], vite.connected[0]);
 }

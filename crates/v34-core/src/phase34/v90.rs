@@ -25,18 +25,33 @@ pub(crate) const UINFO: u8 = 96;
 /// Silence d'une séquence de l'autre au-delà duquel on abandonne (ms).
 const STALL_MS: u64 = 9000;
 
-/// Le DIL que l'abonné demande : 31 segments de 96 symboles, un Ucode
-/// d'apprentissage par segment (de 4 à 124), signes pseudo-aléatoires sur
-/// 13 symboles (pas de période 6 : le détecteur de Ri ne s'y trompe pas).
-pub(crate) fn our_dil() -> DilDescriptor {
+/// Le DIL que l'abonné demande. Signes pseudo-aléatoires sur 13 symboles
+/// (pas de période 6 : le détecteur de Ri ne s'y trompe pas).
+/// - express : 31 segments de 96 symboles, un Ucode d'apprentissage par
+///   segment (de 4 à 124) — 0,4 s ;
+/// - d'époque : 64 segments (un Ucode sur deux), plus longs pour les petits
+///   niveaux (le bruit y pèse le plus), un symbole de référence sur quatre
+///   comme les modems de 1999 qui guettaient bits volés et atténuateurs
+///   numériques — 0,8 s par passage, écouté trois fois.
+pub(crate) fn our_dil(express: bool) -> DilDescriptor {
+    let sp = (0..13).map(|i| (0b1_0110_0101_1101_u32 >> i) & 1 == 1).collect();
+    if express {
+        return DilDescriptor { sp, tp: vec![true], h: [15; 8], refs: [UINFO; 8], train: (4..128).step_by(4).map(|u| u as u8).collect() };
+    }
     DilDescriptor {
-        sp: (0..13).map(|i| (0b1_0110_0101_1101_u32 >> i) & 1 == 1).collect(),
-        tp: vec![true],
-        h: [15; 8],
-        refs: [UINFO; 8],
-        train: (4..128).step_by(4).map(|u| u as u8).collect(),
+        sp,
+        tp: vec![true, true, true, false],
+        h: [23, 23, 15, 15, 11, 11, 11, 11],
+        refs: [104; 8],
+        train: (1..128).step_by(2).map(|u| u as u8).collect(),
     }
 }
+
+/// Pauses du modem analogique en mode d'époque (ms) : réflexion après Jd
+/// (§9.3.2.7 : jusqu'à 5 s permises), SCR pendant le calcul des niveaux
+/// (§9.4.2.2 : jusqu'à 4 s).
+const THINK_AFTER_JD_MS: u64 = 1000;
+const SCR_BEFORE_CP_MS: f64 = 2000.0;
 
 /// Débit montant : le plus grand activé des deux côtés, sous `limit`.
 fn up_rate(mask: u16, limit: u32) -> u32 {
@@ -75,6 +90,15 @@ pub(crate) struct V90 {
     max_up: u32,
     /// Puissance max du modem numérique (bits 33:37 d'INFO0d)
     power_step: u8,
+    /// 56k express (pas de lenteurs d'époque)
+    express: bool,
+    /// Mode d'époque : instant où l'abonné enverra S (après Jd)
+    s_at: Option<u64>,
+    /// Mode d'époque : SCR à intercaler avant le CP
+    scr_pending: bool,
+    /// Modem analogique : annuleur d'écho appris (notre TRN de phase 3 est
+    /// fini) ; ensuite le FAI parle presque toujours, il ne bouge plus
+    pub(crate) ec_done: bool,
     pub(crate) up_rate: u32,
     pub(crate) down_rate: u32,
     // --- modem numérique
@@ -115,13 +139,17 @@ impl V90 {
         self.ptx.as_ref().and_then(|t| t.trn1d_index())
     }
 
-    fn new(digital: bool, law: Law, max_pcm: u32, max_up: u32, power_step: u8) -> V90 {
+    fn new(digital: bool, law: Law, max_pcm: u32, max_up: u32, power_step: u8, express: bool) -> V90 {
         V90 {
             digital,
             law,
             max_pcm,
             max_up,
             power_step,
+            express,
+            s_at: None,
+            scr_pending: false,
+            ec_done: false,
             up_rate: 0,
             down_rate: 0,
             ptx: None,
@@ -136,7 +164,7 @@ impl V90 {
             e_rx: false,
             data_tx: false,
             prx: None,
-            dil: our_dil(),
+            dil: our_dil(express),
             seq: Vec::new(),
             seq_pos: 0,
             seq_ack: false,
@@ -158,11 +186,13 @@ impl P34 {
     /// Modem analogique (l'abonné) : il commence la phase 3 comme l'appelé
     /// du V.34 (S, S̄, PP, TRN) ; le DIL et les niveaux viendront de son
     /// récepteur PCM.
-    pub(crate) fn start_v90_analog(&mut self, info0d: Option<Info0d>, max_pcm: u32, max_up: u32) {
+    pub(crate) fn start_v90_analog(&mut self, info0d: Option<Info0d>, max_pcm: u32, max_up: u32, express: bool) {
         let law = if info0d.is_some_and(|d| !d.alaw) { Law::Mu } else { Law::A };
         let power = info0d.map_or(0, |d| d.max_power);
-        let mut v = V90::new(false, law, max_pcm, max_up, power);
-        v.prx = Some(PcmRx::new(law, UINFO, Some(v.dil.clone())));
+        let mut v = V90::new(false, law, max_pcm, max_up, power, express);
+        let mut prx = PcmRx::new(law, UINFO, Some(v.dil.clone()));
+        prx.set_dil_passes(if express { 1 } else { 3 });
+        v.prx = Some(prx);
         v.t_progress = self.n;
         self.v90 = Some(Box::new(v));
         let mut burst = self.silence_syms(70.0);
@@ -176,7 +206,7 @@ impl P34 {
     /// Modem numérique (le FAI) : silence, réception du V.34 de l'abonné
     /// (S, S̄, PP, TRN, puis Ja).
     pub(crate) fn start_v90_digital(&mut self, max_pcm: u32, max_up: u32) {
-        let mut v = V90::new(true, Law::A, max_pcm, max_up, 0);
+        let mut v = V90::new(true, Law::A, max_pcm, max_up, 0, true);
         v.ptx = Some(PcmTx::new(Law::A, UINFO));
         v.t_progress = self.n;
         self.v90 = Some(Box::new(v));
@@ -215,6 +245,12 @@ impl P34 {
                     self.act(P34Action::Data(got));
                 }
             }
+        }
+        // mode d'époque : S après le temps de réflexion qui suit Jd
+        if self.v90.as_ref().unwrap().s_at.is_some_and(|t| self.n >= t) {
+            self.v90_mut().s_at = None;
+            self.tx_st = TxSt::SForever;
+            self.act(P34Action::Tx("S".into()));
         }
         // garde-fou : la poignée de main ne doit jamais rester bloquée
         let v = self.v90.as_ref().unwrap();
@@ -278,6 +314,7 @@ impl P34 {
             self.tx_st = TxSt::Silence;
             return;
         }
+        v.ec_done = true;
         let bits = v.dil.to_bits();
         self.v90_start_seq(bits, false, "Ja", false);
     }
@@ -321,9 +358,31 @@ impl P34 {
         }
     }
 
+    /// Fin du SCR (mode d'époque) : CP, ou CP′ si la MP est déjà là.
+    pub(crate) fn v90_scr_done(&mut self) {
+        let v = self.v90.as_mut().unwrap();
+        let next = v.next_seq.take().or_else(|| v.cp.clone().map(|c| (c.to_bits(), false)));
+        let Some((bits, ack)) = next else {
+            self.tx_st = TxSt::Silence;
+            return;
+        };
+        v.seq = bits;
+        v.seq_pos = 0;
+        v.seq_ack = ack;
+        self.tx_st = TxSt::V90Seq;
+        self.act(P34Action::Tx(if ack { "CP′".into() } else { "CP".into() }));
+    }
+
     /// Fin d'une répétition de la séquence émise.
     fn v90_seq_done(&mut self) {
         let v = self.v90.as_mut().unwrap();
+        if v.scr_pending {
+            v.scr_pending = false;
+            let left = (SCR_BEFORE_CP_MS / 1000.0 * self.sym_rate_tx) as usize;
+            self.tx_st = TxSt::V90Scr { left };
+            self.act(P34Action::Tx("SCR".into()));
+            return;
+        }
         if v.seq_ack {
             v.sent_cp_ack = true;
         }
@@ -359,9 +418,15 @@ impl P34 {
             }
             RxEvent::Jd(jd) => {
                 let max = (21..=42u32).rev().find(|d| jd.rates & (1 << (d - 21)) != 0).map_or(0, |d| crate::v90::frame::rate_for(d - 6, 6));
-                self.log(format!("Jd reçu : le FAI sait émettre jusqu'à {max} bit/s — envoi de S"));
-                self.tx_st = TxSt::SForever;
-                self.act(P34Action::Tx("S".into()));
+                if self.v90.as_ref().unwrap().express {
+                    self.log(format!("Jd reçu : le FAI sait émettre jusqu'à {max} bit/s — envoi de S"));
+                    self.tx_st = TxSt::SForever;
+                    self.act(P34Action::Tx("S".into()));
+                } else {
+                    self.log(format!("Jd reçu : le FAI sait émettre jusqu'à {max} bit/s — le modem réfléchit, puis S"));
+                    let at = self.n + THINK_AFTER_JD_MS * 8;
+                    self.v90_mut().s_at = Some(at);
+                }
                 self.v90_mut().cp = None;
                 let mut c = Cp::for_mapping(&Mapping::uniform(Law::A, &[100], 0), true, 0);
                 c.d = jd.rates; // mémo provisoire du masque de débits du FAI
@@ -377,8 +442,14 @@ impl P34 {
             }
             RxEvent::RiBar => {
                 let v = self.v90_mut();
-                if let Some(cp) = v.cp.clone() {
-                    v.next_seq = Some((cp.to_bits(), false));
+                if v.express {
+                    if let Some(cp) = v.cp.clone() {
+                        v.next_seq = Some((cp.to_bits(), false));
+                    }
+                } else {
+                    // §9.4.2.2 : fin du CPt en cours, puis SCR le temps de
+                    // « calculer » les niveaux, puis CP
+                    v.scr_pending = true;
                 }
                 self.goto(Step::P4Mp);
             }
