@@ -124,6 +124,11 @@ pub(crate) struct P34 {
     aligner: Option<PpAligner>,
     pp_start: i64,
     trained: usize,
+    /// Puissance reçue moyenne (avant égaliseur) pendant l'apprentissage
+    /// supervisé : sert de référence pour ignorer, ensuite, ce qui est bien
+    /// plus faible que le signal de l'autre (silence, queue des filtres)
+    rx_pow: Option<f32>,
+    pow_acc: (f32, u32),
     /// Taille de constellation de l'autre en phase 4 (= notre demande J)
     rx16: bool,
     /// Notre taille en phase 4 (= demande J de l'autre)
@@ -217,6 +222,8 @@ impl P34 {
             aligner: None,
             pp_start: 0,
             trained: 0,
+            rx_pow: None,
+            pow_acc: (0.0, 0),
             rx16: false,
             tx16: false,
             // On désembrouille ce que l'autre a brouillé avec SON polynôme
@@ -526,6 +533,18 @@ impl P34 {
         }
         match self.rx_st {
             RxSt::WaitS => {
+                // Silence de l'autre (ou queue de nos filtres qui s'éteint) :
+                // sans bruit de ligne, ce résidu est assez régulier pour
+                // ressembler à S. Une fois le niveau du signal connu, on
+                // ignore tout ce qui est 20 dB en dessous.
+                if let Some(p) = self.rx_pow {
+                    if s.raw.norm_sqr() < 0.01 * p {
+                        if self.sdet.s_count < 16 {
+                            self.sdet.s_count = 0;
+                        }
+                        return;
+                    }
+                }
                 if self.sdet.s_count == 24 {
                     self.act(P34Action::Rx("S".into()));
                     if self.v90.is_some() {
@@ -574,7 +593,12 @@ impl P34 {
                 self.rx.mu = mu_schedule(self.trained);
                 self.rx.adapt(s.z, r);
                 self.trained += 1;
+                self.pow_acc.0 += s.raw.norm_sqr();
+                self.pow_acc.1 += 1;
                 if i >= 288 + 512 {
+                    if self.pow_acc.1 > 0 {
+                        self.rx_pow = Some(self.pow_acc.0 / self.pow_acc.1 as f32);
+                    }
                     // Coefficients optimaux sur tout l'apprentissage (le LMS
                     // n'a fait que dégrossir) ; on saute les 160 premiers
                     // symboles, le temps que la boucle de phase s'accroche.
