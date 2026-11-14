@@ -420,6 +420,11 @@ function onState(s) {
 
   updateNet(s.net);
   updateMonitor(s);
+  if (tipKey) {
+    // Infobulle ouverte : seule la ligne « en direct » change.
+    const live = tip.querySelector("i"), v = tipLive(tipKey);
+    if (live && live.textContent !== v) live.textContent = v;
+  }
   renderDir(s.net);
   if (s.speed != null) {
     document.querySelectorAll("#speed-seg button").forEach((b) =>
@@ -656,6 +661,85 @@ function frame() {
   drawConstellation();
   requestAnimationFrame(frame);
 }
+
+/* ---------------------------------------------------------------- infobulles LEDs et phases */
+const TIPS = {
+  hs: ["HS · High Speed", "Allumée quand la liaison dépasse 14 400 bit/s (V.32bis, V.34). Sur un vrai modem, c'était la LED des frimeurs."],
+  aa: ["AA · Auto Answer", "Le modem décrochera tout seul si on l'appelle (registre S0). Les appels du central décrochent automatiquement."],
+  cd: ["CD · Carrier Detect", "La porteuse du modem distant est détectée : la liaison de données est établie. Quand elle s'éteint : NO CARRIER."],
+  oh: ["OH · Off Hook", "Le modem a décroché la ligne, comme quand on soulève le combiné. Elle reste allumée de la numérotation au raccrochage."],
+  rd: ["RD · Receive Data", "Clignote quand des octets arrivent du modem distant (après correction d'erreurs LAPM)."],
+  sd: ["SD · Send Data", "Clignote quand des octets partent vers le modem distant."],
+  tr: ["TR · Terminal Ready", "Le signal DTR : l'ordinateur dit au modem qu'il est prêt. S'il tombe, le modem raccroche."],
+  mr: ["MR · Modem Ready", "Le modem est sous tension et prêt. Toujours allumée… sauf panne de courant."],
+  Phase1: ["Phase 1 · V.8", "L'appelé émet ANSam : 2 100 Hz modulé à 15 Hz, avec une inversion de phase toutes les 450 ms qui coupe les annuleurs d'écho du réseau (le « piiiii »). L'appelant annonce ses capacités avec CM en V.21 à 300 bit/s, l'appelé choisit avec JM, l'appelant confirme par CJ (le « brrrr »)."],
+  Phase2: ["Phase 2 · Sondage de la ligne", "Échange des capacités (INFO0), tons A et B avec inversions de phase pour mesurer le délai aller-retour, puis sonde L1/L2 : 21 fréquences espacées de 150 Hz pour mesurer la réponse et le bruit de la ligne. INFO1 fixe le débit symbole et la porteuse (le « dong-dong »)."],
+  Phase3: ["Phase 3 · Égaliseur", "S et S̄ servent de repère, PP cale finement le rythme et la phase, puis TRN, un signal pseudo-aléatoire connu des deux côtés : l'égaliseur apprend à compenser les déformations de la ligne, l'annuleur d'écho aussi. J annonce la constellation (le « shhhh »)."],
+  Phase4: ["Phase 4 · Débit final", "TRN sur la vraie constellation, puis MP (débit de données, précodage, mise en forme), E (accord) et B1 : la première trame de données brouillée."],
+  Data: ["Données", "Les octets sont codés en treillis à 16 états, répartis sur une constellation jusqu'à 960 points (shell mapping) et protégés par LAPM : trames avec contrôle d'erreur et retransmission. Le modem surveille la qualité et renégocie si la ligne se dégrade (le « kshhhh »)."],
+};
+const tip = document.createElement("div");
+tip.id = "tip";
+tip.hidden = true;
+document.body.appendChild(tip);
+let tipKey = null, tipEl = null;
+const kbit = (v) => (v ? `${frInt(v)} bit/s` : "—");
+/** Ligne « en direct » de l'infobulle, d'après le dernier état. */
+function tipLive(key) {
+  const st = state && state.status;
+  if (!st) return "";
+  const p = st.params || {};
+  if (key in (st.leds || {})) {
+    const on = !!st.leds[key];
+    let extra = "";
+    if (key === "hs" && on) extra = ` — ${kbit(p.data_rate_rx)}`;
+    if (key === "cd" && on) extra = ` — ${kbit(p.data_rate_rx)} reçus, ${kbit(p.data_rate_tx)} émis`;
+    if ((key === "rd" || key === "sd") && st.link) extra = ` — ${fr1((key === "rd" ? st.link.bytes_delivered : st.link.bytes_acked) / 1024)} Ko depuis le début`;
+    return (on ? "● allumée" : "○ éteinte") + extra;
+  }
+  const order = ["Phase1", "Phase2", "Phase3", "Phase4", "Data"];
+  let idx = order.indexOf(st.phase);
+  if (st.phase === "Retrain") idx = 1;
+  const me = order.indexOf(key);
+  const etat = idx < 0 ? "en attente d'appel" : me === idx ? "▶ en cours" : me < idx ? "✓ terminée" : "à venir";
+  const d = [];
+  if (key === "Phase1" && p.v8_modes && p.v8_modes.length) d.push(`modes communs : ${p.v8_modes.join(", ")}`);
+  if (key === "Phase2") {
+    if (p.rtd_ms != null) d.push(`délai aller-retour : ${frInt(p.rtd_ms)} ms`);
+    if (p.symbol_rate_rx) d.push(`débit symbole : ${frInt(p.symbol_rate_rx)} bauds, porteuse ${frInt(p.carrier_rx_hz || 0)} Hz`);
+    if (p.snr_db != null) d.push(`SNR sondé : ${fr1(p.snr_db)} dB`);
+  }
+  if ((key === "Phase4" || key === "Data") && p.data_rate_rx) d.push(`débit : ${kbit(p.data_rate_rx)} reçus, ${kbit(p.data_rate_tx)} émis`);
+  if (key === "Data" && p.trellis_states) d.push(`treillis : ${p.trellis_states} états`);
+  return [etat, ...d].join("\n");
+}
+function tipRender() {
+  if (!tipKey) return;
+  const [titre, texte] = TIPS[tipKey];
+  tip.innerHTML = "";
+  const h = document.createElement("b");
+  h.textContent = titre;
+  const t = document.createElement("p");
+  t.textContent = texte;
+  const l = document.createElement("i");
+  l.textContent = tipLive(tipKey);
+  tip.append(h, t, l);
+}
+function tipPlace(e) {
+  const r = tip.getBoundingClientRect();
+  let x = e.clientX + 14, y = e.clientY + 18;
+  if (x + r.width > window.innerWidth - 8) x = Math.max(8, e.clientX - r.width - 14);
+  if (y + r.height > window.innerHeight - 8) y = Math.max(8, e.clientY - r.height - 12);
+  tip.style.left = x + "px";
+  tip.style.top = y + "px";
+}
+document.querySelectorAll(".led-cell, .ph").forEach((el) => {
+  const key = el.dataset.led || el.dataset.phase;
+  if (!TIPS[key]) return;
+  el.addEventListener("mouseenter", (e) => { tipKey = key; tipEl = el; tipRender(); tip.hidden = false; tipPlace(e); });
+  el.addEventListener("mousemove", tipPlace);
+  el.addEventListener("mouseleave", () => { tipKey = null; tipEl = null; tip.hidden = true; });
+});
 
 /* ---------------------------------------------------------------- numéros */
 /** « 0142424242 » → « 01 42 42 42 42 » */

@@ -664,3 +664,18 @@ body.mode-local .topbar {
   .mon-sec p { font-size: 17px; }
   .mon-sec h3 { font-size: 14px; }
 }
+
+/* ------------------------------------------------------------------ infobulles (LEDs, phases) */
+.led-cell, .ph { cursor: help; }
+#tip {
+  position: fixed; z-index: 70; max-width: 360px; pointer-events: none;
+  padding: 9px 12px 8px; border-radius: 4px;
+  background: linear-gradient(#0b1614, #070d0c);
+  border: 1px solid #1f5a52;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.7), inset 0 0 18px rgba(103,247,228,0.08);
+  color: #b9e9e2; font: 13px/1.35 var(--label-font);
+}
+#tip b { display: block; font: 18px/1.1 var(--screen-font); color: var(--vfd); text-shadow: 0 0 6px rgba(103,247,228,0.5); margin-bottom: 4px; letter-spacing: 1px; }
+#tip p { margin: 0 0 6px; }
+#tip i { display: block; font: 15px/1.25 var(--screen-font); font-style: normal; color: var(--amber); white-space: pre-line; border-top: 1px dashed rgba(103,247,228,0.25); padding-top: 4px; }
+#tip i:empty { display: none; }
