@@ -523,6 +523,10 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
     let mut tx_line = vec![0.0f32; BLOCK];
     // comme l'appli : cadence calée sur l'horloge du central
     let mut pacer = v34_net::Pacer::new();
+    // --charge N : envoie N octets/s en continu (ligne de test : ils
+    // reviennent en écho) et fait le bilan toutes les 10 s
+    let charge: usize = args.num("charge", 0usize)?;
+    let (mut sent, mut got, mut got_win, mut win_t, mut connect_t) = (0usize, 0usize, 0usize, 0u64, None::<u64>);
     let mut call: Option<CentralCall> = None;
     let mut ring_at: Option<Instant> = None;
     let start = Instant::now();
@@ -597,6 +601,10 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
             let role = c.modem.role();
             for ev in c.modem.drain_events() {
                 match ev {
+                    ModemEvent::Data(d) if charge > 0 && c.pipe.is_none() => {
+                        got += d.len();
+                        got_win += d.len();
+                    }
                     ModemEvent::Data(d) if c.pipe.is_some() => {
                         if let Some(p) = c.pipe.as_mut() {
                             p.on_modem_data(d);
@@ -623,6 +631,31 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
             if let Some(p) = c.pipe.as_mut() {
                 if let Some(bytes) = p.take_for_modem() {
                     c.modem.command(ModemCommand::Send(bytes));
+                }
+            }
+            if charge > 0 && c.connected && c.pipe.is_none() {
+                let ct = *connect_t.get_or_insert(t);
+                if t % 1600 == 0 {
+                    // 1/5 s de données, numérotées (octet = rang modulo 251)
+                    let n = charge / 5;
+                    let chunk: Vec<u8> = (sent..sent + n).map(|i| (i % 251) as u8).collect();
+                    sent += n;
+                    c.modem.command(ModemCommand::Send(chunk));
+                }
+                if t - ct >= win_t + 80_000 {
+                    win_t += 80_000;
+                    let st = c.modem.status();
+                    let p = &st.params;
+                    println!(
+                        "[{:3} s de données] reçu en écho {:6.1} Ko/s ({} o au total sur {} envoyés) — liaison ↓{} ↑{}",
+                        win_t / 8000,
+                        got_win as f64 / 10.0 / 1024.0,
+                        got,
+                        sent,
+                        p.data_rate_rx.unwrap_or(0),
+                        p.data_rate_tx.unwrap_or(0)
+                    );
+                    got_win = 0;
                 }
             }
             if let Some(tun) = c.tunnel.as_ref() {
