@@ -19,6 +19,7 @@ pub mod codes;
 pub mod design;
 pub mod dfe;
 pub mod frame;
+pub mod seq;
 
 pub use codes::Law;
 pub use frame::{Decoder, Encoder, Mapping, Symbol};

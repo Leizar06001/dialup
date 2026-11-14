@@ -284,8 +284,10 @@ function cfgSend() {
 function cfgSummary() {
   const c = cfg.eff;
   if (!c) return "";
-  if (c.v90) return `▸ 56K V.90 : jusqu'à ${kbit(c.max_rate_pcm)} en réception · V.34 : ${kbit(c.max_rate)}`;
-  return `▸ V.34 seul : jusqu'à ${kbit(c.max_rate)}` + (cfg.v90 ? ` · 56K impossible sous ${frInt(28000)}` : "");
+  // Afficheur en VT323 : pas d'espace insécable étroite dans cette police
+  const k = (v) => `${frInt(v).replace(/\s/g, " ")} bit/s`;
+  if (c.v90) return `▸ 56K V.90 : jusqu'à ${k(c.max_rate_pcm)} en réception · V.34 : ${k(c.max_rate)}`;
+  return `▸ V.34 seul : jusqu'à ${k(c.max_rate)}` + (cfg.v90 ? ` · 56K impossible sous ${frInt(28000).replace(/\s/g, " ")}` : "");
 }
 function cfgRender() {
   const sw = $("dip1");
