@@ -147,6 +147,12 @@ struct Outcome {
 /// Appelle la ligne de test (écho) à travers le relais, envoie `payload` dès
 /// la connexion et attend qu'il revienne.
 fn echo_call(old_style: bool, payload: &[u8]) -> Outcome {
+    echo_call_tenu(old_style, payload, 0)
+}
+
+/// Comme `echo_call`, puis garde la liaison `tenir_s` secondes en envoyant
+/// un peu de trafic, pour compter les renégociations et réapprentissages.
+fn echo_call_tenu(old_style: bool, payload: &[u8], tenir_s: u64) -> Outcome {
     let server = start_server();
     let proxy = start_proxy(server.local_addr());
     let mut cfg = CentralConfig::new(proxy.addr.to_string(), USER.0, USER.1);
@@ -166,7 +172,8 @@ fn echo_call(old_style: bool, payload: &[u8]) -> Outcome {
     let mut connected_at: Option<Instant> = None;
     let mut next = Instant::now();
     let mut due = 0.0;
-    while t0.elapsed() < Duration::from_secs(45) {
+    let mut trafic = Instant::now();
+    while t0.elapsed() < Duration::from_secs(45 + tenir_s) {
         let _ = c.poll();
         while let Some(ev) = c.next_event() {
             match ev {
@@ -208,10 +215,18 @@ fn echo_call(old_style: bool, payload: &[u8]) -> Outcome {
                 _ => {}
             }
         }
-        if got.ends_with(payload) {
+        if !out.echoed && got.ends_with(payload) {
             out.echoed = true;
             out.seconds_to_echo = connected_at.map_or(0.0, |t| t.elapsed().as_secs_f32());
-            break;
+        }
+        if out.echoed {
+            if connected_at.is_some_and(|t| t.elapsed() > Duration::from_secs(tenir_s)) {
+                break;
+            }
+            if trafic.elapsed() > Duration::from_secs(2) {
+                trafic = Instant::now();
+                modem.command(ModemCommand::Send(vec![b'.'; 300]));
+            }
         }
         next += Duration::from_millis(20);
         let now = Instant::now();
@@ -256,4 +271,16 @@ fn modem_survit_a_la_gigue_wifi() {
 fn ancien_tampon_sous_la_meme_gigue() {
     let o = echo_call(true, &payload());
     report("ancien tampon", &o);
+}
+
+/// La liaison doit TENIR une minute sous la gigue et les pertes du Wi-Fi :
+/// un paquet perdu (trou de 20 ms) ne doit pas déclencher de renégociation.
+#[test]
+#[ignore = "temps réel (~80 s)"]
+fn liaison_tient_une_minute_en_wifi() {
+    let o = echo_call_tenu(false, &payload(), 60);
+    report("une minute en Wi-Fi", &o);
+    assert!(o.echoed, "{:?}", o.problems);
+    assert!(o.jitter.lost + o.jitter.underruns > 0, "le test doit bien comporter des trous");
+    assert!(o.problems.is_empty(), "renégociations ou réapprentissages : {:?}", o.problems);
 }

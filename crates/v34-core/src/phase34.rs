@@ -157,6 +157,10 @@ pub(crate) struct P34 {
     cleardown: bool,
     last_reneg: u64,
     recent_renegs: u32,
+    /// Montée de débit tentée depuis ce débit (pour savoir si elle a servi)
+    up_from: Option<u32>,
+    /// Montées successives qui n'ont rien donné : délai doublé à chaque fois
+    up_fails: u32,
     rn_cap: Option<u32>,
     mon_t: u64,
     mon_err: u64,
@@ -165,6 +169,10 @@ pub(crate) struct P34 {
     mon_frames: u64,
     bad_windows: u32,
     good_windows: u32,
+    /// Erreur de décision moyenne en mode données, sur les symboles où il
+    /// y a du signal (les trous ne comptent pas) : sert à distinguer une
+    /// ligne devenue bruyante (renégocier) de trous isolés (LAPM suffit).
+    dec_mse: f32,
     /// Instant de fin du raccrochage propre
     hangup_at: Option<u64>,
 }
@@ -229,6 +237,8 @@ impl P34 {
             cleardown: false,
             last_reneg: 0,
             recent_renegs: 0,
+            up_from: None,
+            up_fails: 0,
             rn_cap: None,
             mon_t: 0,
             mon_err: 0,
@@ -237,6 +247,7 @@ impl P34 {
             mon_frames: 0,
             bad_windows: 0,
             good_windows: 0,
+            dec_mse: 0.0,
             hangup_at: None,
         }
     }
@@ -599,6 +610,13 @@ impl P34 {
                 }
                 let Some(dec) = self.dec.as_mut() else { return };
                 let (d, bits) = dec.push(s.z);
+                if self.rx.signal_ok() {
+                    // Erreur plafonnée à la frontière de décision : un
+                    // parasite isolé (choc, clic) ne fait pas croire à une
+                    // ligne bruyante.
+                    let e2 = (s.z - d).norm_sqr().min(dec.scale * dec.scale);
+                    self.dec_mse = 0.998 * self.dec_mse + 0.002 * e2;
+                }
                 // On n'adapte l'égaliseur que sur des décisions vraisemblables :
                 // sous un bruit très fort, adapter sur des décisions fausses le
                 // ferait dériver (et il resterait faux une fois le bruit parti).
@@ -1013,6 +1031,7 @@ impl P34 {
         }
         self.bad_windows = 0;
         self.good_windows = 0;
+        self.dec_mse = 0.0;
     }
 
     /// Surveillance de la qualité en mode données : renégocie vers le bas si
@@ -1037,7 +1056,13 @@ impl P34 {
         self.mon_fcs = st.fcs_errors;
         self.mon_frames = st.frames_rx;
         let err_rate = derr as f32 / d4 as f32;
-        let bad = err_rate > 0.01 || (dfcs >= 2 && dfcs > dfr);
+        // La ligne supporte-t-elle encore ce débit ? (SNR mesuré hors trous)
+        let snr_vu = -10.0 * self.dec_mse.max(1e-6).log10();
+        let ligne_ok = max_rate_for_snr(self.sr_rx_idx, snr_vu, 1.0) >= self.rx_rate;
+        // Erreurs dues au bruit : renégocier vers le bas aide. Erreurs dues à
+        // des trous (paquets perdus) avec une ligne saine : LAPM retransmet,
+        // renégocier ne servirait à rien. Au-delà de 20 %, filet de sécurité.
+        let bad = ((err_rate > 0.01 || (dfcs >= 2 && dfcs > dfr)) && !ligne_ok) || err_rate > 0.2;
         if bad {
             self.bad_windows += 1;
             self.good_windows = 0;
@@ -1049,7 +1074,10 @@ impl P34 {
         if since > 20_000 {
             self.recent_renegs = 0;
         }
-        if self.bad_windows >= 1 && since > 1500 {
+        // Erreurs DURABLES seulement (3 fenêtres d'affilée, 1,5 s) : un trou
+        // isolé (paquet perdu, coupure brève) abîme une fenêtre, et LAPM
+        // retransmet ; renégocier pour si peu coûterait bien plus cher.
+        if self.bad_windows >= 3 && since > 1500 {
             if self.recent_renegs >= 2 {
                 self.log(format!("Toujours trop d'erreurs ({:.1} % des symboles) : réentraînement complet", err_rate * 100.0));
                 self.act(P34Action::Retrain("trop d'erreurs malgré les renégociations".into()));
@@ -1063,11 +1091,20 @@ impl P34 {
             self.start_reneg(true, Some(cap), false);
             return;
         }
-        if self.good_windows >= 8 && since > 10_000 {
-            let snr = self.rx.snr_db();
+        // Bilan de la dernière montée tentée : si le débit n'a pas monté, on
+        // attendra deux fois plus longtemps avant de réessayer (sinon :
+        // renégociation inutile toutes les 10 s).
+        if let Some(from) = self.up_from.take() {
+            self.up_fails = if self.rx_rate > from { 0 } else { (self.up_fails + 1).min(6) };
+        }
+        let attente = 10_000u64 << self.up_fails;
+        if self.good_windows >= 8 && since > attente {
+            // SNR le plus prudent des deux mesures (égaliseur, décisions)
+            let snr = self.rx.snr_db().min(snr_vu);
             let cap = max_rate_for_snr(self.sr_rx_idx, snr, 3.0);
             if cap >= self.rx_rate + 4800 {
                 self.log(format!("La ligne s'est améliorée (SNR {snr:.1} dB) : renégociation vers le haut"));
+                self.up_from = Some(self.rx_rate);
                 self.start_reneg(true, None, false);
             }
             self.good_windows = 0;

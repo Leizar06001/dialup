@@ -219,7 +219,25 @@ impl QamRx {
 
     /// Adapte l'égaliseur et la boucle de phase vers la référence `r`
     /// (symbole connu en entraînement, ou décision). `z` = sortie reçue.
+    /// Y a-t-il du signal dans la mémoire de l'égaliseur ? (Faux pendant un
+    /// trou : paquet perdu, coupure de ligne.)
+    pub fn signal_ok(&self) -> bool {
+        let pw: f32 = self.buf.iter().map(|b| b.norm_sqr()).sum::<f32>();
+        let pw_ref = NT as f32 * self.level * self.agc * self.agc;
+        pw_ref <= 0.0 || pw >= 0.15 * pw_ref
+    }
+
     pub fn adapt(&mut self, z: Cpx, r: Cpx) {
+        // Puissance du signal dans la mémoire de l'égaliseur, comparée à
+        // celle attendue (niveau moyen lent, après CAG). Pendant un trou de
+        // silence (paquet perdu sur Internet, coupure de ligne), elle tombe
+        // presque à zéro : le pas normalisé exploserait et l'égaliseur avec.
+        // On n'adapte alors rien, et le pas est plafonné juste après.
+        let pw: f32 = self.buf.iter().map(|b| b.norm_sqr()).sum::<f32>();
+        let pw_ref = NT as f32 * self.level * self.agc * self.agc;
+        if pw_ref > 0.0 && pw < 0.15 * pw_ref {
+            return;
+        }
         let e = r - z;
         self.mse = 0.99 * self.mse + 0.01 * e.norm_sqr();
         // Erreur de phase (sin de l'écart), normalisée
@@ -234,8 +252,7 @@ impl QamRx {
         self.freq += k2 * pe;
         // LMS normalisé dans le domaine non tourné
         let eu = e * Cpx::from_polar(1.0, self.phase);
-        let pw: f32 = self.buf.iter().map(|b| b.norm_sqr()).sum::<f32>() + 1e-6;
-        let mu = self.mu / pw;
+        let mu = self.mu / pw.max(0.5 * pw_ref).max(1e-6);
         for (c, b) in self.eq.iter_mut().zip(self.buf.iter()) {
             *c += eu * b.conj() * mu;
         }

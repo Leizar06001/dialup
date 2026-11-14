@@ -253,11 +253,21 @@ impl Trellis16 {
 
     /// Avance d'un intervalle 4D avec les deux points de sortie du canal.
     pub fn update(&mut self, y0pt: (i32, i32), y1pt: (i32, i32)) {
+        let y0 = self.d[3];
+        self.update_with_y0(y0pt, y1pt, y0);
+    }
+
+    /// Côté réception : avance avec le Y0 OBSERVÉ dans le symbole reçu (la
+    /// parité des rotations des deux points), au lieu du Y0 mémorisé. Sans
+    /// erreur c'est le même ; mais l'état ne dépend plus alors que des
+    /// 4 derniers intervalles 4D : après une rafale d'erreurs (trou de
+    /// signal, choc), le décodeur se recale tout seul au lieu de rester faux
+    /// jusqu'au prochain réapprentissage.
+    pub fn update_with_y0(&mut self, y0pt: (i32, i32), y1pt: (i32, i32), y0: bool) {
         let s0 = subset_label(y0pt.0, y0pt.1) as usize;
         let s1 = subset_label(y1pt.0, y1pt.1) as usize;
         let yb = TABLE13[s0][s1];
         let (y1, y2) = (yb & 1 == 1, yb & 2 == 2);
-        let y0 = self.d[3];
         let [d1, d2, d3, _] = self.d;
         self.d = [y0, d1 ^ y2 ^ y0, d2 ^ y2, d3 ^ y1];
     }
@@ -539,7 +549,9 @@ impl DataDecoder {
             let i = (z + 4 - self.z_prev) & 3;
             self.z_prev = z;
             let (i2, i3) = (i & 1 == 1, i & 2 == 2);
-            self.trellis.update(a, b);
+            // Y0 observé : U0 = parité de (rot1 − rot0), Y0 = U0 ⊕ V0.
+            let y0_vu = ((rot1 as u32 + 4 - z) & 1 == 1) ^ v0;
+            self.trellis.update_with_y0(a, b, y0_vu);
             self.m4d += 1;
             rings[2 * jj] = (l0 as usize) >> p.q;
             rings[2 * jj + 1] = (l1 as usize) >> p.q;
