@@ -114,7 +114,7 @@ pub fn confidentialite(e: &Editeur) -> String {
 <tr><td><b>Central téléphonique</b> : présence (abonné connecté, adresse IP et port du logiciel), appels (qui appelle quel numéro, début et fin), entrées et sorties du salon</td><td>Acheminer les appels, diagnostiquer les pannes, lutter contre les abus</td><td>Présence : en mémoire, le temps de la connexion.<br>Journaux : selon la durée de rétention du système</td></tr>
 <tr><td><b>Accès Internet</b> : destinations ouvertes par le tunnel (nom du site et port)</td><td>Diagnostic</td><td>Journalisées <b>seulement en mode débogage</b> ; les tentatives refusées ou en échec sont notées dans le journal ordinaire</td></tr>
 </table>
-<p>Le contenu de vos communications (données échangées par le modem, fichiers, contenu des pages, messages du salon) n'est jamais enregistré.</p>
+<p>Le contenu de vos communications (données échangées par le modem, fichiers, images du visiophone, contenu des pages, messages du salon) n'est jamais enregistré.</p>
 <p><b>Bases légales</b> : l'exécution du service que vous demandez en vous inscrivant (article 6.1.b du RGPD) ; pour la sécurité et les journaux, l'intérêt légitime de l'opérateur à protéger son service et son adresse IP (article 6.1.f). Aucune décision automatisée, aucun profilage, aucune publicité, aucune revente.</p>
 <h3>Destinataires et sous-traitants</h3>
 <p>Vos données ne sont lues que par l'opérateur du central. Votre nom d'abonné et votre numéro sont visibles des autres abonnés (annuaire du logiciel). Interviennent aussi :</p>

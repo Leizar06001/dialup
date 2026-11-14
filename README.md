@@ -3,25 +3,35 @@
 Un modem **V.34 à 33 600 bit/s entièrement logiciel**, écrit en Rust, qui
 négocie exactement comme un modem de 1998 : deux modems ne se parlent **que
 par le son** (échantillons à 8 kHz), et on les entend. Tonalités V.8,
-sondage de la ligne, apprentissage, puis le chuintement des données.
+sondage de la ligne, apprentissage, puis le chuintement des données. Il
+sait aussi faire le **56K (V.90)** face au modem numérique du FAI : jusqu'à
+56 000 bit/s en réception, avec le bourdonnement du DIL.
 
 Autour du modem, tout un petit monde « années 90 » :
 
 - **Une appli rétro** pour Windows, macOS et Linux : LEDs de modem externe,
   console de commandes AT, haut-parleur, spectre et constellation en direct,
-  et un simulateur de ligne téléphonique (bruit, écho, ligne de campagne,
-  orage…) réglable pendant la connexion.
+  un modem qui commente sa propre négociation (avec sa piste karaoké), une
+  face arrière à interrupteurs DIP (56K, réponse automatique…), une notice
+  intégrée (bouton AIDE, F1), et un simulateur de ligne téléphonique (bruit,
+  écho, ligne de campagne, orage…) réglable pendant la connexion.
 - **Un central téléphonique sur IP** : chaque abonné reçoit un numéro, les
   appels sont relayés en audio G.711 sur UDP, et les modems négocient à
   travers le réseau comme sur une vraie ligne. Le mot de passe ne circule
   jamais (défi-réponse).
 - **Un fournisseur d'accès à Internet** : composer le `0836154286` décroche
   un modem côté serveur, qui ouvre un tunnel vers Internet (proxy SOCKS5
-  local) à la vitesse d'un vrai modem.
+  local) à la vitesse d'un vrai modem. Raccordé en numérique au central, il
+  propose le 56K (V.90) : ~40 000 bit/s en réception sur une ligne
+  « Urbaine », jusqu'à 56 000 sur une ligne parfaite (l'envoi reste en V.34).
 - **Le navigateur « web 1998 »** : à 3 Ko/s le web moderne est inutilisable,
   alors l'hôte virtuel `http://web1998/` sert des versions allégées des
   sites, en HTML 3.2 avec des images GIF de 256 couleurs qui se dessinent
-  d'abord grossièrement, puis s'affinent.
+  d'abord grossièrement, puis s'affinent, ou « V.Hallucination » :
+  redessinées en une cinquantaine de formes (SVG de 2,5 Ko).
+- **Une messagerie entre abonnés** : chat, transfert de fichiers et
+  **visiophone V.Hallucination** (la webcam redessinée en une quarantaine de
+  formes, ~250 octets l'image, 2 à 3 images par seconde).
 - **Un salon de discussion** où se retrouvent tous les abonnés connectés au
   FAI, façon IRC ou 3615.
 
@@ -61,13 +71,13 @@ d'abonné.
 ## Organisation du dépôt
 
 ```
-crates/v34-core     moteur V.8 / V.34 : DSP, machine d'états, LAPM, simulateur de ligne
+crates/v34-core     moteur V.8 / V.34 / V.90 : DSP, machine d'états, LAPM, simulateur de ligne
 crates/v34-net      audio sur IP (G.711/UDP, gigue), signalisation du central, tunnel
-crates/v34-server   central téléphonique, modem du FAI, web 1998, salon (pour un VPS)
+crates/v34-server   central téléphonique, modem du FAI, web 1998, salon, site d'inscription (pour un VPS)
 crates/v34-cli      ligne de commande : deux modems en local, WAV, appels via le central
 app/                l'appli Tauri v2 (backend Rust dans src-tauri, interface statique dans ui)
-deploy/             installation du central sur un VPS (systemd)
-docs/specs/         où mettre les recommandations UIT-T V.34 et V.8
+deploy/             installation du central sur un VPS (systemd) et du site d'inscription (Docker)
+docs/specs/         où mettre les recommandations UIT-T V.34, V.8 et V.90
 ```
 
 ## Compiler
@@ -124,9 +134,9 @@ connexion.
 
 ## Spécifications
 
-Le modem suit les recommandations UIT-T **V.34** (02/98) et **V.8**
-(11/2000). Elles ne sont pas dans le dépôt : liens de téléchargement dans
-[`docs/specs/README.md`](docs/specs/README.md).
+Le modem suit les recommandations UIT-T **V.34** (02/98), **V.8**
+(11/2000) et **V.90** (09/98). Elles ne sont pas dans le dépôt : liens de
+téléchargement dans [`docs/specs/README.md`](docs/specs/README.md).
 
 ## Licence
 

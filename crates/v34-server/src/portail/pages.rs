@@ -46,7 +46,7 @@ a{color:#0000ee}a:visited{color:#551a8b}
 .menu{background:#c0c0c0;border-bottom:2px solid #808080;padding:4px 8px;font:bold 13px Verdana,Arial,sans-serif}
 .menu a{color:#000080;margin-right:12px;text-decoration:none}.menu a:hover{text-decoration:underline}
 .defile{background:#000;color:#00ff00;font:14px "Courier New",monospace;white-space:nowrap;overflow:hidden;padding:3px 0}
-.defile span{display:inline-block;padding-left:100%;animation:defile 28s linear infinite}
+.defile span{display:inline-block;padding-left:100%;animation:defile 45s linear infinite}
 @keyframes defile{to{transform:translateX(-100%)}}
 .corps{padding:12px 18px 20px}
 h2{font:bold 22px Georgia,serif;color:#800000;border-bottom:1px solid #808080;margin:18px 0 8px}
@@ -134,9 +134,9 @@ pub fn gabarit(nom_fai: &str, titre: &str, visites: u64, contenu: &str) -> Strin
 </head>
 <body>
 <div class="page">
-<div class="tete"><h1>{debut} <span>{fin}</span></h1><p>Votre accès à l'autoroute de l'information… à 28 800 bit/s</p></div>
+<div class="tete"><h1>{debut} <span>{fin}</span></h1><p>Votre accès à l'autoroute de l'information… jusqu'à 56 000 bit/s</p></div>
 <div class="menu"><a href="/">Accueil</a><a href="/inscription">Inscription</a><a href="/compte">Mon compte</a><a href="/telechargement">Logiciel</a><a href="/etat">État du réseau</a><a href="/livre">Livre d'or</a><a href="/aide">Aide</a></div>
-<div class="defile"><span>*** NOUVEAU : modems V.34 jusqu'à 33 600 bit/s ! *** Inscription GRATUITE, sans frais de mise en service *** Le salon de discussion du FAI est ouvert 24 h/24 *** Mode « web 1998 » : Internet comme avant, en plus léger *** Choisissez votre numéro de téléphone ! ***</span></div>
+<div class="defile"><span>*** NOUVEAU : le 56K (V.90) est arrivé ! Jusqu'à 56 000 bit/s en réception au 08 36 15 42 86 *** NOUVEAU : le visiophone V.Hallucination entre abonnés *** Inscription GRATUITE, sans frais de mise en service *** Le salon de discussion du FAI est ouvert 24 h/24 *** Mode « web 1998 » : Internet comme avant, en plus léger *** Choisissez votre numéro de téléphone ! ***</span></div>
 <div class="corps">
 {contenu}
 </div>
@@ -216,16 +216,18 @@ pub fn accueil(nom_fai: &str, central: &str, inscriptions_ouvertes: bool, nouvel
         h,
         r#"<p><img src="/construction.gif" alt="En construction" width="88" height="31" style="float:right;margin:0 0 8px 8px">
 <b>Bienvenue chez {nom} !</b> Ici, pas de fibre ni de 5G : votre ordinateur se transforme en
-<b>modem V.34</b>, le vrai, celui qui chante. Vous recevez <b>votre propre numéro de téléphone</b>,
-vous appelez les autres abonnés pour discuter et échanger des fichiers, et vous composez le
-<b>08 36 15 42 86</b> pour surfer sur Internet à travers votre modem.</p>
+<b>modem V.34 et 56K</b>, le vrai, celui qui chante. Vous recevez <b>votre propre numéro de téléphone</b>,
+vous appelez les autres abonnés pour discuter, échanger des fichiers et vous voir au visiophone, et vous composez le
+<b>08 36 15 42 86</b> pour surfer sur Internet à travers votre modem, jusqu'à 56 000 bit/s.</p>
 {quoi}
 <h2>Ce que comprend votre abonnement <span class="nouveau">NOUVEAU !</span></h2>
 <table class="grille">
 <tr><th>Service</th><th>Description</th></tr>
 <tr><td>☎ Votre numéro</td><td>Choisissez-le vous-même à l'inscription (10 chiffres, comme en 1998).</td></tr>
-<tr><td>💬 Chat &amp; fichiers</td><td>Appelez un autre abonné : négociation V.8/V.34 audible, puis discussion et transfert de fichiers.</td></tr>
-<tr><td>🌐 Accès Internet</td><td>Le modem du FAI décroche et vous donne accès au Web, en mode <i>moderne</i> ou <i>web 1998</i> (pages allégées, images en 256 couleurs). Sur validation de l'opérateur.</td></tr>
+<tr><td>💬 Messagerie &amp; fichiers</td><td>Appelez un autre abonné : négociation V.8/V.34 audible (jusqu'à 33 600 bit/s), puis la messagerie s'ouvre : discussion et transfert de fichiers.</td></tr>
+<tr><td>📹 Visiophone <span class="nouveau">NOUVEAU !</span></td><td>Pendant un appel entre abonnés, votre webcam redessinée en une quarantaine de formes géométriques, 2 à 3 images par seconde (« V.Hallucination » : ressemblant comme un rêve ressemble à la veille).</td></tr>
+<tr><td>🌐 Accès Internet</td><td>Appelez TINYVERSE, en tête de l'annuaire du logiciel : le modem du FAI décroche et vous donne accès au Web, en mode <i>moderne</i> ou <i>web 1998</i> (pages allégées, images en 256 couleurs ou « V.Hallucination »). Sur validation de l'opérateur.</td></tr>
+<tr><td>🚀 56K (V.90) <span class="nouveau">NOUVEAU !</span></td><td>Le modem du FAI est raccordé en numérique : jusqu'à 56 000 bit/s en réception sur une ligne parfaite, environ 40 000 sur une ligne urbaine (l'envoi reste en V.34). Avec la vraie poignée de main de 1999, ses sifflements et son bourdonnement.</td></tr>
 <tr><td>🗨 Salon du FAI</td><td>Tous les abonnés connectés au FAI discutent ensemble.</td></tr>
 <tr><td>📞 Ligne de test</td><td>Le 08 00 00 00 00 vous renvoie tout ce que vous lui envoyez.</td></tr>
 </table>
@@ -356,7 +358,9 @@ pub fn bienvenue(nom: &str, numero: &str, central: &str, acces_en_attente: bool)
 <li>Cliquez sur le badge <b>BOUCLE LOCALE</b> en haut à droite.</li>
 <li>Serveur : <code>{c}</code> — Abonné : <code>{nom}</code> — votre mot de passe. Cochez « mémoriser » pour vous connecter tout seul au démarrage.</li>
 <li>Le badge affiche <b>RÉSEAU · N° {n}</b> : vous êtes en ligne. Appelez un abonné de l'<b>ANNUAIRE</b>, ou la ligne de test <b>08 00 00 00 00</b>.</li>
-</ol>"#,
+<li>Pour Internet : en tête de l'<b>ANNUAIRE</b>, <b>TINYVERSE</b> ☎ APPELER (le 08 36 15 42 86), puis le bouton <b>NAVIGATEUR</b>.</li>
+</ol>
+<p>Tout le reste (56K, visiophone, commandes AT…) est dans la notice du logiciel : bouton <kbd>? AIDE</kbd> ou touche <kbd>F1</kbd>.</p>"#,
         nom = esc(nom),
         n = esc(&numero_lisible(numero)),
         c = esc(central)
@@ -415,8 +419,11 @@ pub fn telechargement(version: Option<(&str, &str)>, fichiers: &[Fichier], depot
         _ => h.push_str(r#"<div class="boite">Le logiciel est en cours de pressage sur CD-ROM… Revenez bientôt !</div>"#),
     }
     h.push_str(
-        r#"<h3>Macintosh</h3><p>Le logiciel n'est pas signé par Apple : au premier lancement, faites <b>clic droit &gt; Ouvrir</b>,
+        r#"<h3>Macintosh</h3><p>Le logiciel n'est pas signé par Apple : au premier lancement, faites <b>clic droit &gt; Ouvrir</b>
+(depuis macOS 15 : <b>Réglages Système &gt; Confidentialité et sécurité &gt; Ouvrir quand même</b>),
 ou dans le Terminal : <code>xattr -dr com.apple.quarantine "/Applications/V34 Modem.app"</code></p>
+<p>Le navigateur intégré demande <b>macOS 14 (Sonoma)</b> ou plus récent pour le Web ; la messagerie, les fichiers et le visiophone marchent partout.
+Pour le visiophone, macOS demande l'accès à la caméra la première fois.</p>
 <h3>Windows</h3><p>Windows SmartScreen peut afficher « Windows a protégé votre ordinateur » : cliquez sur <b>Informations complémentaires &gt; Exécuter quand même</b>.</p>
 <h3>Linux</h3><p>Rendez le fichier .AppImage exécutable (<code>chmod +x</code>), ou installez le .deb.</p>"#,
     );
@@ -430,15 +437,34 @@ pub fn aide(central: &str, depot: &str) -> String {
     let src = if depot.is_empty() { String::new() } else { format!(r#" Le code est sur <a href="https://github.com/{d}">github.com/{d}</a>."#, d = esc(depot)) };
     format!(
         r#"<h2>Aide</h2>
+<p class="aide">Le logiciel a aussi sa notice complète : bouton <kbd>? AIDE</kbd> en haut à droite, ou touche <kbd>F1</kbd>. Les voyants, les étapes de la négociation et la face arrière ont leur infobulle.</p>
 <h3>Comment ça marche ?</h3>
-<p>Le logiciel contient un vrai modem V.34 : il fabrique le son d'un modem de 1998, et ce son est transporté par Internet
+<p>Le logiciel contient un vrai modem V.34 et 56K (V.90) : il fabrique le son d'un modem de 1998, et ce son est transporté par Internet
 jusqu'au central (<code>{c}</code>), qui le relaie vers la personne que vous appelez, ou vers le modem du fournisseur d'accès.
-Tout ce que vous voyez passer est réellement modulé et démodulé.</p>
+Tout ce que vous voyez passer est réellement modulé et démodulé, et le modem commente lui-même sa négociation (touche COMMENTAIRES).</p>
+<h3>Surfer sur Internet</h3>
+<ol><li>Connectez le logiciel au central (badge en haut à droite).</li>
+<li>En tête de l'<b>ANNUAIRE</b>, <b>TINYVERSE</b> ☎ APPELER : le logiciel compose le <b>08 36 15 42 86</b>, le modem du FAI décroche, et ça chante.</li>
+<li>Après CONNECT, comme sous Windows 98, la fenêtre « Connexion à TINYVERSE » vérifie votre nom d'utilisateur et votre mot de passe (pour la forme : le central vous connaît déjà), puis la LED verte du bouton NAVIGATEUR s'allume.</li>
+<li>Bouton <b>NAVIGATEUR</b> : en <b>WEB 1998</b>, le FAI vous sert les pages allégées (HTML simple, images GIF en 256 couleurs, ou « V.Hallucination » redessinées en une cinquantaine de formes) ; en <b>MODERNE</b>, le vrai Web, tel quel, à la vitesse du modem. Prévoyez un café.</li></ol>
+<h3>Le 56K (V.90)</h3>
+<p>Le modem du FAI est raccordé en numérique au central, comme chez les fournisseurs d'accès de 1998 : votre modem peut recevoir jusqu'à <b>56 000 bit/s</b>.</p>
+<ul><li>C'est l'interrupteur <b>DIP 1 « 56K V.90 »</b> du panneau <b>CONFIG</b> (la face arrière du modem), sur ON d'usine. Il faut le logiciel en version 0.1.2 ou plus récente.</li>
+<li>En réception : jusqu'à 56 000 bit/s sur une ligne parfaite, environ 40 000 sur la ligne « Urbaine ». L'envoi reste en V.34 : de l'ordre de 14 400 à 19 200 bit/s.</li>
+<li>Seulement avec le FAI : entre deux abonnés, il n'y a pas de bout numérique, c'est donc du V.34 (33 600 bit/s au plus).</li>
+<li>Ligne trop bruitée, ou qui décale les fréquences (« Longue distance ») : le modem se rabat tout seul en V.34. La molette <b>DÉBIT MAX</b> plafonne le débit ; sous 28 000, le 56K se coupe.</li>
+<li>La poignée de main est celle de 1999 : une vingtaine de secondes de sifflements et de bourdonnement (le fameux DIL) avant CONNECT. Pressé ? <b>DIP 3 « 56K EXPRESS »</b> sur ON : une dizaine de secondes.</li></ul>
+<h3>Messagerie, fichiers et visiophone</h3>
+<p>Appelez un abonné de l'ANNUAIRE : dès CONNECT, la <b>MESSAGERIE</b> s'ouvre (bouton du même nom sur la façade). On y discute, on s'envoie des fichiers (8 Mo au plus : c'est un modem, pas la fibre),
+et on se voit au <b>visiophone V.Hallucination</b> : votre webcam, ou la mire, redessinée en une quarantaine de formes géométriques (environ 250 octets l'image), 2 à 3 images par seconde.
+La caméra reste éteinte tant que vous n'avez pas choisi CAMÉRA. Pendant une session avec le FAI, la messagerie devient le salon de discussion de tous les abonnés connectés au FAI.</p>
+<p>Pour qu'un abonné puisse vous appeler, laissez le logiciel connecté au central : avec l'interrupteur <b>DIP 2 « RÉP. AUTO »</b> sur ON, le modem décroche tout seul après deux sonneries.</p>
 <h3>Je n'arrive pas à me connecter</h3>
-<ul><li>Vérifiez le nom d'abonné (sensible aux majuscules) et le mot de passe.</li>
+<ul><li>Vérifiez le nom d'abonné (sensible aux majuscules) et le mot de passe. Changé sur ce site ? Changez-le aussi dans le logiciel s'il était mémorisé.</li>
 <li>Le central utilise le port <b>UDP 3434</b> : certains réseaux d'entreprise le bloquent.</li></ul>
-<h3>Le 08 36 15 42 86 sonne occupé</h3>
-<p>Votre accès Internet n'est pas encore activé par l'opérateur, ou tous les modems du FAI sont occupés.</p>
+<h3>Ça sonne occupé</h3>
+<p>Au 08 36 15 42 86 : votre accès Internet n'est pas encore activé par l'opérateur, ou tous les modems du FAI sont occupés.
+Chez un abonné : il est déjà en ligne. Et trois notes montantes, c'est que le numéro n'est attribué à personne, ou que son abonné n'est pas connecté.</p>
 <h3 id="heberger">Héberger votre propre central</h3>
 <p>Le central, le FAI et ce site sont des logiciels libres (licence MIT).{src}
 Suivez <code>deploy/README.md</code> : un VPS sous Linux suffit.</p>"#,
@@ -679,7 +705,7 @@ pub fn compte(v: &VueCompte, central: &str, csrf: &str, info: Option<&str>, erre
         let _ = write!(h, r#"<div class="erreur">{}</div>"#, esc(e));
     }
     let acces = match v.acces {
-        Acces::Accorde => r#"<span class="voyant v-vert"></span> <b>accordé</b> : composez le 08 36 15 42 86 et surfez !"#,
+        Acces::Accorde => r#"<span class="voyant v-vert"></span> <b>accordé</b> : appelez TINYVERSE (08 36 15 42 86), en tête de l'annuaire du logiciel, et surfez !"#,
         Acces::EnAttente => r#"<span class="voyant v-orange"></span> <b>en attente de décision</b> de l'opérateur : un courrier vous préviendra."#,
         Acces::Refuse => r#"<span class="voyant v-rouge"></span> <b>refusé</b> : vous pouvez toujours appeler les autres abonnés et la ligne de test."#,
     };

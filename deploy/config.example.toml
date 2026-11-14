@@ -70,6 +70,10 @@ simulateur_ligne = ""
 #   echo : ligne de test, renvoie en écho tout ce qu'elle reçoit.
 # Sans aucun bloc, ces deux numéros-ci sont créés par défaut ; pour n'en
 # avoir aucun : numeros_speciaux = []
+# Le FAI était au 0836656565 avant la version 0.1.2 : pour les applis
+# 0.1.1 et plus anciennes (touche ☎ FAI), on peut le garder en second bloc
+# « fai », APRÈS celui-ci (les applis récentes prennent le premier FAI
+# annoncé).
 [[numeros_speciaux]]
 numero = "0836154286"
 service = "fai"
@@ -80,13 +84,13 @@ service = "echo"
 
 [modems]
 # Appels simultanés vers les numéros spéciaux (chacun fait tourner un modem
-# V.34 en temps réel : un cœur suffit pour plusieurs appels).
+# V.34 ou 56K en temps réel : un cœur suffit pour plusieurs appels).
 appels_max = 4
 # Sonnerie avant décroché (ms).
 delai_decroche_ms = 2000
 # Délai pour obtenir la porteuse (CONNECT), sinon on raccroche (s).
 delai_porteuse_s = 90
-# Débit maximal des modems du central (bit/s, 2400 à 33600).
+# Débit maximal des modems du central en V.34 (bit/s, 2400 à 33600).
 debit_max = 33600
 # 56k (V.90) : le FAI est raccordé en numérique au central ; il propose le
 # 56k aux abonnés dont l'appli le demande (interrupteur 1 du panneau CONFIG).

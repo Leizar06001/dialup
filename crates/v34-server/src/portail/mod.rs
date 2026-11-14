@@ -59,6 +59,13 @@ const COURRIELS_PAR_HEURE: usize = 60;
 pub const EDITEUR_PAR_DEFAUT: &str = "Un particulier — identité communiquée à l'hébergeur (LCEN, art. 6-III-2)";
 /// Ouverture du site (rubrique « Quoi de neuf ? »)
 const OUVERTURE: &str = "2026-11-14";
+/// Nouvelles du FAI (rubrique « Quoi de neuf ? ») : (AAAA-MM-JJ, titre),
+/// de la plus récente à la plus ancienne ; à date égale, elles passent
+/// avant l'ouverture du site.
+const NOUVELLES: &[(&str, &str)] = &[
+    ("2026-11-14", "Le 56K (V.90) est arrivé : jusqu'à 56 000 bit/s en appelant le FAI ! Et le visiophone V.Hallucination entre abonnés (logiciel 0.1.2)"),
+    ("2026-11-14", "Le FAI change de numéro : composez désormais le 08 36 15 42 86 (clin d'œil au 3615)"),
+];
 const NOMS_RESERVES: &[&str] = &["admin", "administrateur", "root", "fai", "salon", "web1998", "operateur", "opérateur", "support", "postmaster", "abuse"];
 
 /// Réglages du site (variables d'environnement, voir `deploy/portail/.env.example`).
@@ -609,7 +616,7 @@ impl Portail {
         // L'abonné n'est prévenu que si quelque chose change pour lui.
         if avant.is_some_and(|a| a.fai != oui || !a.fai_decide) {
             let corps = if oui {
-                format!("Bonjour {},\n\nBonne nouvelle : votre accès Internet est activé ! Composez le 08 36 15 42 86 dans le logiciel (bouton FAI), puis ouvrez le NAVIGATEUR.\n\nBon surf à 28 800 bit/s !\n\n-- \n{}\n{}\n", c.nom, self.r.nom, self.r.url)
+                format!("Bonjour {},\n\nBonne nouvelle : votre accès Internet est activé ! Dans le logiciel, appelez TINYVERSE, en tête de l'ANNUAIRE (il compose le 08 36 15 42 86), puis ouvrez le NAVIGATEUR.\n\nBon surf, jusqu'à 56 000 bit/s en 56K !\n\n-- \n{}\n{}\n", c.nom, self.r.nom, self.r.url)
             } else {
                 format!("Bonjour {},\n\nVotre accès Internet n'est pas activé pour le moment. Vous pouvez toujours appeler les autres abonnés et la ligne de test.\n\n-- \n{}\n{}\n", c.nom, self.r.nom, self.r.url)
             };
@@ -757,7 +764,8 @@ impl Portail {
     }
 
     /// Rubrique « Quoi de neuf ? » : les 3 dernières versions publiées
-    /// (cache, sans attendre GitHub) et l'ouverture du site.
+    /// (cache, sans attendre GitHub), les nouvelles du FAI et l'ouverture
+    /// du site.
     fn quoi_de_neuf(&self) -> Vec<pages::Nouvelle> {
         let publiees = if self.r.depot.is_empty() {
             None
@@ -891,10 +899,11 @@ fn analyser_nouvelles(v: &serde_json::Value) -> Vec<pages::Nouvelle> {
     n
 }
 
-/// Versions publiées + ouverture du site, de la plus récente à la plus
-/// ancienne.
+/// Versions publiées + nouvelles du FAI + ouverture du site, de la plus
+/// récente à la plus ancienne.
 fn quoi_de_neuf(publiees: &[pages::Nouvelle]) -> Vec<pages::Nouvelle> {
     let mut n: Vec<pages::Nouvelle> = publiees.iter().take(3).cloned().collect();
+    n.extend(NOUVELLES.iter().map(|(date, titre)| pages::Nouvelle { titre: (*titre).into(), date: (*date).into(), lien: String::new() }));
     n.push(pages::Nouvelle { titre: "Ouverture du site : les premiers modems chantent !".into(), date: OUVERTURE.into(), lien: String::new() });
     n.sort_by(|a, b| b.date.cmp(&a.date));
     n

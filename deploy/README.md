@@ -4,8 +4,10 @@ Le VPS héberge le **central téléphonique** : les PC (appli ou `v34-cli`) s'y
 connectent avec un nom d'abonné et un mot de passe, reçoivent leur numéro, et
 s'appellent ; le central relaie l'audio (G.711 sur UDP). Il héberge aussi des
 **numéros spéciaux** desservis par des modems logiciels : le **FAI**
-(`0836154286`), qui donne accès à Internet par modem, et une **ligne de test**
-en écho (`0800000000`).
+(`0836154286`), qui donne accès à Internet par modem (en V.34, ou en **56K
+V.90** : raccordé en numérique au central, son modem joue le côté numérique,
+jusqu'à 56 000 bit/s vers l'abonné), et une **ligne de test** en écho
+(`0800000000`).
 
 ```text
  PC A (v34-cli / appli)                VPS dialup.tinyverse.fr                PC B
@@ -205,6 +207,18 @@ sudo systemctl restart v34-server
 (ou `sudo ./deploy/install.sh`, qui fait la même chose et garde la config).
 Les clients se réenregistrent tout seuls après le redémarrage (keepalive).
 
+La configuration existante n'est jamais remplacée : une nouveauté de
+`deploy/config.example.toml` s'y recopie à la main. Notamment :
+- **Numéro du FAI** : `0836154286` depuis la version 0.1.2 (avant :
+  `0836656565`). Le numéro vient de `[[numeros_speciaux]]` : sur un central
+  installé avant, le changer dans `/etc/v34-server/config.toml`. Les applis
+  0.1.1 et plus anciennes composent l'ancien numéro (touche ☎ FAI) : pour
+  qu'elles marchent encore, garder un second bloc `fai` avec `0836656565`,
+  **après** le nouveau (les applis récentes prennent le premier FAI
+  annoncé).
+- **56K** : `[modems] v90` et `debit_max_56k` (par défaut : 56K proposé,
+  56 000 bit/s au plus) ; rien à ajouter pour garder ces valeurs.
+
 ## 6. Journaux
 
 ```sh
@@ -229,8 +243,10 @@ curl --socks5-hostname 127.0.0.1:1080 https://example.com/
 Options : `--server HOTE:PORT` (défaut `dialup.tinyverse.fr:3434`),
 `--password` (ou variable `V34_PASSWORD`, sinon saisie au clavier),
 `--socks ADRESSE`, `--codec alaw|ulaw|l16`, `--preset NOM` (simulateur de
-ligne et d'écho côté client). Le proxy accepte SOCKS5 (navigateurs : « SOCKS
-v5 » + « DNS via le proxy ») et HTTP `CONNECT` (proxy HTTPS).
+ligne et d'écho côté client) ; 56K avec le FAI : `--v90 non` (V.34 seul),
+`--express oui` (poignée de main pressée), `--max-rate-56k R`. Le proxy
+accepte SOCKS5 (navigateurs : « SOCKS v5 » + « DNS via le proxy ») et HTTP
+`CONNECT` (proxy HTTPS).
 
 ## 8. Navigateur web 1998
 
@@ -246,6 +262,7 @@ allégées des sites.
 | `http://web1998/` | accueil « Tinyverse 1998 » : GIF animé « en construction », compteur de visites, FrogFind, franceinfo, CNN Lite, Wikipédia, Hacker News, champ « Aller à » |
 | `http://web1998/p?u=URL` | la page `URL` simplifiée en HTML 3.2, avec un bandeau « page allégée de X Ko à Y Ko — [voir l'original] » |
 | `http://web1998/i?u=URL` | l'image `URL` en GIF entrelacé (≤ 320 px, ≤ 256 couleurs, ~15 Ko visés) |
+| `http://web1998/h?u=URL` | la même en « V.Hallucination » : redessinée en une cinquantaine de formes, SVG de ~2,5 Ko (choix « Images : normales · V.Hallucination » sur l'accueil et dans le bandeau des pages, gardé dans un cookie) |
 | `http://web1998/f?u=ACTION&…` | envoi d'un formulaire GET (moteurs de recherche) d'une page simplifiée |
 
 Essai depuis un PC connecté au FAI :
@@ -315,8 +332,10 @@ curl --socks5-hostname 127.0.0.1:1080 'http://web1998/p?u=https://fr.wikipedia.o
 ## 10. Protocoles (résumé)
 
 - **Audio** : paquets `V3` existants de `v34-net` (en-tête 16 o, 20 ms de
-  G.711 A/µ ou L16) ; le champ `call_id` est l'identifiant d'appel attribué
-  par le central. Le central relaie sans décoder (sauf simulateur de ligne).
+  G.711 A/µ ou L16, suivis des deux trames précédentes : un paquet perdu est
+  rattrapé avec le suivant, le 56K ne supportant pas un trou de 20 ms) ; le
+  champ `call_id` est l'identifiant d'appel attribué par le central. Le
+  central relaie sans décoder (sauf simulateur de ligne).
 - **Signalisation** (`v34_net::signal`, même port) : en-tête `VC`, version,
   type, session, n° de message ; REGISTER(nom) → CHALLENGE(nonce, sel,
   itérations) → AUTH(preuve) → WELCOME(numéro attribué, numéros spéciaux) ou
@@ -338,6 +357,9 @@ curl --socks5-hostname 127.0.0.1:1080 'http://web1998/p?u=https://fr.wikipedia.o
   transmission détectée coupe toutes les connexions en cours.
 - Le simulateur de ligne du central (`central.simulateur_ligne`) n'applique
   pas l'écho local : il reste côté client (`--preset`).
+- 56K (V.90) seulement avec le FAI, seul raccordé en numérique : entre deux
+  abonnés, c'est du V.34 (33 600 bit/s au plus). Le 56K se rabat en V.34 sur
+  une ligne trop bruitée ou qui décale les fréquences.
 - Arrêt du service : les appels en cours sont coupés sans HANGUP propre ; les
   clients s'en aperçoivent au keepalive suivant et se réenregistrent.
 - Navigateur web 1998 : pas de JavaScript (sites qui en dépendent vides),

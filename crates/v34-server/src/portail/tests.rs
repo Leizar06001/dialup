@@ -139,6 +139,9 @@ fn parcours_complet() {
     let p = &b.p;
     let accueil = texte(&get(p, "/"));
     assert!(accueil.contains("Tinyverse") && accueil.contains("/inscription") && accueil.contains("dialup.example.org:3434"));
+    assert!(accueil.contains("08 36 15 42 86") && accueil.contains("56K") && accueil.contains("Visiophone"));
+    let aide = texte(&get(p, "/aide"));
+    assert!(aide.contains("TINYVERSE") && aide.contains("DIP 1") && aide.contains("UDP 3434"), "{aide}");
     assert!(texte(&get(p, "/inscription")).contains("name=\"numero\""));
 
     // Erreurs : nom pris (config, insensible à la casse), numéro spécial, mots de passe différents.
@@ -197,6 +200,7 @@ fn parcours_complet() {
     assert!(b.comptes.compte("gaston").unwrap().fai);
     let l = lettres(p);
     assert!(l[2].a == "gaston@example.org" && l[2].sujet.contains("activé"));
+    assert!(l[2].corps.contains("TINYVERSE") && l[2].corps.contains("08 36 15 42 86"), "le FAI s'appelle depuis l'annuaire : {}", l[2].corps);
 
     // Admin : mauvais mot de passe, puis connexion, puis action avec jeton CSRF.
     assert_eq!(post(p, "/admin/connexion", &[("mdp", "faux")], None).statut, 403);
@@ -582,8 +586,9 @@ fn quoi_de_neuf_d_apres_github() {
     assert_eq!(n[0].titre, "Nouvelle version du logiciel : V34 Modem 0.2.0 (préversion)");
     assert_eq!((n[1].titre.as_str(), n[1].lien.as_str()), ("Nouvelle version du logiciel : v0.1.1", ""), "lien hors de GitHub ignoré");
     let q = quoi_de_neuf(&n);
-    assert_eq!(q.len(), 4);
-    assert_eq!(q.iter().map(|n| n.date.as_str()).collect::<Vec<_>>(), ["2026-11-20", "2026-11-15", "2026-11-14", "2026-11-10"]);
+    assert_eq!(q.len(), 3 + NOUVELLES.len() + 1);
+    assert_eq!(q.iter().map(|n| n.date.as_str()).collect::<Vec<_>>(), ["2026-11-20", "2026-11-15", "2026-11-14", "2026-11-14", "2026-11-14", "2026-11-10"]);
+    assert!(q[2].titre.contains("56K") && q[3].titre.contains("08 36 15 42 86") && q[4].titre.starts_with("Ouverture du site"), "à date égale : les nouvelles, puis l'ouverture : {q:?}");
     let h = pages::accueil("Tinyverse Dialup", "c:3434", true, &q);
     assert!(h.contains("<b>20/11/2026</b>") && h.contains("Ouverture du site") && h.contains("NOUVEAU"));
 }
