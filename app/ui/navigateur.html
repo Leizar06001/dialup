@@ -27,11 +27,37 @@
     input { flex: 1; font: 13px "Courier New", monospace; padding: 3px 4px; background: #fff; color: #000;
       border: 2px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo); outline: none;
       -webkit-user-select: text; user-select: text; }
-    .throbber { width: 44px; height: 44px; margin-left: auto; display: grid; place-items: center;
-      border: 2px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo); background: var(--navy);
+    /* Logo animé pendant le chargement : pluie de météores dans un ciel de nuit */
+    .throbber { width: 44px; height: 44px; margin-left: auto; display: grid; place-items: center; position: relative;
+      overflow: hidden; border: 2px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+      background: radial-gradient(circle at 50% 130%, #23339a, var(--navy) 55%, #000030);
       color: #fff; font: bold 26px Georgia, serif; }
-    .throbber.busy b { animation: spin 1.2s linear infinite; display: inline-block; }
-    @keyframes spin { to { transform: rotateY(360deg); } }
+    .throbber b { position: relative; z-index: 2; transition: text-shadow .4s, color .4s; }
+    .throbber.busy b { color: #fff8d0; text-shadow: 0 0 6px #9cf, 0 0 12px #36f; animation: lueur 1.6s ease-in-out infinite alternate; }
+    @keyframes lueur { to { text-shadow: 0 0 3px #9cf, 0 0 6px #36f; color: #fff; } }
+    .throbber::before { content: ""; position: absolute; inset: 0; opacity: 0; transition: opacity .4s;
+      background: radial-gradient(1px 1px at 8px 9px, #fff, transparent), radial-gradient(1px 1px at 33px 6px, #cdf, transparent),
+        radial-gradient(1px 1px at 24px 30px, #fff, transparent), radial-gradient(1px 1px at 5px 33px, #cdf, transparent),
+        radial-gradient(1px 1px at 36px 25px, #fff, transparent); }
+    .throbber.busy::before { opacity: 1; animation: scintille 0.9s steps(2) infinite; }
+    @keyframes scintille { 50% { opacity: .55; } }
+    .throbber i { position: absolute; z-index: 1; width: 18px; height: 1.5px; border-radius: 1px; opacity: 0;
+      background: linear-gradient(90deg, #fff, rgba(160, 200, 255, .6) 30%, transparent); }
+    .throbber.busy i { animation: meteore 1.3s linear infinite; }
+    .throbber i:nth-child(2) { left: 30px; top: -4px; }
+    .throbber i:nth-child(3) { left: 44px; top: 6px; animation-delay: .45s !important; }
+    .throbber i:nth-child(4) { left: 20px; top: -10px; animation-delay: .85s !important; }
+    @keyframes meteore {
+      0% { transform: translate(0, 0) rotate(-35deg); opacity: 0; }
+      15%, 65% { opacity: 1; }
+      100% { transform: translate(-46px, 33px) rotate(-35deg); opacity: 0; } }
+    /* Jauge dans la barre d'adresse */
+    @property --p { syntax: "<percentage>"; inherits: false; initial-value: 0%; }
+    #addr { --p: 0%; transition: --p .5s ease-out; }
+    #addr.charge { background: linear-gradient(90deg, #c4d4ff 0 var(--p), #fff var(--p)); }
+    #addr.vague { background: #fff linear-gradient(90deg, transparent, #c4d4ff, transparent) no-repeat;
+      background-size: 30% 100%; animation: balaie 1.4s ease-in-out infinite; }
+    @keyframes balaie { from { background-position: -40% 0; } to { background-position: 140% 0; } }
     .status { display: flex; align-items: center; gap: 6px; min-width: 260px; justify-content: flex-end;
       padding: 2px 6px; border: 1px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo); height: 24px; }
     .dot { width: 10px; height: 10px; border-radius: 50%; background: #600; box-shadow: inset 1px 1px 1px #000; }
@@ -51,7 +77,7 @@
       <button id="m-1998" class="on" title="Pages allégées par le FAI : texte, liens, images 256 couleurs">WEB 1998</button>
       <button id="m-mod" title="Le vrai web, tel quel… à 33,6 kbit/s">MODERNE</button>
     </div>
-    <div class="throbber" id="throbber" title="Tinyverse Navigator"><b>T</b></div>
+    <div class="throbber" id="throbber" title="Tinyverse Navigator"><b>T</b><i></i><i></i><i></i></div>
   </div>
   <form class="row" id="f-go" autocomplete="off">
     <label for="addr">Adresse :</label>
@@ -60,11 +86,12 @@
     <div class="status" id="status"><i class="dot" id="dot"></i><span id="st-text">Hors ligne</span>
       <button type="button" class="call" id="b-call" title="Composer le numéro du FAI">Appeler le FAI</button></div>
   </form>
+  <script src="nav-progres.js"></script>
   <script>
     const T = window.__TAURI__;
     const $ = (id) => document.getElementById(id);
     let mode = localStorage.getItem("nav-mode") || "1998";
-    let online = false, loading = false;
+    let online = false;
     let last = { t: performance.now(), rx: 0, tx: 0 }, rate = { rx: 0, tx: 0 };
 
     function setMode(m) {
@@ -89,9 +116,14 @@
       if (u.includes("hors-ligne.html") || u.startsWith("tauri:") || u.startsWith("http://tauri.localhost")) return;
       T.core.invoke("nav_display_url", { url: u }).then((d) => { if (document.activeElement !== $("addr")) $("addr").value = d; });
     });
-    T.event.listen("nav:load", (e) => {
-      loading = !e.payload.done;
-      $("throbber").classList.toggle("busy", loading);
+    // Chargement : météores sur le logo, jauge dans l'adresse, bouton Arrêter
+    suivreChargement((e) => {
+      $("throbber").classList.toggle("busy", e.occupe);
+      $("b-stop").disabled = !e.occupe;
+      const addr = $("addr");
+      addr.classList.toggle("vague", e.occupe && e.vague);
+      addr.classList.toggle("charge", e.occupe && !e.vague);
+      addr.style.setProperty("--p", `${Math.round((e.occupe && !e.vague ? e.part || 0 : 0) * 100)}%`);
     });
     T.event.listen("v34:state", (e) => {
       const s = e.payload, st = s.status;

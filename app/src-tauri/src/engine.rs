@@ -173,6 +173,8 @@ pub struct UiState {
     pub net: Option<crate::link::NetInfo>,
     /// Compteurs de l'appel (moniteur de liaison)
     pub counters: Counters,
+    /// Avancement des chargements du navigateur (session Internet)
+    pub nav: Option<v34_net::tunnel::Progress>,
 }
 
 #[derive(Clone, Serialize)]
@@ -1220,6 +1222,7 @@ impl Engine {
             net: self.link.net_info(),
             counters: self.counters,
             proxy: self.tunnel.as_ref().filter(|_| self.tunnel_ready).map(|t| t.client.local_addr().to_string()),
+            nav: self.tunnel.as_ref().map(|t| t.client.progress()),
             audio_device: self.speaker.device_name(),
         };
         let _ = self.app.emit("v34:state", state);

@@ -548,12 +548,32 @@ fn write_response(s: &mut TcpStream, r: &Response, head_only: bool) -> io::Resul
     if let Some(l) = &r.location {
         h.push_str(&format!("Location: {l}\r\n"));
     }
+    if r.content_type == HTML {
+        // pour la barre de chargement du navigateur de l'appli
+        h.push_str(&format!("{}: {}\r\n", v34_net::tunnel::progress::ELEMENTS_HEADER, count_images(&r.body)));
+    }
     h.push_str("Connection: close\r\n\r\n");
     s.write_all(h.as_bytes())?;
     if !head_only {
         s.write_all(&r.body)?;
     }
     s.flush()
+}
+
+/// Nombre d'images distinctes d'une page (le navigateur ne demande qu'une
+/// fois une image répétée). Nos pages écrivent toujours `<img src="…"`.
+fn count_images(html: &[u8]) -> usize {
+    let html = String::from_utf8_lossy(html);
+    let mut seen = std::collections::HashSet::new();
+    for part in html.split("<img ").skip(1) {
+        let tag = part.split('>').next().unwrap_or("");
+        if let Some(src) = tag.split("src=\"").nth(1).and_then(|v| v.split('"').next()) {
+            if !src.is_empty() && !src.starts_with("data:") {
+                seen.insert(src.to_string());
+            }
+        }
+    }
+    seen.len()
 }
 
 /// Paire de sockets TCP reliées sur la boucle locale (équivalent de

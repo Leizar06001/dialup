@@ -6,7 +6,7 @@ use std::io::{Cursor, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use image::{ImageBuffer, ImageFormat, Rgba};
 use v34_net::tunnel::{ClientConfig, TunnelClient, TunnelEvent};
@@ -261,6 +261,7 @@ fn hote_virtuel_a_travers_le_tunnel() {
     let home = String::from_utf8(get("/")).unwrap();
     assert!(home.starts_with("HTTP/1.0 200 OK\r\n"), "{home}");
     assert!(home.contains("Tinyverse 1998"));
+    assert!(home.contains("\r\nX-Tinyverse-Elements: 2\r\n"), "chantier + compteur : {home}");
 
     let page = String::from_utf8(get(&format!("/p?u=http://127.0.0.1:{}/page", site.port))).unwrap();
     assert!(page.contains("<h1>Bienvenue été</h1>"), "{page}");
@@ -268,6 +269,19 @@ fn hote_virtuel_a_travers_le_tunnel() {
     let img = get(&format!("/i?u=http://127.0.0.1:{}/img.png", site.port));
     let at = img.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
     assert!(img.starts_with(b"HTTP/1.0 200 OK") && img[at..].starts_with(b"GIF89a"));
+
+    // la barre de chargement de l'appli suit la page et son image
+    let t0 = Instant::now();
+    let p = loop {
+        let pr = client.progress();
+        if pr.streams == 0 && pr.page.as_ref().is_some_and(|p| p.done >= 1) {
+            break pr.page.unwrap();
+        }
+        assert!(t0.elapsed() < Duration::from_secs(5), "{pr:?}");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert!(p.doc_done && p.seq == 2 && p.doc_len == Some(p.doc_rx), "{p:?}");
+    assert_eq!(p.elements_rx, (img.len() - at) as u64);
 
     // une vraie connexion vers 127.0.0.1 reste refusée par le filtre
     assert!(socks5(client.local_addr(), "127.0.0.1", site.port).is_err());

@@ -18,11 +18,12 @@ use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use super::mux::{Mux, StreamEnd};
+use super::progress::{Meter, Progress};
 use super::proto::{Decoded, FailCode, Frame, LOGIN_FAILED, LOGIN_PROMPT, PASSWORD_PROMPT, TUNNEL_MARKER, VERSION};
 
 /// Adresse par défaut du proxy local.
@@ -81,6 +82,7 @@ pub struct TunnelClient {
     local: SocketAddr,
     stop: Arc<AtomicBool>,
     events: Receiver<TunnelEvent>,
+    progress: Arc<Mutex<Progress>>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -98,18 +100,25 @@ impl TunnelClient {
         let stop = Arc::new(AtomicBool::new(false));
         let (ev_tx, events) = mpsc::channel();
         let st = stop.clone();
+        let progress = Arc::new(Mutex::new(Progress::default()));
+        let pr = progress.clone();
         let join = std::thread::Builder::new().name("tunnel-client".into()).spawn(move || {
-            let mut e = Engine::new(listener, cfg, from_modem, to_modem, ev_tx, st);
+            let mut e = Engine::new(listener, cfg, from_modem, to_modem, ev_tx, st, pr);
             let reason = e.run();
             e.mux.reset_all(false);
             let _ = e.events.send(TunnelEvent::Ended { reason });
         })?;
-        Ok(TunnelClient { local, stop, events, join: Some(join) })
+        Ok(TunnelClient { local, stop, events, progress, join: Some(join) })
     }
 
     /// Adresse réelle du proxy local.
     pub fn local_addr(&self) -> SocketAddr {
         self.local
+    }
+
+    /// Avancement des chargements (barre d'état du navigateur).
+    pub fn progress(&self) -> Progress {
+        self.progress.lock().map(|p| p.clone()).unwrap_or_default()
     }
 
     pub fn try_event(&self) -> Option<TunnelEvent> {
@@ -240,6 +249,11 @@ struct Engine {
     opening: HashMap<u16, Request>,
     next_id: u16,
     max_streams: u16,
+    meter: Meter,
+    /// Instantané du compteur partagé avec [`TunnelClient::progress`]
+    progress: Arc<Mutex<Progress>>,
+    /// Le compteur a changé depuis le dernier instantané
+    dirty: bool,
 }
 
 impl Engine {
@@ -250,6 +264,7 @@ impl Engine {
         to_modem: SyncSender<Vec<u8>>,
         events: Sender<TunnelEvent>,
         stop: Arc<AtomicBool>,
+        progress: Arc<Mutex<Progress>>,
     ) -> Self {
         let (hs_tx, hs_rx) = mpsc::channel();
         Self {
@@ -266,6 +281,9 @@ impl Engine {
             opening: HashMap::new(),
             next_id: 0,
             max_streams: 64,
+            meter: Meter::new(),
+            progress,
+            dirty: true,
         }
     }
 
@@ -324,7 +342,15 @@ impl Engine {
                 busy |= p;
                 for e in ended {
                     let (StreamEnd::Local(id) | StreamEnd::Remote(id)) = e;
+                    self.meter.closed(id);
+                    self.dirty = true;
                     self.emit(TunnelEvent::Closed { id });
+                }
+            }
+            if self.dirty {
+                self.dirty = false;
+                if let Ok(mut p) = self.progress.lock() {
+                    *p = self.meter.snapshot(self.mux.len() as u32);
                 }
             }
             match self.mux.flush(&self.to_modem) {
@@ -368,6 +394,8 @@ impl Engine {
             match d {
                 Decoded::Loss => {
                     self.mux.reset_all(true);
+                    self.meter.reset();
+                    self.dirty = true;
                     for (id, req) in self.opening.drain() {
                         reply_failure(req, FailCode::General);
                         self.mux.send(&Frame::Close { id });
@@ -388,8 +416,11 @@ impl Engine {
             Frame::OpenOk { id } => {
                 if let Some(req) = self.opening.remove(&id) {
                     let target = req.target();
+                    let (req_host, req_port) = (req.host.clone(), req.port);
                     let reply = success_reply(req.kind);
                     if self.mux.attach(id, req.sock, &reply).is_ok() {
+                        self.meter.opened(id, &req_host, req_port);
+                        self.dirty = true;
                         self.emit(TunnelEvent::Opened { id, target });
                     } else {
                         self.mux.send(&Frame::Close { id });
@@ -404,7 +435,14 @@ impl Engine {
                 }
             }
             Frame::Data { id, data } => {
-                if !self.mux.write(id, &data) && !self.mux.contains(id) && !self.opening.contains_key(&id) {
+                let written = self.mux.write(id, &data);
+                if written {
+                    self.meter.data(id, &data);
+                } else {
+                    self.meter.closed(id);
+                }
+                self.dirty = true;
+                if !written && !self.mux.contains(id) && !self.opening.contains_key(&id) {
                     // flux inconnu : on le referme de l'autre côté
                     self.mux.send(&Frame::Close { id });
                 }

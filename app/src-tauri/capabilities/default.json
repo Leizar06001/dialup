@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions de l'appli : fenêtre principale et barre d'outils du navigateur (jamais les pages web chargées)",
+  "description": "Permissions de l'appli : fenêtre principale, barres d'outils et d'état du navigateur (jamais les pages web chargées)",
   "windows": [
     "main"
   ],
@@ -9,6 +9,7 @@
     "core:default"
   ],
   "webviews": [
-    "nav-chrome"
+    "nav-chrome",
+    "nav-status"
   ]
 }

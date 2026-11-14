@@ -1,7 +1,9 @@
 //! Navigateur intégré : une deuxième fenêtre avec deux vues web.
 //! - en haut, la barre d'outils rétro (page locale `navigateur.html`) ;
 //! - en dessous, la page, dont TOUT le trafic passe par le proxy SOCKS5 du
-//!   tunnel, donc par le modem (aucun autre accès réseau).
+//!   tunnel, donc par le modem (aucun autre accès réseau) ;
+//! - tout en bas, la barre d'état (page locale `nav-statut.html`) : jauge
+//!   de chargement d'après le compteur du proxy.
 //!
 //! Deux modes :
 //! - « web 1998 » : on passe par l'hôte virtuel `web1998` du FAI, qui va
@@ -15,8 +17,11 @@ use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, Webv
 pub const WINDOW: &str = "navigateur";
 pub const CHROME: &str = "nav-chrome";
 pub const PAGE: &str = "nav-page";
+pub const STATUS: &str = "nav-status";
 /// Hauteur de la barre d'outils (pixels logiques)
 const CHROME_H: f64 = 100.0;
+/// Hauteur de la barre d'état
+const STATUS_H: f64 = 26.0;
 /// Accueil du mode 1998 (servi par le FAI)
 pub const HOME_1998: &str = "http://web1998/";
 /// Accueil du mode moderne (moteur de recherche léger)
@@ -69,9 +74,16 @@ pub fn open(app: &AppHandle, proxy_port: u16) -> tauri::Result<()> {
         })
         .on_page_load(move |_wv, payload| {
             let done = matches!(payload.event(), PageLoadEvent::Finished);
-            let _ = a2.emit_to(CHROME, "nav:load", serde_json::json!({ "url": payload.url().to_string(), "done": done }));
+            let ev = serde_json::json!({ "url": payload.url().to_string(), "done": done });
+            let _ = a2.emit_to(CHROME, "nav:load", ev.clone());
+            let _ = a2.emit_to(STATUS, "nav:load", ev);
         });
-    win.add_child(page, LogicalPosition::new(0.0, CHROME_H), LogicalSize::new(size.width, (size.height - CHROME_H).max(100.0)))?;
+    win.add_child(page, LogicalPosition::new(0.0, CHROME_H), LogicalSize::new(size.width, (size.height - CHROME_H - STATUS_H).max(100.0)))?;
+    win.add_child(
+        WebviewBuilder::new(STATUS, WebviewUrl::App("nav-statut.html".into())),
+        LogicalPosition::new(0.0, (size.height - STATUS_H).max(0.0)),
+        LogicalSize::new(size.width, STATUS_H),
+    )?;
     layout(&win);
     let w2 = win.clone();
     win.on_window_event(move |ev| {
@@ -101,7 +113,11 @@ fn layout(win: &tauri::Window) {
             let _ = wv.set_size(LogicalSize::new(s.width, tb + CHROME_H));
         } else if wv.label() == PAGE {
             let _ = wv.set_position(LogicalPosition::new(0.0, tb + CHROME_H));
-            let _ = wv.set_size(LogicalSize::new(s.width, (s.height - CHROME_H).max(100.0)));
+            let _ = wv.set_size(LogicalSize::new(s.width, (s.height - tb - CHROME_H - STATUS_H).max(100.0)));
+        } else if wv.label() == STATUS {
+            // la hauteur intérieure compte déjà la barre de titre (macOS)
+            let _ = wv.set_position(LogicalPosition::new(0.0, (s.height - STATUS_H).max(tb + CHROME_H)));
+            let _ = wv.set_size(LogicalSize::new(s.width, STATUS_H));
         }
     }
 }
