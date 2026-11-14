@@ -41,6 +41,8 @@ fn run_with(p: LineParams, abonne: ModemConfig, fai: ModemConfig, seconds: f32, 
                     ModemEvent::Connected { tx_rate, rx_rate } => r.connected[i] = Some((tx_rate, rx_rate)),
                     ModemEvent::Data(d) => r.got[i].extend(d),
                     ModemEvent::Log { msg, .. } => r.log.push(format!("[{:6} ms] {} {msg}", blk * 20, if i == 0 { "ABONNÉ" } else { "FAI   " })),
+                    ModemEvent::TxSignal(t) => r.log.push(format!("[{:6} ms] {} → {t}", blk * 20, if i == 0 { "ABONNÉ" } else { "FAI   " })),
+                    ModemEvent::RxSignal(t) => r.log.push(format!("[{:6} ms] {} ← {t}", blk * 20, if i == 0 { "ABONNÉ" } else { "FAI   " })),
                     ModemEvent::Disconnected { reason } => r.log.push(format!("[{:6} ms] {} NO CARRIER {reason}", blk * 20, i)),
                     _ => {}
                 }
@@ -77,6 +79,22 @@ fn v8_annonce_le_56k_et_phase2_inversee() {
     assert!(dump.contains("nous serons le modem analogique"), "{dump}");
     assert!(dump.contains("nous serons le modem numérique"), "{dump}");
     eprintln!("CONNECT abonné {:?} / FAI {:?}", r.connected[0], r.connected[1]);
+}
+
+/// Le 56k complet : descendant en PCM au-delà du V.34.
+#[test]
+fn connexion_56k() {
+    for (ligne, mini) in [("Parfaite", 56000), ("Urbaine", 36000)] {
+        let r = echange(LineParams::preset(ligne).unwrap(), ModemConfig::default(), fai());
+        let dump = r.log.join("\n");
+        if std::env::var("V90_LOG").is_ok() {
+            eprintln!("{dump}");
+        }
+        let (up, down) = r.connected[0].unwrap();
+        assert!(down >= mini, "{ligne} : descendant {down} bit/s\n{dump}");
+        assert_eq!(r.connected[1], Some((down, up)), "{ligne}");
+        eprintln!("{ligne} : CONNECT 56k — descendant {down} bit/s, montant {up} bit/s");
+    }
 }
 
 /// Sans 56k d'un côté ou de l'autre : V.34 classique, rôles normaux.

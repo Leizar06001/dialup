@@ -548,6 +548,23 @@ impl Modem {
 
     fn check_info1a(&mut self, f: &RxFlags) {
         match &f.info {
+            Some(Ok(bits)) if Info1a::from_info(bits).uinfo.is_some() => {
+                // V.90 (§9.2.1.1.8) : nous émettrons en PCM, nous recevons le
+                // V.34 de l'abonné à la vitesse qu'il a choisie
+                let i1a = Info1a::from_info(bits);
+                self.rx_name("INFO1a");
+                let up = i1a.sr_a2c as usize;
+                self.log(LogLevel::Info, &format!("INFO1a reçu : 56k (V.90) — descendant en PCM, montant {} bauds", SYMBOL_RATES_NOMINAL[up.min(5)]));
+                let rx_high = self.info1c.as_ref().is_some_and(|c| c.results[up.min(5)].high_carrier);
+                self.apply_symbol_rates(up.min(5), false, up.min(5), rx_high);
+                self.status.params.symbol_rate_tx = Some(8000);
+                self.status.params.carrier_tx_hz = None;
+                self.info1a = Some(i1a);
+                self.info_rx = None;
+                self.tone_rx = None;
+                self.tone_presence = None;
+                self.start_phase3();
+            }
             Some(Ok(bits)) => {
                 let i1a = Info1a::from_info(bits);
                 self.rx_name("INFO1a");
@@ -584,8 +601,66 @@ impl Modem {
         self.params_changed();
     }
 
+    /// V.90, modem analogique (§9.2.2.1.9) : 56k si la ligne s'y prête
+    /// (pas de décalage de fréquence — signe d'un circuit analogique
+    /// entre les deux centraux —, sondage pas trop bruité), avec la
+    /// meilleure vitesse de symbole montante parmi 3000, 3200 et 3429.
+    fn decide_info1a_v90(&mut self) -> Option<Info1a> {
+        let me = self.info0_local.clone()?;
+        let other = self.info0_remote.clone()?;
+        let i1c = self.info1c.clone()?;
+        let r = self.probe_report.as_ref()?;
+        let fo = r.freq_offset_hz.unwrap_or(0.0);
+        let down = r.results.iter().map(|x| x.max_rate as u32 * 2400).max().unwrap_or(0);
+        if fo.abs() > 0.5 {
+            self.log(LogLevel::Info, &format!("56k impossible : décalage de fréquence {fo:+.1} Hz (liaison analogique entre centraux)"));
+            return None;
+        }
+        if down < 14400 {
+            self.log(LogLevel::Info, &format!("56k impossible : ligne trop bruitée (sondage : {down} bit/s en V.34)"));
+            return None;
+        }
+        let up3429 = other.v90d.is_some_and(|d| d.up3429);
+        let usable = |i: usize| match i {
+            3 => me.low3000 || me.high3000,
+            4 => me.low3200 || me.high3200,
+            5 => me.sr3429 && me.allow3429 && other.allow3429 && up3429,
+            _ => false,
+        };
+        let up = (3..=5).filter(|&i| usable(i) && i1c.results[i].max_rate > 0).max_by_key(|&i| (i1c.results[i].max_rate, i))?;
+        Some(Info1a {
+            min_power_red: 0,
+            add_power_red: 0,
+            md_len: 0,
+            high_carrier: false,
+            preemph: 0,
+            max_rate: 0,
+            sr_a2c: up as u8,
+            sr_c2a: 6,
+            freq_offset: self.freq_offset_field(),
+            uinfo: Some(crate::phase34::v90::UINFO),
+        })
+    }
+
     /// Décision de l'appelé (§10.1.2.3.5) : vitesses de symbole des deux sens.
     fn decide_info1a(&mut self) {
+        if self.v90 && !self.v90_refused {
+            if let Some(i1a) = self.decide_info1a_v90() {
+                let up = i1a.sr_a2c as usize;
+                let i1c = self.info1c.clone().unwrap();
+                self.log(LogLevel::Info, &format!("Décision : 56k (V.90) — descendant en PCM, montant {} bauds (porteuse {:.0} Hz)", SYMBOL_RATES_NOMINAL[up], carrier_hz(up, i1c.results[up].high_carrier)));
+                self.apply_symbol_rates(up, i1c.results[up].high_carrier, up, false);
+                self.status.params.symbol_rate_rx = Some(8000);
+                self.status.params.carrier_rx_hz = None;
+                self.status.params.preemphasis_tx = Some(i1c.results[up].preemph);
+                let mut itx = InfoTx::new(true);
+                itx.queue(&i1a.to_bits());
+                self.set_tx(TxMode::Info(itx), "INFO1a");
+                self.info1a = Some(i1a);
+                self.goto(St::A2Info1a);
+                return;
+            }
+        }
         let me = self.info0_local.clone().unwrap();
         let other = self.info0_remote.clone().unwrap();
         let i1c = self.info1c.clone().unwrap();

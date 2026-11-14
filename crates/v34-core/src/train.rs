@@ -171,6 +171,12 @@ impl TrainMapper {
         p.rot_cw(self.z)
     }
 
+    /// Remet le brouilleur et le codeur différentiel à zéro (CPt du V.90).
+    pub fn reset_diff(&mut self) {
+        self.scr.reset();
+        self.z = 0;
+    }
+
     /// Nombre de bits par symbole pour J/MP/E.
     pub fn bits_per_symbol(&self) -> usize {
         if self.sixteen { 4 } else { 2 }

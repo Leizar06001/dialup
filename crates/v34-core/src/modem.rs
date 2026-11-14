@@ -132,6 +132,8 @@ pub struct Modem {
     /// (appelant) ou numérique (appelé). Les rôles des phases 2 à 4 sont
     /// alors inversés par rapport au V.34 (voir [`Modem::p2_answer`]).
     pub(crate) v90: bool,
+    /// Le 56k a échoué sur cet appel : on se contente du V.34
+    pub(crate) v90_refused: bool,
 }
 
 impl Modem {
@@ -186,6 +188,7 @@ impl Modem {
             tone_amp_ref: 0.0,
             pending_rev: None,
             v90: false,
+            v90_refused: false,
         }
     }
 

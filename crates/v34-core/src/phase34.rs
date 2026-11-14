@@ -19,6 +19,9 @@ use crate::qamrx::{mu_schedule, PpAligner, QamRx, RxSym, SDetector, SEvent};
 use crate::dsp::Cpx;
 use crate::train::{j_pattern, j_prime_pattern, j_symbols, quarter_point, rate_mask_upto, seq_pp, seq_s, Mp, QamTx, Scrambler, TrainMapper};
 
+/// Phases 3 et 4 du V.90 (56k) : voir `phase34/v90.rs`.
+pub(crate) mod v90;
+
 /// Actions demandées par les phases 3/4 à la machine principale.
 pub(crate) enum P34Action {
     Phase(Phase),
@@ -33,6 +36,8 @@ pub(crate) enum P34Action {
     Hangup(String),
     /// Demande un réentraînement complet (retour en phase 2)
     Retrain(String),
+    /// Le 56k est impossible sur cette ligne : réentraînement en V.34
+    NoV90(String),
 }
 
 /// Écart à la capacité toléré en mode données (dB).
@@ -58,6 +63,10 @@ enum TxSt {
     Mp,
     E,
     Data,
+    /// V.90, modem analogique : S répété jusqu'à nouvel ordre
+    SForever,
+    /// V.90, modem analogique : séquence de bits répétée (Ja, CPt, CP)
+    V90Seq,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -175,6 +184,10 @@ pub(crate) struct P34 {
     dec_mse: f32,
     /// Instant de fin du raccrochage propre
     hangup_at: Option<u64>,
+    /// Mode V.90 (56k) : émetteur ou récepteur PCM et leur pilotage
+    pub(crate) v90: Option<Box<v90::V90>>,
+    /// Longueur (symboles) du dernier S avant une transition S→S̄
+    s_run: u32,
 }
 
 impl P34 {
@@ -249,6 +262,8 @@ impl P34 {
             good_windows: 0,
             dec_mse: 0.0,
             hangup_at: None,
+            v90: None,
+            s_run: 0,
         }
     }
 
@@ -379,6 +394,11 @@ impl P34 {
                     let p = self.mapper.diff_symbol(&chunk);
                     self.tx.push(&[p]);
                 }
+                TxSt::SForever => {
+                    let v = seq_s(2, false);
+                    self.tx.push(&v);
+                }
+                TxSt::V90Seq => self.v90_fill_seq(),
                 TxSt::E => {
                     // 20 uns
                     let bps = self.mapper.bits_per_symbol();
@@ -389,7 +409,10 @@ impl P34 {
                         self.tx.push(&[p]);
                     }
                     // B1 puis données, avec les paramètres négociés
-                    let (tx_rate, _) = self.negotiated_rates();
+                    let (tx_rate, _) = match &self.v90 {
+                        Some(v) => (v.up_rate, 0),
+                        None => self.negotiated_rates(),
+                    };
                     let prm = DataParams::new(self.sr_tx_idx, tx_rate, false);
                     let enc = DataEncoder::new(prm.clone(), !self.answer);
                     self.tx.set_constellation_power(enc.power);
@@ -415,6 +438,10 @@ impl P34 {
     fn on_trn_sent(&mut self) {
         if matches!(self.step, Step::A3Send | Step::C3Send) {
             self.ec_report = true;
+        }
+        if self.v90.is_some() {
+            self.v90_on_trn_sent();
+            return;
         }
         match self.step {
             Step::A3Send => {
@@ -490,8 +517,13 @@ impl P34 {
             RxSt::WaitS => {
                 if self.sdet.s_count == 24 {
                     self.act(P34Action::Rx("S".into()));
+                    if self.v90.is_some() {
+                        self.v90_on_s_present();
+                    }
                 }
+                let run = self.sdet.s_count;
                 if let Some(SEvent::Transition(k0)) = self.sdet.push(&s) {
+                    self.s_run = run;
                     self.act(P34Action::Rx("S̄".into()));
                     self.on_s_transition(k0);
                 }
@@ -595,6 +627,11 @@ impl P34 {
             RxSt::Data => {
                 // Un S de l'autre pendant les données = renégociation ou
                 // raccrochage propre demandé par lui (§11.6.1.2, §11.7.2).
+                if self.v90.is_some() && self.sdet.s_count == 24 {
+                    // V.90 : la renégociation n'est pas encore gérée
+                    self.act(P34Action::Retrain("l'abonné renégocie (V.90) : réentraînement".into()));
+                    return;
+                }
                 if let Some(SEvent::Transition(k0)) = self.sdet.push(&s) {
                     if !self.renegotiating {
                         self.start_reneg(false, None, false);
@@ -645,6 +682,9 @@ impl P34 {
     }
 
     fn on_s_transition(&mut self, k0: i64) {
+        if self.v90.is_some() && self.v90_on_s_transition(k0) {
+            return;
+        }
         match self.step {
             Step::C3WaitS | Step::A3WaitCallS => {
                 // Phase 3 : S̄ (16T) puis PP
@@ -711,6 +751,10 @@ impl P34 {
     }
 
     fn on_rx_bit(&mut self, b: bool) {
+        if self.v90.is_some() {
+            self.v90_on_bit(b);
+            return;
+        }
         self.bits.push_back(b);
         if self.bits.len() > 200 {
             self.bits.pop_front();
@@ -858,6 +902,9 @@ impl P34 {
     // ------------------------------------------------------------------
 
     pub fn step(&mut self, x: f32, n: u64) -> f32 {
+        if self.v90.is_some() {
+            return self.v90_step(x, n);
+        }
         self.n = n;
         if let Some(s) = self.rx.push(x) {
             self.on_rx_symbol(s);
@@ -942,7 +989,7 @@ impl P34 {
 
     /// Renvoie true si un raccrochage propre (cleardown) est engagé.
     pub fn request_cleardown(&mut self) -> bool {
-        if self.step != Step::Connected {
+        if self.step != Step::Connected || self.v90.is_some() {
             return false;
         }
         self.start_reneg(true, None, true);
@@ -950,6 +997,10 @@ impl P34 {
     }
 
     pub fn request_renegotiation(&mut self) {
+        if self.v90.is_some() {
+            self.log("Renégociation 56k pas encore disponible");
+            return;
+        }
         if self.step == Step::Connected {
             self.log("Renégociation de débit demandée");
             self.start_reneg(true, None, false);
@@ -1038,7 +1089,7 @@ impl P34 {
     /// les erreurs augmentent, vers le haut si la ligne s'améliore, et
     /// demande un réentraînement complet si rien n'y fait.
     fn monitor(&mut self) {
-        if self.n - self.mon_t < MON_PERIOD {
+        if self.n - self.mon_t < MON_PERIOD || self.v90.is_some() {
             return;
         }
         let Some(dec) = self.dec.as_ref() else { return };
@@ -1190,7 +1241,56 @@ impl Modem {
         probe.min(cap)
     }
 
+    /// Phase 3 du V.90 : le modem analogique émet S, S̄, PP, TRN, Ja ;
+    /// le numérique les reçoit puis répond en PCM (voir `phase34/v90.rs`).
+    fn start_phase3_v90(&mut self) {
+        self.set_phase(Phase::Phase3);
+        let answer = self.p2_answer();
+        let i1a = self.info1a.clone().unwrap();
+        let i1c = self.info1c.clone().unwrap();
+        let up = (i1a.sr_a2c as usize).min(5);
+        let high = i1c.results[up].high_carrier;
+        let mp = Mp {
+            type1: false,
+            rate_c2a: 1,
+            rate_a2c: 1,
+            aux: false,
+            trellis: 0,
+            nonlinear: false,
+            shaping_expanded: false,
+            ack: false,
+            rate_mask: rate_mask_upto(self.cfg.max_rate),
+            asym: true,
+            precoder: [(0, 0); 3],
+        };
+        let mut p = P34::new(answer, up, high, up, high, mp);
+        p.ec_wait = 0;
+        p.n = self.n;
+        p.t_step = self.n;
+        if answer {
+            self.log(LogLevel::Info, &format!("Phase 3 (56k) — émission V.34 {:.0} bauds / porteuse {:.0} Hz, réception PCM 8000 symboles/s", SYMBOL_RATES[up], carrier_hz(up, high)));
+            let i0d = self.info0_remote.as_ref().and_then(|i| i.v90d);
+            p.start_v90_analog(i0d, self.cfg.max_rate_pcm, self.cfg.max_rate);
+        } else {
+            self.log(LogLevel::Info, &format!("Phase 3 (56k) — émission PCM 8000 symboles/s, réception V.34 {:.0} bauds / porteuse {:.0} Hz", SYMBOL_RATES[up], carrier_hz(up, high)));
+            p.start_v90_digital(self.cfg.max_rate_pcm, self.cfg.max_rate);
+        }
+        if let Some(link) = self.saved_link.take() {
+            p.link = link;
+        }
+        self.retrain_det = Some(crate::dsp::tone::ToneDetector::new(if answer { 1200.0 } else { 2400.0 }, 160));
+        self.retrain_on = 0;
+        let actions = p.take_actions();
+        self.p34 = Some(Box::new(p));
+        self.goto(St::P3);
+        self.apply_p34_actions(actions);
+    }
+
     pub(crate) fn start_phase3(&mut self) {
+        if self.info1a.as_ref().is_some_and(|i| i.uinfo.is_some()) {
+            self.start_phase3_v90();
+            return;
+        }
         self.set_phase(Phase::Phase3);
         let answer = self.p2_answer();
         let i1a: Info1a = self.info1a.clone().unwrap();
@@ -1377,6 +1477,13 @@ impl Modem {
                     return;
                 }
                 P34Action::Retrain(r) => {
+                    self.initiate_retrain(&r, true);
+                    return;
+                }
+                P34Action::NoV90(r) => {
+                    // Le prochain INFO1a choisira le V.34 (§9.2.2.1.9)
+                    self.log(LogLevel::Warn, &r);
+                    self.v90_refused = true;
                     self.initiate_retrain(&r, true);
                     return;
                 }
