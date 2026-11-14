@@ -30,7 +30,7 @@
       items: [
         [["APPELER", "/", "Entrée"], "Compose le numéro du champ du terminal (ATDT…) : tonalité, numérotation, sonnerie, puis la négociation qui chante."],
         [["RACCROCHER"], "Raccroche (ATH), proprement si la liaison est établie (cleardown V.34)."],
-        [["☎ FAI"], "Compose le **08 36 65 65 65** : le fournisseur d'accès décroche et la ligne transporte Internet."],
+        [["☎ FAI"], "Compose le **08 36 15 42 86** : le fournisseur d'accès décroche et la ligne transporte Internet."],
         [["08 00 00 00 00"], "Ligne de test du central : elle te renvoie tout ce que tu lui envoies."],
         [["☎ APPELER"], "Dans l'ANNUAIRE, à côté d'un abonné en ligne ou d'un numéro spécial : le compose pour toi."],
         [["RING"], "Appel entrant (mode réseau) : ça sonne deux fois, puis le modem décroche tout seul (LED AA)."],
@@ -141,7 +141,7 @@
       items: [
         [["Inscription"], "Crée ton abonnement : nom d'abonné, numéro à 10 chiffres que tu choisis, adresse électronique."],
         [["Activation"], "Un courrier t'apporte le lien d'activation, valable 48 heures. Un clic, et ton numéro est à toi."],
-        [["Accès Internet"], "Accordé par l'opérateur, un courrier te prévient. En attendant, le 08 36 65 65 65 sonne occupé ; les abonnés et la ligne de test marchent déjà."],
+        [["Accès Internet"], "Accordé par l'opérateur, un courrier te prévient. En attendant, le 08 36 15 42 86 sonne occupé ; les abonnés et la ligne de test marchent déjà."],
         [["Mon compte"], "Ton numéro et l'état de ton accès Internet ; changer de mot de passe ou supprimer le compte."],
         [["Mot de passe oublié"], "Un lien par courrier pour en choisir un nouveau, valable une heure. Change-le aussi dans l'appli si tu l'avais mémorisé."],
         [["État du réseau"], "Le central en direct : abonnés connectés, appels en cours, modems et salon du FAI."],

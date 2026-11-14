@@ -4,14 +4,14 @@ Le VPS héberge le **central téléphonique** : les PC (appli ou `v34-cli`) s'y
 connectent avec un nom d'abonné et un mot de passe, reçoivent leur numéro, et
 s'appellent ; le central relaie l'audio (G.711 sur UDP). Il héberge aussi des
 **numéros spéciaux** desservis par des modems logiciels : le **FAI**
-(`0836656565`), qui donne accès à Internet par modem, et une **ligne de test**
+(`0836154286`), qui donne accès à Internet par modem, et une **ligne de test**
 en écho (`0800000000`).
 
 ```text
  PC A (v34-cli / appli)                VPS dialup.tinyverse.fr                PC B
  modem V.34 ── audio G.711 ──UDP 3434──► central ──── relais audio ──────────► modem V.34
                                           │
-                                          └─ 0836656565 : modem du FAI ── TCP ──► Internet
+                                          └─ 0836154286 : modem du FAI ── TCP ──► Internet
                                              (le PC A obtient un proxy SOCKS5 sur 127.0.0.1:1080 ;
                                               l'hôte virtuel http://web1998/ est servi par le VPS
                                               lui-même : le web allégé « comme en 1998 »)
@@ -222,7 +222,7 @@ en `debug`, les destinations ouvertes par le tunnel FAI sont journalisées.
 v34-cli register --user alice                      # attend les appels (mot de passe demandé)
 v34-cli dial --user gaston 0612345678             # appelle alice
 v34-cli dial --user gaston 0800000000             # ligne de test : écho des octets
-v34-cli dial --user gaston 0836656565             # FAI : affiche « proxy SOCKS5 sur 127.0.0.1:1080 »
+v34-cli dial --user gaston 0836154286             # FAI : affiche « proxy SOCKS5 sur 127.0.0.1:1080 »
 curl --socks5-hostname 127.0.0.1:1080 https://example.com/
 ```
 

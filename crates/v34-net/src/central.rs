@@ -23,7 +23,7 @@
 //!     while let Some(ev) = c.next_event() {
 //!         if let CentralEvent::Registered { number, .. } = ev {
 //!             println!("mon numéro : {number}");
-//!             c.dial("0836656565").unwrap();
+//!             c.dial("0836154286").unwrap();
 //!         }
 //!     }
 //!     c.send_block(&[0.0; 160]).unwrap();

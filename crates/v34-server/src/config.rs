@@ -37,7 +37,7 @@ impl Default for Config {
             central: Central::default(),
             abonnes: Vec::new(),
             numeros_speciaux: vec![
-                NumeroSpecial { numero: "0836656565".into(), service: Service::Fai },
+                NumeroSpecial { numero: "0836154286".into(), service: Service::Fai },
                 NumeroSpecial { numero: "0800000000".into(), service: Service::Echo },
             ],
             modems: Modems::default(),
@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn exemple_de_deploiement_valide() {
         let c = Config::from_toml(EXEMPLE).expect("deploy/config.example.toml doit être valide");
-        assert_eq!(c.service_for("0836656565"), Some(Service::Fai));
+        assert_eq!(c.service_for("0836154286"), Some(Service::Fai));
         assert_eq!(c.service_for("0800000000"), Some(Service::Echo));
         assert_eq!(c.listen_addr().unwrap().port(), 3434);
         assert!(!c.fai.autoriser_prive);
@@ -512,7 +512,7 @@ mod tests {
         assert!(Config::from_toml(&ab("a", "01x")).is_err(), "numéro invalide");
         assert!(Config::from_toml(&format!("{}{}", ab("a", "01"), ab("b", "01"))).is_err(), "numéro en double");
         assert!(Config::from_toml(&format!("{}{}", ab("a", "01"), ab("a", "02"))).is_err(), "nom en double");
-        assert!(Config::from_toml(&ab("a", "0836656565")).is_err(), "collision avec un numéro spécial");
+        assert!(Config::from_toml(&ab("a", "0836154286")).is_err(), "collision avec un numéro spécial");
         assert!(Config::from_toml("[[abonnes]]\nnom = \"a\"\nnumero = \"1\"\nmot_de_passe_hash = \"clair\"").is_err());
         assert!(Config::from_toml("[central]\nfaute_de_frappe = 1").is_err());
         assert!(Config::from_toml("[central]\nsimulateur_ligne = \"Inexistant\"").is_err());

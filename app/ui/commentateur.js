@@ -668,7 +668,7 @@ const Commentateur = (() => {
     { le: "l'adversaire", du: "de l'adversaire", au: "à l'adversaire" },
     { le: "le correspondant", du: "du correspondant", au: "au correspondant" },
   ];
-  const ISP_NUMBER = "0836656565";
+  const ISP_NUMBER = "0836154286";
 
   /* ------------------------------------------------------------ moteur */
   /**

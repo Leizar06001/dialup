@@ -239,7 +239,7 @@ flux_max = 8
     fn refus() {
         let t = upsert(BASE, "gaston", "0142424242", &h("a")).unwrap();
         assert!(upsert(&t, "alice", "0142424242", &h("b")).unwrap_err().contains("gaston"), "numéro déjà pris");
-        assert!(upsert(&t, "alice", "0836656565", &h("b")).is_err(), "numéro spécial");
+        assert!(upsert(&t, "alice", "0836154286", &h("b")).is_err(), "numéro spécial");
         assert!(upsert(&t, "pas valide", "01", &h("b")).is_err());
         assert!(upsert(&t, "bob", "01a", &h("b")).is_err());
         assert!(remove(&t, "inconnu").is_err());

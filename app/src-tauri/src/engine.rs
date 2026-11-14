@@ -26,7 +26,7 @@ const SCOPE_LEN: usize = 256;
 
 /// Numéro du FAI (comme sur le serveur du VPS) : en l'appelant, le flux du
 /// modem transporte un tunnel vers Internet au lieu du chat BBS.
-pub const ISP_NUMBER: &str = "0836656565";
+pub const ISP_NUMBER: &str = "0836154286";
 /// Port du proxy local (SOCKS5 + HTTP CONNECT) que le navigateur utilise.
 pub const PROXY_PORT: u16 = 1080;
 

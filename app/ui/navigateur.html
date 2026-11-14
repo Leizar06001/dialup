@@ -109,7 +109,7 @@
     $("b-home").onclick = () => { $("addr").value = ""; go(""); };
     for (const [id, cmd] of [["b-back", "back"], ["b-fwd", "forward"], ["b-reload", "reload"], ["b-stop", "stop"]])
       $(id).onclick = () => T.core.invoke("nav_cmd", { cmd });
-    $("b-call").onclick = () => T.core.invoke("at_command", { line: "ATDT0836656565" });
+    $("b-call").onclick = () => T.core.invoke("at_command", { line: "ATDT0836154286" });
 
     T.event.listen("nav:url", (e) => {
       const u = e.payload;

@@ -15,7 +15,7 @@ Autour du modem, tout un petit monde « années 90 » :
   appels sont relayés en audio G.711 sur UDP, et les modems négocient à
   travers le réseau comme sur une vraie ligne. Le mot de passe ne circule
   jamais (défi-réponse).
-- **Un fournisseur d'accès à Internet** : composer le `0836656565` décroche
+- **Un fournisseur d'accès à Internet** : composer le `0836154286` décroche
   un modem côté serveur, qui ouvre un tunnel vers Internet (proxy SOCKS5
   local) à la vitesse d'un vrai modem.
 - **Le navigateur « web 1998 »** : à 3 Ko/s le web moderne est inutilisable,

@@ -71,7 +71,7 @@ simulateur_ligne = ""
 # Sans aucun bloc, ces deux numéros-ci sont créés par défaut ; pour n'en
 # avoir aucun : numeros_speciaux = []
 [[numeros_speciaux]]
-numero = "0836656565"
+numero = "0836154286"
 service = "fai"
 
 [[numeros_speciaux]]

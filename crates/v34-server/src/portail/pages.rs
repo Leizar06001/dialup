@@ -218,7 +218,7 @@ pub fn accueil(nom_fai: &str, central: &str, inscriptions_ouvertes: bool, nouvel
 <b>Bienvenue chez {nom} !</b> Ici, pas de fibre ni de 5G : votre ordinateur se transforme en
 <b>modem V.34</b>, le vrai, celui qui chante. Vous recevez <b>votre propre numéro de téléphone</b>,
 vous appelez les autres abonnés pour discuter et échanger des fichiers, et vous composez le
-<b>08 36 65 65 65</b> pour surfer sur Internet à travers votre modem.</p>
+<b>08 36 15 42 86</b> pour surfer sur Internet à travers votre modem.</p>
 {quoi}
 <h2>Ce que comprend votre abonnement <span class="nouveau">NOUVEAU !</span></h2>
 <table class="grille">
@@ -362,7 +362,7 @@ pub fn bienvenue(nom: &str, numero: &str, central: &str, acces_en_attente: bool)
         c = esc(central)
     );
     if acces_en_attente {
-        h.push_str(r#"<div class="boite"><b>Accès Internet :</b> en attente de validation par l'opérateur. Vous recevrez un courrier dès qu'il sera activé ; en attendant, le 08 36 65 65 65 sonne occupé.</div>"#);
+        h.push_str(r#"<div class="boite"><b>Accès Internet :</b> en attente de validation par l'opérateur. Vous recevrez un courrier dès qu'il sera activé ; en attendant, le 08 36 15 42 86 sonne occupé.</div>"#);
     }
     h
 }
@@ -437,7 +437,7 @@ Tout ce que vous voyez passer est réellement modulé et démodulé.</p>
 <h3>Je n'arrive pas à me connecter</h3>
 <ul><li>Vérifiez le nom d'abonné (sensible aux majuscules) et le mot de passe.</li>
 <li>Le central utilise le port <b>UDP 3434</b> : certains réseaux d'entreprise le bloquent.</li></ul>
-<h3>Le 08 36 65 65 65 sonne occupé</h3>
+<h3>Le 08 36 15 42 86 sonne occupé</h3>
 <p>Votre accès Internet n'est pas encore activé par l'opérateur, ou tous les modems du FAI sont occupés.</p>
 <h3 id="heberger">Héberger votre propre central</h3>
 <p>Le central, le FAI et ce site sont des logiciels libres (licence MIT).{src}
@@ -679,7 +679,7 @@ pub fn compte(v: &VueCompte, central: &str, csrf: &str, info: Option<&str>, erre
         let _ = write!(h, r#"<div class="erreur">{}</div>"#, esc(e));
     }
     let acces = match v.acces {
-        Acces::Accorde => r#"<span class="voyant v-vert"></span> <b>accordé</b> : composez le 08 36 65 65 65 et surfez !"#,
+        Acces::Accorde => r#"<span class="voyant v-vert"></span> <b>accordé</b> : composez le 08 36 15 42 86 et surfez !"#,
         Acces::EnAttente => r#"<span class="voyant v-orange"></span> <b>en attente de décision</b> de l'opérateur : un courrier vous préviendra."#,
         Acces::Refuse => r#"<span class="voyant v-rouge"></span> <b>refusé</b> : vous pouvez toujours appeler les autres abonnés et la ligne de test."#,
     };

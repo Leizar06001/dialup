@@ -84,8 +84,8 @@ $("dial-number").addEventListener("keydown", (e) => {
 });
 $("btn-hangup").addEventListener("click", () => sendAt("ATH"));
 $("btn-isp").addEventListener("click", () => {
-  $("dial-number").value = "0836656565";
-  invoke("at_command", { line: "ATDT0836656565" });
+  $("dial-number").value = "0836154286";
+  invoke("at_command", { line: "ATDT0836154286" });
 });
 $("btn-browser").addEventListener("click", () => invoke("open_browser").catch((e) => crt("Navigateur : " + e, "info")));
 $("btn-retrain").addEventListener("click", () => {
@@ -503,7 +503,7 @@ function onState(s) {
   pillEl.className = "call-pill " + cls;
 
   // Touche NAVIGATEUR : s'allume quand le tunnel Internet est prêt.
-  const web = $("btn-browser"), dialingIsp = s.session === "internet" || (s.call_state !== "idle" && $("dial-number").value.trim() === "0836656565");
+  const web = $("btn-browser"), dialingIsp = s.session === "internet" || (s.call_state !== "idle" && $("dial-number").value.trim() === "0836154286");
   web.classList.toggle("ready", !!s.proxy);
   // Session Internet : le chat n'a pas de destinataire (la ligne porte le tunnel).
   const inet = s.session === "internet" && s.call_state !== "idle";
@@ -991,7 +991,7 @@ function renderDir(net) {
     setText("dir-title", "ANNUAIRE");
     setText("dir-count", "");
     list.innerHTML = `<div class="dir-note">${net ? "Connexion au central en cours…" :
-      "Tu es en <b>boucle locale</b> : pas de central, donc pas d'annuaire. Tous les numéros répondent ici (modem simulé), le 08 36 65 65 65 compris.<br><br>Clique sur le badge en haut à droite pour te connecter à ton central."}</div>`;
+      "Tu es en <b>boucle locale</b> : pas de central, donc pas d'annuaire. Tous les numéros répondent ici (modem simulé), le 08 36 15 42 86 compris.<br><br>Clique sur le badge en haut à droite pour te connecter à ton central."}</div>`;
     return;
   }
   setText("dir-title", `ANNUAIRE · ${net.server.replace(/:\d+$/, "")}`);

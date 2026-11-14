@@ -143,7 +143,7 @@ fn parcours_complet() {
 
     // Erreurs : nom pris (config, insensible à la casse), numéro spécial, mots de passe différents.
     let t = jeton_formulaire(p);
-    let r = post(p, "/inscription", &[("t", &t), ("nom", "Raziel"), ("numero", "08 36 65 65 65"), ("courriel", "g@example.org"), ("mdp", "motdepasse"), ("mdp2", "autre-chose"), ("cgu", "1")], None);
+    let r = post(p, "/inscription", &[("t", &t), ("nom", "Raziel"), ("numero", "08 36 15 42 86"), ("courriel", "g@example.org"), ("mdp", "motdepasse"), ("mdp2", "autre-chose"), ("cgu", "1")], None);
     assert_eq!(r.statut, 400);
     let e = texte(&r);
     assert!(e.contains("déjà pris") && e.contains("01 à 07") && e.contains("différents"), "{e}");
