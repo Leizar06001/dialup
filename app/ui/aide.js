@@ -81,6 +81,7 @@
         [["CHAT ↗"], "L'autre onglet du panneau : ouvre la MESSAGERIE. Il clignote quand un message t'y attend."],
         [["Contacts"], "Dans la MESSAGERIE, le même annuaire, pour appeler sans changer de fenêtre."],
         [null, "En bas de l'annuaire : les numéros spéciaux (FAI, ligne de test, 3615 ORACLE). En boucle locale, pas de central, donc pas d'annuaire : seuls TINYVERSE et l'oracle, simulés."],
+        [null, "Il paraît que certains numéros ne figurent dans aucun annuaire. L'oracle en connaîtrait au moins un… Chaque numéro trouvé rapporte un succès (et parfois une belle facture)."],
         [["Appel :", "Raccrocher"], "En mode MESSAGERIE, la barre d'adresse du navigateur laisse place à l'état de l'appel, avec de quoi raccrocher."],
       ],
     },

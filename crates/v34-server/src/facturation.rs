@@ -43,7 +43,7 @@ pub struct Ticket {
 impl Ticket {
     /// Ticket d'un appel, avec son prix.
     pub fn nouveau(debut: u64, duree_s: u32, appelant: (&str, &str), numero: &str, appele: &str, service: Option<&str>) -> Ticket {
-        let cat = Categorie::du_service(service);
+        let cat = Categorie::de_l_appel(numero, service);
         Ticket {
             debut,
             duree_s,
@@ -155,6 +155,17 @@ impl Facturation {
             }
             Some("echo") => {
                 c.gagner("test", fin);
+            }
+            // Numéros cachés : le succès porte le nom du service
+            Some(s) if s.starts_with("cache-") => {
+                c.gagner(s, fin);
+                let trouves = c.succes.keys().filter(|k| k.starts_with("cache-")).count();
+                if trouves >= succes::EXPLORATEUR {
+                    c.gagner("explorateur", fin);
+                }
+                if trouves >= succes::LISTE.iter().filter(|s| s.id.starts_with("cache-")).count() {
+                    c.gagner("phreaker", fin);
+                }
             }
             Some(_) => {}
         }
@@ -372,6 +383,24 @@ mod tests {
         }
         assert!(!f.connexion("raziel", MARDI + 6 * 86_400 + 60));
         assert!(f.releve("raziel", MARDI).succes.contains(&"fidele".to_string()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn numeros_caches() {
+        let d = dossier("caches");
+        let mut f = Facturation::ouvrir(d.clone(), MARDI);
+        let caches: Vec<&str> = succes::LISTE.iter().map(|s| s.id).filter(|id| id.starts_with("cache-")).collect();
+        for (k, id) in caches.iter().enumerate() {
+            let t = Ticket::nouveau(MARDI + k as u64 * 100, 30, ("raziel", "0100000001"), "0836993699", "x", Some(id));
+            f.appel(t);
+            let s = f.releve("raziel", MARDI).succes;
+            assert!(s.contains(&id.to_string()));
+            assert_eq!(s.contains(&"explorateur".to_string()), k + 1 >= succes::EXPLORATEUR, "après {} numéros", k + 1);
+            assert_eq!(s.contains(&"phreaker".to_string()), k + 1 == caches.len());
+        }
+        // 08 36 : 30 s au kiosque
+        assert_eq!(lire_tickets(&d, 202611)[0].centimes, 112);
         let _ = std::fs::remove_dir_all(&d);
     }
 

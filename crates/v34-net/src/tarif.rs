@@ -45,6 +45,19 @@ impl Categorie {
         }
     }
 
+    /// D'après le service qui répond, et pour les autres services (numéros
+    /// cachés) d'après le numéro : 0 800 gratuit, 08 36 au kiosque. Les
+    /// abonnés (`None`) sont toujours en communication locale.
+    pub fn de_l_appel(numero: &str, service: Option<&str>) -> Categorie {
+        match service {
+            None | Some("fai") => Categorie::Local,
+            Some("echo" | "oracle") => Categorie::du_service(service),
+            Some(_) if numero.starts_with("0800") => Categorie::Vert,
+            Some(_) if numero.starts_with("0836") => Categorie::Kiosque,
+            Some(_) => Categorie::Local,
+        }
+    }
+
     pub fn code(self) -> &'static str {
         match self {
             Categorie::Local => "local",
@@ -182,13 +195,18 @@ fn civil(z: i64) -> (i64, u32, u32) {
 }
 
 /// (année, mois, jour) → jours depuis le 1er janvier 1970.
-fn jours(annee: i64, mois: u32, jour: u32) -> i64 {
+pub fn jours(annee: i64, mois: u32, jour: u32) -> i64 {
     let y = if mois <= 2 { annee - 1 } else { annee };
     let era = y.div_euclid(400);
     let yoe = y.rem_euclid(400);
     let mp = (mois as i64 + 9) % 12;
     let doy = (153 * mp + 2) / 5 + jour as i64 - 1;
     era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468
+}
+
+/// Jour de la semaine d'une date (0 = dimanche … 6 = samedi).
+pub fn jour_semaine(annee: i64, mois: u32, jour: u32) -> u32 {
+    (jours(annee, mois, jour) + 4).rem_euclid(7) as u32
 }
 
 /// Dernier dimanche du mois (jours depuis 1970).

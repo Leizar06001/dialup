@@ -44,6 +44,7 @@ pub const DISCIPLE_S: u64 = 30 * 60;
 pub const TEMPETE_S: f32 = 600.0;
 pub const GROS_COLIS: u64 = 1 << 20;
 pub const TENACE_RETRAINS: u32 = 3;
+pub const EXPLORATEUR: usize = 3;
 
 pub const LISTE: &[Succes] = &[
     c("premier-appel", "Allô ?", "Premier appel abouti."),
@@ -68,6 +69,16 @@ pub const LISTE: &[Succes] = &[
     a("gros-colis", "Colis encombrant", "Envoyer un fichier de 1 Mo ou plus."),
     a("visio", "Souriez !", "Un appel en visiophone, chacun sa caméra."),
     cache(a("tenace", "Tenace", "Rester en ligne malgré 3 réentraînements dans le même appel.")),
+    // Numéros cachés du central (absents de l'annuaire) : l'identifiant est
+    // celui du service, voir v34-server/src/caches
+    c("explorateur", "Explorateur", "Trouver 3 numéros qui ne sont pas dans l'annuaire."),
+    cache(c("phreaker", "Phreaker", "Trouver tous les numéros cachés du réseau.")),
+    cache(c("cache-horloge", "Au quatrième top", "Trouver l'horloge parlante du réseau.")),
+    cache(c("cache-meteo", "Avis de grand frais", "Trouver la météo des lignes.")),
+    cache(c("cache-an2000", "Bogue", "Trouver la Commission de l'an 2000.")),
+    cache(c("cache-ministere", "Rond-de-cuir", "Trouver le serveur du Ministère des Postes.")),
+    cache(c("cache-repondeur", "Après le bip", "Trouver le répondeur de Gérard.")),
+    cache(c("cache-prix", "Le Prix en Francs", "Trouver le jeu des prix de 1998.")),
 ];
 
 pub fn trouver(id: &str) -> Option<&'static Succes> {

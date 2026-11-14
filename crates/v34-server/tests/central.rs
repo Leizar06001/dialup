@@ -271,6 +271,11 @@ fn la_ligne_de_test_decroche_et_emet_de_l_audio() {
 }
 
 #[test]
+fn un_numero_cache_decroche_et_emet_de_l_audio() {
+    special_number_answers("0836993699");
+}
+
+#[test]
 fn l_oracle_decroche_et_emet_de_l_audio() {
     special_number_answers(ORACLE);
 }

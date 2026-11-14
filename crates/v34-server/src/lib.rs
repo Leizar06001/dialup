@@ -21,9 +21,11 @@
 pub mod log;
 
 pub mod admin;
+pub mod caches;
 pub mod central;
 pub mod comptes;
 pub mod config;
+pub mod ecran;
 pub mod facturation;
 pub mod filter;
 pub mod oracle;

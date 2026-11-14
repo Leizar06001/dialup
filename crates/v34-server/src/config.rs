@@ -161,6 +161,10 @@ pub enum Service {
     Echo,
     /// 3615 ORACLE : une IA qui se croit en 1998, en trames de chat
     Oracle,
+    /// Numéro caché (absent de l'annuaire et de la configuration) : index
+    /// dans [`crate::caches::LISTE`]
+    #[serde(skip)]
+    Cache(u8),
 }
 
 impl Service {
@@ -169,6 +173,7 @@ impl Service {
             Service::Fai => "fai",
             Service::Echo => "echo",
             Service::Oracle => "oracle",
+            Service::Cache(i) => crate::caches::LISTE[i as usize].service,
         }
     }
 }
@@ -541,8 +546,11 @@ impl Config {
     }
 
     /// Service associé à un numéro spécial.
+    /// Service qui répond à ce numéro : numéros spéciaux de la
+    /// configuration, puis numéros cachés (le site refuse donc aussi ces
+    /// derniers aux nouveaux abonnés).
     pub fn service_for(&self, numero: &str) -> Option<Service> {
-        self.numeros_speciaux.iter().find(|s| s.numero == numero).map(|s| s.service)
+        self.numeros_speciaux.iter().find(|s| s.numero == numero).map(|s| s.service).or_else(|| crate::caches::index(numero).map(Service::Cache))
     }
 
     /// Liste (numéro, service) annoncée aux clients.

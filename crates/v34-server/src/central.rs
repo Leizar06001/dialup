@@ -140,6 +140,8 @@ pub struct Server {
     etat: Option<(PathBuf, Instant)>,
     /// Tickets de communication et succès (dossier partagé avec le site)
     facturation: Option<Facturation>,
+    /// Ce dossier (répondeur, scores des numéros cachés…)
+    donnees: Option<PathBuf>,
     /// Démarrage (secondes Unix)
     depuis: u64,
     stop: Arc<AtomicBool>,
@@ -215,6 +217,7 @@ impl Server {
             comptes: None,
             etat: None,
             facturation: None,
+            donnees: None,
             depuis: unix_now(),
             stop: Arc::new(AtomicBool::new(false)),
             stats: Arc::new(Mutex::new(Stats::default())),
@@ -251,7 +254,8 @@ impl Server {
     /// la page « État du réseau » du site le lit.
     /// Tickets de communication et succès dans `dir` (voir [`crate::facturation`]).
     pub fn with_facturation(mut self, dir: PathBuf) -> Server {
-        self.facturation = Some(Facturation::ouvrir(dir, unix_now()));
+        self.facturation = Some(Facturation::ouvrir(dir.clone(), unix_now()));
+        self.donnees = Some(dir);
         self
     }
 
@@ -626,7 +630,7 @@ impl Server {
             let refus = match service {
                 Service::Fai => !self.annuaire.fai_autorise(&reg.name),
                 Service::Oracle => !self.oracle.autorise(&self.annuaire, &reg.name),
-                Service::Echo => false,
+                Service::Echo | Service::Cache(_) => false,
             };
             if refus {
                 // Appel aussitôt terminé : « accès non autorisé ». Les anciens
@@ -755,6 +759,7 @@ impl Server {
             line: self.cfg.line_params().ok().flatten(),
             policy: self.policy.clone(),
             oracle: self.oracle.clone(),
+            donnees: self.donnees.clone(),
         };
         match services::spawn(modem_call, rx, self.notice_tx.clone()) {
             Ok(h) => {
