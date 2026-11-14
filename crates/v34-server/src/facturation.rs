@@ -227,6 +227,20 @@ impl Facturation {
         change
     }
 
+    /// Succès gagné dans un service du central (numéro caché) : seuls ceux
+    /// que le central constate.
+    pub fn serveur(&mut self, nom: &str, id: &str, maintenant: u64) -> bool {
+        if !succes::trouver(id).is_some_and(|s| s.source == Source::Central) {
+            return false;
+        }
+        let c = self.carnets.entry(nom.to_string()).or_default();
+        if !c.gagner(id, maintenant) {
+            return false;
+        }
+        self.sauver();
+        true
+    }
+
     /// Relevé du mois en cours.
     pub fn releve(&mut self, nom: &str, maintenant: u64) -> Releve {
         self.mois_courant(maintenant);

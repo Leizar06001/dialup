@@ -8,6 +8,10 @@ use super::*;
 /// Joue un service avec ces lignes tapées (puis l'appelant raccroche) ;
 /// rend tout ce qui s'est affiché et la fin.
 fn jouer(service: &str, entrees: &[&str], donnees: Option<&Path>) -> (String, Result<(), Fin>) {
+    jouer_avec(service, entrees, donnees, &Default::default())
+}
+
+fn jouer_avec(service: &str, entrees: &[&str], donnees: Option<&Path>, exploits: &Exploits) -> (String, Result<(), Fin>) {
     let n = LISTE.iter().find(|n| n.service == service).expect("service");
     let (to_modem, sortie) = sync_channel(10_000);
     let (entree, from_modem) = channel();
@@ -16,6 +20,7 @@ fn jouer(service: &str, entrees: &[&str], donnees: Option<&Path>) -> (String, Re
     }
     drop(entree);
     let mut l = Ligne::new(to_modem, &from_modem, "testeur", donnees, 10_000_000);
+    l.exploits = Some(exploits);
     let r = (n.lancer)(&mut l);
     drop(l);
     let mut dec = Decoder::default();
@@ -83,10 +88,11 @@ fn an2000_souffle_le_mot_de_passe() {
 
 #[test]
 fn ministere() {
-    let (t, r) = jouer("cache-ministere", &["raziel", "bug", "Bogue.", "1", "/fin"], None);
+    let (t, r) = jouer("cache-ministere", &["raziel", "bug", "Bogue.", "LIRE BUREAU/REGISTRE.TXT", "/fin"], None);
     assert_eq!(r, Err(Fin::Demande));
     assert!(t.contains("MOT DE PASSE INCORRECT (tentative 1 sur 3)") && t.contains("BIENVENUE, AGENT RAZIEL"), "{t}");
-    for n in LISTE.iter().filter(|n| n.service != "cache-ministere") {
+    // le registre donne tous les numéros, sauf celui du dossier rouge
+    for n in LISTE.iter().filter(|n| !matches!(n.service, "cache-ministere" | "cache-futur")) {
         let lisible: String = n.numero.chars().collect::<Vec<_>>().chunks(2).map(|c| c.iter().collect::<String>()).collect::<Vec<_>>().join(" ");
         let lisible = if n.numero.starts_with("0800") { format!("0 800 {}", &lisible[6..]) } else { lisible };
         assert!(t.contains(&lisible), "{lisible} absent du registre");
@@ -96,6 +102,56 @@ fn ministere() {
     assert!(t.contains("ACCÈS REFUSÉ") && t.contains("terme officiel"));
 }
 
+/// Le piratage complet : agent, fouille, chef (mot de passe du répondeur),
+/// directeur (prix du Tamagotchi), dossier rouge, et la ligne de 2026.
+#[test]
+fn piratage_du_ministere() {
+    let exploits: Exploits = Default::default();
+    let (t, r) = jouer_avec(
+        "cache-ministere",
+        &[
+            "raziel", "bogue", "LISTE", "VA DIRECTION", "VA BUREAU", "LIRE POSTIT", "VA ..", "LIRE ARCHIVES/FACTURES.TXT",
+            "CONNEXION chef", "minouche", "LIRE ARCHIVES/FACTURES.TXT", "CONNEXION directeur", "1290", "CONNEXION directeur", "150 F",
+            "VA DIRECTION", "LISTE", "LIRE ROUGE", "SUDO", "QUI", "LOGOUT",
+        ],
+        None,
+        &exploits,
+    );
+    assert_eq!(r, Ok(()));
+    for attendu in [
+        "DIRECTION/   [niveau 3]",
+        "ACCÈS REFUSÉ : DIRECTION demande une habilitation de niveau 3",
+        "Il a encore sur son répondeur",
+        "ACCÈS REFUSÉ : habilitation de niveau 2 requise",
+        "BIENVENUE, CHEF DE SERVICE CHEF",
+        "un Tamagotchi",
+        "MOT DE PASSE INCORRECT.",
+        "BIENVENUE, DIRECTEUR DIRECTEUR",
+        "SLP:/DIRECTION>",
+        "08 36 20 26 26",
+        "Cerfa n° 98-SU",
+        "Déconnexion",
+    ] {
+        assert!(t.contains(attendu), "« {attendu} » absent :\n{t}");
+    }
+    let e = exploits.lock().unwrap().clone();
+    assert_eq!(e, [("testeur".to_string(), "chef"), ("testeur".to_string(), "chef"), ("testeur".to_string(), "secret-etat")]);
+    // les indices : le chef sur le répondeur, le Tamagotchi au catalogue
+    let (t, _) = jouer("cache-repondeur", &["/ecouter", "/fin"], None);
+    assert!(t.contains("Minouche"), "{t}");
+    let zeros = ["0"; 15];
+    let mut entrees: Vec<&str> = zeros.to_vec();
+    entrees.push("/catalogue");
+    let (t, _) = jouer("cache-prix", &entrees, None);
+    assert!(t.contains("un Tamagotchi : 150 F"), "{t}");
+    // la ligne de 2026 : succès, nouvelles, message pour 1998
+    let ex2: Exploits = Default::default();
+    let (t, r) = jouer_avec("cache-futur", &["Bonjour 1998 !"], None, &ex2);
+    assert_eq!(r, Ok(()));
+    assert!(t.contains("Ici 2026") && t.contains("Message parti pour 1998"));
+    assert_eq!(ex2.lock().unwrap().as_slice(), [("testeur".to_string(), "cache-futur")]);
+}
+
 #[test]
 fn repondeur_garde_les_messages() {
     let d = dossier("repondeur");
@@ -103,7 +159,8 @@ fn repondeur_garde_les_messages() {
     assert_eq!(r, Ok(()));
     assert!(t.contains("vous êtes bien chez Gérard") && t.contains("Message enregistré"));
     let (t, _) = jouer("cache-repondeur", &["/ecouter", "/fin"], Some(&d));
-    assert!(t.contains("1 message sur la bande") && t.contains("de testeur : Salut Gérard, c'est le facteur"), "{t}");
+    // (le vieux message du chef, plus celui-ci)
+    assert!(t.contains("2 messages sur la bande") && t.contains("de testeur : Salut Gérard, c'est le facteur"), "{t}");
     let _ = std::fs::remove_dir_all(d);
 }
 
@@ -119,7 +176,8 @@ fn prix_en_francs() {
     let d = dossier("prix");
     let zeros = ["0"; 15];
     let (t, r) = jouer("cache-prix", &zeros, Some(&d));
-    assert_eq!(r, Ok(()));
+    // (après la partie, le jeu attend /catalogue ; l'appelant raccroche)
+    assert_eq!(r, Err(Fin::Raccroche));
     assert_eq!(t.matches("C'est plus !").count(), 10, "{t}");
     assert!(t.contains("Score final : 0 points") && t.contains("TABLEAU D'HONNEUR"));
 }

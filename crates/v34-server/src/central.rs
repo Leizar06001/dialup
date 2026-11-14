@@ -142,6 +142,8 @@ pub struct Server {
     facturation: Option<Facturation>,
     /// Ce dossier (répondeur, scores des numéros cachés…)
     donnees: Option<PathBuf>,
+    /// Succès gagnés dans les numéros cachés, à noter dans les carnets
+    exploits: crate::caches::Exploits,
     /// Démarrage (secondes Unix)
     depuis: u64,
     stop: Arc<AtomicBool>,
@@ -218,6 +220,7 @@ impl Server {
             etat: None,
             facturation: None,
             donnees: None,
+            exploits: Default::default(),
             depuis: unix_now(),
             stop: Arc::new(AtomicBool::new(false)),
             stats: Arc::new(Mutex::new(Stats::default())),
@@ -760,6 +763,7 @@ impl Server {
             policy: self.policy.clone(),
             oracle: self.oracle.clone(),
             donnees: self.donnees.clone(),
+            exploits: self.exploits.clone(),
         };
         match services::spawn(modem_call, rx, self.notice_tx.clone()) {
             Ok(h) => {
@@ -851,6 +855,16 @@ impl Server {
     // ───────────────────────── temporisateurs ─────────────────────────
 
     fn housekeeping(&mut self, now: Instant) {
+        // succès gagnés dans les numéros cachés
+        let gagnes: Vec<(String, &'static str)> = std::mem::take(&mut *self.exploits.lock().unwrap_or_else(|e| e.into_inner()));
+        for (nom, id) in gagnes {
+            if self.facturation.as_mut().is_some_and(|f| f.serveur(&nom, id, unix_now())) {
+                info!("{nom} : succès {id}");
+                if let Some(&s) = self.by_name.get(&nom) {
+                    self.send_compte(s);
+                }
+            }
+        }
         // retransmissions et expirations
         let expiry = Duration::from_secs(self.cfg.central.expiration_s as u64);
         let mut lost = Vec::new();

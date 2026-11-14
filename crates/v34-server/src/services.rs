@@ -68,6 +68,8 @@ pub struct ModemCall {
     pub oracle: Arc<Oracle>,
     /// Dossier de données du central (numéros cachés : répondeur, scores)
     pub donnees: Option<std::path::PathBuf>,
+    /// Succès gagnés dans les numéros cachés (abonné, succès), relevés par le central
+    pub exploits: crate::caches::Exploits,
 }
 
 pub fn spawn(call: ModemCall, rx: Receiver<ModemInput>, notify: Sender<ModemNotice>) -> std::io::Result<JoinHandle<()>> {
@@ -176,11 +178,12 @@ fn run(call: ModemCall, rx: Receiver<ModemInput>) -> (HangupReason, String) {
                     let user = call.caller.clone();
                     let service = call.service;
                     let donnees = call.donnees.clone();
+                    let exploits = call.exploits.clone();
                     match std::thread::Builder::new().name(format!("svc-{:08x}", call.call_id)).spawn(move || match service {
                         Service::Fai => tunnel::run(policy, l, &user, tin, tout),
                         Service::Echo => echo(tin, tout),
                         Service::Oracle => oracle::session(orc, &l, &user, tin, tout),
-                        Service::Cache(i) => crate::caches::session(i, &l, &user, donnees.as_deref(), tin, tout),
+                        Service::Cache(i) => crate::caches::session(i, &l, &user, donnees.as_deref(), &exploits, tin, tout),
                     }) {
                         Ok(h) => {
                             tunnel = Some(h);

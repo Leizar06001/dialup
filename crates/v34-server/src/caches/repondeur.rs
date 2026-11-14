@@ -1,6 +1,8 @@
 //! 01 43 33 12 12 : le répondeur de Gérard, abonné parti sans résilier.
 //! On y laisse un message après le bip, et on peut écouter la bande : les
-//! messages des autres abonnés (les 50 derniers, dans `repondeur.json`).
+//! messages des autres abonnés (les 50 derniers, dans `repondeur.json`),
+//! après un vieux message de 1997 que le chef de service n'aurait jamais dû
+//! laisser (le mot de passe du ministère, niveau 2).
 
 use serde::{Deserialize, Serialize};
 
@@ -18,13 +20,18 @@ pub struct Message {
     pub texte: String,
 }
 
+/// Le tout premier message de la bande, jamais effacé.
+pub const MESSAGE_DU_CHEF: &str = "Message 0 · le 03/02/1997 à 9 h 12, du chef : « Gérard, c'est le chef. J'ai encore changé mon mot de passe au ministère : c'est le nom de mon chat, Minouche. Notez-le quelque part, moi je vais l'oublier. »";
+
 fn ecouter(l: &mut Ligne) -> Result<(), Fin> {
     let bande: Vec<Message> = super::lire(l.donnees, FICHIER);
+    let mut t = format!("*rembobinage* {} message{} sur la bande.\n{MESSAGE_DU_CHEF}", bande.len() + 1, if bande.is_empty() { "" } else { "s" });
     if bande.is_empty() {
-        return l.dire("*bzzz* La bande est vierge. Gérard n'a pas d'amis. Pas encore.");
+        t.push_str("\nFin des messages. *bip*");
+        return l.dire(&t);
     }
     let debut = bande.len().saturating_sub(ECOUTES);
-    let mut t = format!("*rembobinage* {} message{} sur la bande. Les plus récents :", bande.len(), if bande.len() > 1 { "s" } else { "" });
+    t.push_str("\nLes plus récents :");
     for (k, m) in bande[debut..].iter().enumerate() {
         let h = v34_net::tarif::paris(m.quand);
         t.push_str(&format!("\nMessage {} · le {:02}/{:02} à {} h {:02}, de {} : {}", debut + k + 1, h.jour, h.mois, h.heure, h.minute, m.de, m.texte));
@@ -34,7 +41,8 @@ fn ecouter(l: &mut Ligne) -> Result<(), Fin> {
 }
 
 pub fn lancer(l: &mut Ligne) -> Result<(), Fin> {
-    let n = super::lire::<Vec<Message>>(l.donnees, FICHIER).len();
+    // (plus le vieux message du chef, toujours là)
+    let n = super::lire::<Vec<Message>>(l.donnees, FICHIER).len() + 1;
     l.dire(&format!(
         "*clic* Bonjour, vous êtes bien chez Gérard. Je ne suis pas là pour le moment : sûrement parti chercher du pain, ou alors je suis sous la douche. Laissez-moi un message après le bip, je vous rappellerai. Peut-être.\n\
          BIIIIIIP\n\

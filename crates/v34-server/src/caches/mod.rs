@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
@@ -19,6 +19,7 @@ use crate::ecran::{Ecran, Entree};
 use crate::{info, warn};
 
 mod an2000;
+mod futur;
 mod horloge;
 mod meteo;
 mod ministere;
@@ -26,6 +27,10 @@ mod prix;
 mod repondeur;
 #[cfg(test)]
 mod tests;
+
+/// Succès gagnés pendant un appel (abonné, succès) : le central les relève
+/// et les note dans les carnets.
+pub type Exploits = Arc<Mutex<Vec<(String, &'static str)>>>;
 
 /// Un numéro caché.
 pub struct NumeroCache {
@@ -43,6 +48,8 @@ pub const LISTE: &[NumeroCache] = &[
     NumeroCache { numero: "0145781998", service: "cache-ministere", nom: "ministère des Postes", lancer: ministere::lancer },
     NumeroCache { numero: "0143331212", service: "cache-repondeur", nom: "répondeur de Gérard", lancer: repondeur::lancer },
     NumeroCache { numero: "0836151998", service: "cache-prix", nom: "le Prix en Francs", lancer: prix::lancer },
+    // révélé par le dossier rouge du ministère
+    NumeroCache { numero: "0836202626", service: "cache-futur", nom: "la ligne de 2026", lancer: futur::lancer },
 ];
 
 pub fn index(numero: &str) -> Option<u8> {
@@ -74,6 +81,7 @@ pub struct Ligne<'a> {
     rx: &'a Receiver<Vec<u8>>,
     pub abonne: &'a str,
     pub donnees: Option<&'a Path>,
+    exploits: Option<&'a Exploits>,
     dernier: Instant,
     /// L'appelant a raccroché : on finit de lire ce qu'il avait tapé
     parti: bool,
@@ -81,7 +89,14 @@ pub struct Ligne<'a> {
 
 impl<'a> Ligne<'a> {
     pub fn new(tx: SyncSender<Vec<u8>>, rx: &'a Receiver<Vec<u8>>, abonne: &'a str, donnees: Option<&'a Path>, debit: u32) -> Ligne<'a> {
-        Ligne { ecran: Ecran::new(tx, debit), entree: Entree::default(), rx, abonne, donnees, dernier: Instant::now(), parti: false }
+        Ligne { ecran: Ecran::new(tx, debit), entree: Entree::default(), rx, abonne, donnees, exploits: None, dernier: Instant::now(), parti: false }
+    }
+
+    /// Un succès gagné pendant l'appel (noté par le central).
+    pub fn succes(&self, id: &'static str) {
+        if let Some(e) = self.exploits {
+            e.lock().unwrap_or_else(|p| p.into_inner()).push((self.abonne.to_string(), id));
+        }
     }
 
     /// Nouvelles lignes à l'écran.
@@ -170,10 +185,11 @@ fn assainir(s: &str) -> String {
 }
 
 /// Un appel à un numéro caché, du CONNECT au raccroché.
-pub fn session(i: u8, label: &str, abonne: &str, donnees: Option<&Path>, from_modem: Receiver<Vec<u8>>, to_modem: SyncSender<Vec<u8>>) -> String {
+pub fn session(i: u8, label: &str, abonne: &str, donnees: Option<&Path>, exploits: &Exploits, from_modem: Receiver<Vec<u8>>, to_modem: SyncSender<Vec<u8>>) -> String {
     let n = &LISTE[i as usize];
     let debut = Instant::now();
     let mut l = Ligne::new(to_modem, &from_modem, abonne, donnees, DEBIT);
+    l.exploits = Some(exploits);
     let fin = match (n.lancer)(&mut l) {
         Ok(()) => "raccroché par le service",
         Err(Fin::Raccroche) => "raccroché par l'appelant",

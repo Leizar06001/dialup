@@ -1,7 +1,9 @@
 //! 08 36 15 19 98 : « Le Prix en Francs », le jeu où l'on devine ce que
 //! coûtaient les choses en 1998. Cinq objets, trois essais chacun (« c'est
 //! plus », « c'est moins »), des points selon la précision ; le tableau
-//! d'honneur garde le meilleur score de chaque abonné (`prix.json`).
+//! d'honneur garde le meilleur score de chaque abonné (`prix.json`). Après
+//! une partie, /catalogue donne tous les prix (de quoi deviner le mot de
+//! passe du directeur du ministère).
 
 use std::collections::BTreeMap;
 
@@ -102,6 +104,18 @@ pub fn lancer(l: &mut Ligne) -> Result<(), Fin> {
     for (i, (n, s)) in tableau.iter().take(5).enumerate() {
         fin.push_str(&format!("\n{}. {n} : {s} points", i + 1));
     }
-    fin.push_str("\nMerci d'avoir joué au Prix en Francs ! *générique* *clic*");
-    l.dire(&fin)
+    fin.push_str("\nMerci d'avoir joué ! Tapez /catalogue pour tous les prix de la saison, ou /fin pour raccrocher.");
+    l.dire(&fin)?;
+    loop {
+        let s = l.attendre()?;
+        if s.to_lowercase().trim_start_matches('/').starts_with("catalogue") {
+            let mut t = String::from("CATALOGUE 1998 DU PRIX EN FRANCS");
+            for (objet, prix) in OBJETS {
+                t.push_str(&format!("\n{objet} : {prix} F"));
+            }
+            l.dire(&t)?;
+        } else {
+            l.dire("Le jeu est fini pour aujourd'hui : /catalogue pour les prix, /fin pour raccrocher.")?;
+        }
+    }
 }

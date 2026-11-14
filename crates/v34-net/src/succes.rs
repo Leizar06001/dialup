@@ -80,6 +80,11 @@ pub const LISTE: &[Succes] = &[
     cache(c("cache-ministere", "Rond-de-cuir", "Trouver le serveur du Ministère des Postes.")),
     cache(c("cache-repondeur", "Après le bip", "Trouver le répondeur de Gérard.")),
     cache(c("cache-prix", "Le Prix en Francs", "Trouver le jeu des prix de 1998.")),
+    cache(c("cache-futur", "Retour vers 1998", "Trouver la ligne qui appelle depuis 2026.")),
+    // Le serveur du ministère : les paliers du piratage
+    cache(c("chef", "Promotion", "Se connecter au ministère comme chef de service.")),
+    cache(c("secret-etat", "Secret d'État", "Lire le dossier rouge du directeur.")),
+    a("wardialer", "Balayeur", "Balayer 50 numéros d'affilée (AT*B)."),
 ];
 
 pub fn trouver(id: &str) -> Option<&'static Succes> {

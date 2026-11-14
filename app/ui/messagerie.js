@@ -516,9 +516,25 @@ function vueChat(v) {
   document.querySelector(".filebar").hidden = v !== "chat";
   $("vue-fax").hidden = v !== "fax";
   document.querySelectorAll("#chat-onglets button").forEach((b) => b.classList.toggle("on", b.dataset.vue === v));
-  if (v === "fax") $("fax-voyant").classList.remove("on");
+  if (v === "fax") {
+    $("fax-voyant").classList.remove("on");
+    // le fax reçu a été vu : la LED FAX de la fenêtre du modem s'éteint
+    if (T && document.hasFocus()) T.event.emit("fax:vu").catch(() => {});
+  }
 }
 document.querySelectorAll("#chat-onglets button").forEach((b) => b.addEventListener("click", () => vueChat(b.dataset.vue)));
+// Le bouton FAX de la fenêtre du modem ouvre la messagerie sur la Télécopie
+// (à l'ouverture : l'onglet noté par la fenêtre du modem ; ensuite : l'événement)
+try {
+  if (localStorage.getItem("messagerie-onglet") === "fax") {
+    localStorage.removeItem("messagerie-onglet");
+    vueChat("fax");
+  }
+} catch (_) { /* stockage indisponible */ }
+listen("messagerie:onglet", (v) => {
+  try { localStorage.removeItem("messagerie-onglet"); } catch (_) { /* rien */ }
+  vueChat(v === "fax" ? "fax" : "chat");
+});
 
 function feuille(f) {
   fax.feuille = f;
@@ -625,6 +641,7 @@ $("fax-effacer").addEventListener("click", () => { faxBlanc(); feuille("envoi");
 $("fax-envoyer").addEventListener("click", () => {
   const numero = $("fax-numero").value.replace(/\D/g, "");
   if (!numero) { faxEtat("Il faut un numéro (celui d'un abonné qui décroche tout seul)."); $("fax-numero").focus(); return; }
+  if (state && state.call_state && state.call_state !== "idle") { faxEtat("Raccroche d'abord : le fax compose lui-même son numéro, sur une ligne libre."); return; }
   const d = fpx.getImageData(0, 0, FAX_L, FAX_H).data;
   const octets = new Uint8Array((FAX_L / 8) * FAX_H);
   let derniere = 0;

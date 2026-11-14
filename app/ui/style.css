@@ -607,6 +607,12 @@ input[type=range]::-moz-range-thumb {
   text-shadow: 0 1px 0 rgba(0,0,0,0.8), 0 -1px 0 rgba(255,255,255,0.08);
 }
 .push .led { width: 10px; height: 10px; }
+/* Fenêtre basse : trois boutons dans le module, un peu plus serrés */
+@media (max-height: 820px) {
+  .keys { padding: 12px 6px 10px; gap: 4px; }
+  .push { gap: 4px; }
+  .push-cap { height: 32px; }
+}
 .led.blink { animation: led-blink 0.9s steps(2, jump-none) infinite; }
 @keyframes led-blink { 50% { opacity: 0.25; } }
 /* Onglet CHAT ↗ de l'annuaire : un message attend dans la messagerie */

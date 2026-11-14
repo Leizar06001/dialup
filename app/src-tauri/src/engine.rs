@@ -371,6 +371,31 @@ pub struct Engine {
     fax_de: Option<String>,
     /// Lignes déjà montrées à l'IHM (page en cours)
     fax_y: usize,
+    /// Balayage de numéros en cours (AT*B)
+    balayage: Option<Balayage>,
+}
+
+/// Balayage de numéros (AT*B) : chaque numéro d'une plage est composé à son
+/// tour, et l'on note qui décroche, comme les « wardialers » d'époque.
+struct Balayage {
+    suivant: u64,
+    fin: u64,
+    chiffres: usize,
+    /// Numéro composé et depuis quand
+    en_cours: Option<(String, Instant)>,
+    /// Pas de nouvel appel avant…
+    pause_jusqua: Instant,
+    composes: u32,
+    porteuses: Vec<String>,
+    occupes: Vec<String>,
+}
+
+/// Plus de numéros par balayage
+const BALAYAGE_MAX: u64 = 100;
+
+/// « 01 23 45 67 89 »
+fn num_lisible(n: &str) -> String {
+    n.as_bytes().chunks(2).map(|c| String::from_utf8_lossy(c).into_owned()).collect::<Vec<_>>().join(" ")
 }
 
 /// Compteur de taxes d'un appel (tarifs : [`v34_net::tarif`]).
@@ -476,6 +501,7 @@ impl Engine {
             fax_fine: true,
             fax_de: None,
             fax_y: 0,
+            balayage: None,
         }
     }
 
@@ -716,6 +742,9 @@ impl Engine {
             self.console("ERROR", "result");
             return;
         }
+        if let Some(arg) = up.strip_prefix("AT*B") {
+            return self.commande_balayage(arg.trim());
+        }
         let body: Vec<char> = up[2..].chars().collect();
         let mut i = 0;
         let mut responded = false;
@@ -764,6 +793,9 @@ impl Engine {
                 }
                 'H' => {
                     if num(&mut i).unwrap_or(0) == 0 {
+                        if self.balayage.take().is_some() {
+                            self.console("BALAYAGE ARRÊTÉ", "result");
+                        }
                         self.hangup();
                     }
                 }
@@ -911,10 +943,27 @@ impl Engine {
                 self.script_kind = ScriptKind::Ringing;
             }
             N::Ringing => self.console("Ça sonne chez votre correspondant…", "info"),
+            N::Answered if self.balayage.as_ref().is_some_and(|b| b.en_cours.is_some()) => {
+                // une porteuse ! on note et on raccroche aussitôt
+                self.ringback = false;
+                self.script.clear();
+                self.hangup();
+                self.balayage_resultat(Some("PORTEUSE !"), 2000);
+            }
             N::Answered => {
                 self.ringback = false;
                 self.script.clear();
                 self.console("Décroché", "info");
+            }
+            N::Busy(_) if self.balayage.as_ref().is_some_and(|b| b.en_cours.is_some()) => {
+                self.ringback = false;
+                self.script.clear();
+                self.balayage_resultat(Some("OCCUPÉ"), 500);
+            }
+            N::Unknown(_) if self.balayage.as_ref().is_some_and(|b| b.en_cours.is_some()) => {
+                self.ringback = false;
+                self.script.clear();
+                self.balayage_resultat(None, 300);
             }
             N::Busy(n) => {
                 // Tonalité d'occupation, puis BUSY (le modem l'a « entendue »)
@@ -927,6 +976,14 @@ impl Engine {
                 self.ringback = false;
                 self.script = ToneScript::unassigned(format!("NO ANSWER — le {n} n'est pas attribué"));
                 self.script_kind = ScriptKind::Dialing;
+            }
+            N::HungUp(reason, r) if self.balayage.as_ref().is_some_and(|b| b.en_cours.is_some()) => {
+                // le central a coupé (accès refusé, réseau encombré…) : ça a répondu quand même
+                self.ringback = false;
+                self.script.clear();
+                self.user_hangup = true;
+                let q = if reason == v34_net::signal::HangupReason::Forbidden { "PORTEUSE (accès refusé)".to_string() } else { format!("coupé ({r})") };
+                self.balayage_resultat(Some(&q), 1000);
             }
             N::HungUp(reason, r) => {
                 use v34_net::signal::HangupReason as H;
@@ -1388,8 +1445,123 @@ impl Engine {
         }
     }
 
+    /// AT*B<début>-<fin> ou AT*B<préfixe>XX : balayer une plage (100 numéros
+    /// au plus) ; AT*B seul l'arrête.
+    fn commande_balayage(&mut self, arg: &str) {
+        if arg.is_empty() || arg == "0" {
+            if self.balayage.take().is_some() {
+                self.console("BALAYAGE ARRÊTÉ", "result");
+            } else {
+                self.console("AT*B<début>-<fin> (ex. AT*B0836202600-0836202699) ou AT*B08362026XX : balaye une plage de 100 numéros au plus.", "resp");
+                self.console("OK", "result");
+            }
+            return;
+        }
+        let (debut, fin) = if let Some((a, b)) = arg.split_once('-') {
+            (a.trim().to_string(), b.trim().to_string())
+        } else if arg.contains('X') {
+            (arg.replace('X', "0"), arg.replace('X', "9"))
+        } else {
+            (arg.to_string(), arg.to_string())
+        };
+        let ok = |s: &str| !s.is_empty() && s.len() <= 20 && s.chars().all(|c| c.is_ascii_digit());
+        let (Ok(a), Ok(b)) = (debut.parse::<u64>(), fin.parse::<u64>()) else {
+            self.console("ERROR — plage illisible (ex. AT*B0836202600-0836202699)", "result");
+            return;
+        };
+        if !ok(&debut) || !ok(&fin) || debut.len() != fin.len() || b < a {
+            self.console("ERROR — plage illisible (ex. AT*B0836202600-0836202699)", "result");
+            return;
+        }
+        if b - a + 1 > BALAYAGE_MAX {
+            self.console(&format!("ERROR — {} numéros au plus par balayage", BALAYAGE_MAX), "result");
+            return;
+        }
+        if !self.link.is_network() || !self.link.net_info().is_some_and(|i| i.registered) {
+            self.console("ERROR — le balayage se fait sur le central (en boucle locale, tous les numéros répondent)", "result");
+            return;
+        }
+        if self.is_busy() {
+            self.console("ERROR — raccroche d'abord", "result");
+            return;
+        }
+        self.console(&format!("BALAYAGE de {} numéro(s) : {} → {}. ATH pour arrêter.", b - a + 1, num_lisible(&debut), num_lisible(&fin)), "result");
+        self.balayage = Some(Balayage {
+            suivant: a,
+            fin: b,
+            chiffres: debut.len(),
+            en_cours: None,
+            pause_jusqua: Instant::now(),
+            composes: 0,
+            porteuses: Vec::new(),
+            occupes: Vec::new(),
+        });
+    }
+
+    /// Résultat du numéro en cours de balayage (`None` : rien du tout).
+    fn balayage_resultat(&mut self, quoi: Option<&str>, pause_ms: u64) {
+        let Some(b) = self.balayage.as_mut() else { return };
+        let Some((n, _)) = b.en_cours.take() else { return };
+        b.pause_jusqua = Instant::now() + Duration::from_millis(pause_ms);
+        match quoi {
+            Some(q) => {
+                if q.starts_with("OCCUPÉ") {
+                    b.occupes.push(n.clone());
+                } else {
+                    b.porteuses.push(n.clone());
+                }
+                self.console(&format!("{} : {q}", num_lisible(&n)), "result");
+            }
+            None => self.console(&format!("{} : —", num_lisible(&n)), "info"),
+        }
+    }
+
+    /// Le balayage avance : numéro suivant, ou bilan.
+    fn suivre_balayage(&mut self) {
+        let Some(b) = self.balayage.as_ref() else { return };
+        if let Some((_, depuis)) = b.en_cours.as_ref() {
+            // ça sonne sans réponse : on n'attend pas plus de 20 s
+            if depuis.elapsed() > Duration::from_secs(20) {
+                self.hangup();
+                self.balayage_resultat(Some("SONNE, personne ne décroche"), 1500);
+            }
+            return;
+        }
+        if Instant::now() < b.pause_jusqua || self.is_busy() {
+            return;
+        }
+        if b.suivant > b.fin {
+            let b = self.balayage.take().expect("balayage");
+            let p: Vec<String> = b.porteuses.iter().map(|n| num_lisible(n)).collect();
+            self.console(
+                &format!(
+                    "BALAYAGE TERMINÉ : {} numéro(s) composé(s), {} porteuse(s){}{}",
+                    b.composes,
+                    p.len(),
+                    if p.is_empty() { String::new() } else { format!(" : {}", p.join(", ")) },
+                    if b.occupes.is_empty() { String::new() } else { format!(", {} occupé(s)", b.occupes.len()) }
+                ),
+                "result",
+            );
+            if b.composes >= 50 {
+                self.exploit("wardialer");
+            }
+            return;
+        }
+        let n = format!("{:0w$}", b.suivant, w = b.chiffres);
+        if let Some(b) = self.balayage.as_mut() {
+            b.suivant += 1;
+            b.composes += 1;
+            b.en_cours = Some((n.clone(), Instant::now()));
+        }
+        if !self.start_outgoing(&n) {
+            self.balayage_resultat(Some("ERREUR"), 1000);
+        }
+    }
+
     fn tick(&mut self) {
         self.update_transfers();
+        self.suivre_balayage();
         self.pump_tunnel();
         self.ppp_step();
         for ev in self.link.poll_net() {

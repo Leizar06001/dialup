@@ -13,6 +13,7 @@ const fmt1 = (v) => (Math.round(v * 10) / 10).toLocaleString("fr-FR");
 const bridge = DEMO ? makeDemoBridge() : {
   invoke: (cmd, args) => TAURI.core.invoke(cmd, args),
   listen: (ev, cb) => TAURI.event.listen(ev, (e) => cb(e.payload)),
+  emit: (ev, payload) => TAURI.event.emit(ev, payload).catch(() => {}),
 };
 const invoke = (cmd, args) => bridge.invoke(cmd, args);
 
@@ -150,10 +151,28 @@ $("btn-messagerie").addEventListener("click", openMessagerie);
 bridge.listen("v34:chat", ({ from }) => {
   if (from === "remote" || from === "salon") messagerie.unread = true;
 });
-// Une télécopie reçue, c'est un message : la LED clignote en rouge
+/* ---------------------------------------------------------------- télécopieur
+   Le bouton FAX ouvre la messagerie sur son onglet Télécopie. Sa LED : verte
+   quand la ligne est libre (un fax ne part que hors appel), qui clignote
+   pendant un fax ; rouge qui clignote quand un fax est arrivé et qu'on ne l'a
+   pas encore regardé ; éteinte pendant un autre appel. */
+const telecopie = { nouveau: false };
+function openFax() {
+  telecopie.nouveau = false;
+  // (la messagerie lit l'onglet voulu à son ouverture, ou par l'événement si elle est déjà là)
+  try { localStorage.setItem("messagerie-onglet", "fax"); } catch (_) { /* stockage indisponible */ }
+  if (bridge.emit) bridge.emit("messagerie:onglet", "fax");
+  invoke("open_browser", { mode: "messagerie" }).catch((e) => crt("Télécopieur : " + e, "info"));
+}
+$("btn-fax").addEventListener("click", openFax);
 bridge.listen("v34:fax", (m) => {
-  if (m.type === "fin" && m.recu) messagerie.unread = true;
+  if (m.type === "fin" && m.recu) telecopie.nouveau = true;
 });
+bridge.listen("fax:vu", () => { telecopie.nouveau = false; });
+function updateFax(s) {
+  const libre = s.call_state === "idle";
+  led("led-fax", telecopie.nouveau ? "led on blink" : s.call_state === "fax" ? "led green on blink" : libre ? "led green on" : "led green");
+}
 // La messagerie a été lue (sa fenêtre a le focus)
 bridge.listen("messagerie:vu", () => { messagerie.unread = false; messagerie.nouvelAppel = false; });
 // Un numéro choisi dans l'annuaire s'affiche aussi dans le terminal
@@ -506,6 +525,7 @@ function onState(s) {
   setText("btn-dial", s.incoming ? "DÉCROCHER" : "APPELER");
   dial.classList.toggle("ringing", !!s.incoming);
   updateNavigateur(s);
+  updateFax(s);
   updateMessagerie(s);
   renderDir(s.net);
 
@@ -845,6 +865,7 @@ const TIPS = {
   cast: ["COMMENTAIRES", "Le modem commente sa propre négociation comme un match à la télé : ANSam, sondage, débit symbole, CONNECT… Les phrases sont tirées au hasard dans des banques écrites à la main, avec les vraies valeurs mesurées. Aucune intelligence artificielle n'a été dérangée."],
   messagerie: ["MESSAGERIE", "Ouvre la messagerie du navigateur : le chat (ou le salon du FAI), l'envoi de fichiers et le visiophone V.Hallucination, avec les contacts du central. Elle ne s'ouvre pas toute seule : quand un appel entre abonnés aboutit, sa LED verte clignote jusqu'à ce que tu l'ouvres, puis reste allumée tant que dure l'appel ; rouge qui clignote : un message t'attend, comme sur un répondeur."],
   nav: ["NAVIGATEUR", "Ouvre Tinyverse Navigator, sur le web 1998 ou moderne : tout son trafic passe par le modem. Appelle d'abord TINYVERSE, en tête de l'ANNUAIRE ; la LED clignote quand Internet est prêt, jusqu'à ce que tu ouvres le navigateur, puis reste allumée."],
+  fax: ["FAX", "Le télécopieur : ouvre la messagerie sur son onglet Télécopie. Écris, dessine ou importe une page, tape un numéro, Envoyer : un vrai fax du groupe 3 (CNG, T.30, V.29, T.4). Le correspondant doit décrocher tout seul (DIP RÉP. AUTO). LED verte : ligne libre, un fax peut partir (pas pendant un autre appel) ; verte qui clignote : fax en cours ; rouge qui clignote : un fax est arrivé."],
   chat: ["CHAT ↗", "Le chat et l'envoi de fichiers ont déménagé dans la MESSAGERIE du navigateur, avec le visiophone : cet onglet l'ouvre. Il clignote quand un message t'y attend."],
   taxe: ["TAXES", "Le compteur de Tinyverse Télécom, en francs de 1998 (jamais facturés) : communication locale 0,74 F les 3 premières minutes, puis 0,28 F la minute (0,14 F en heures creuses : 22 h – 8 h et le week-end) ; 3615 ORACLE 2,23 F la minute ; numéro vert gratuit. Seul l'appelant paie. La facture du mois est dans l'onglet SUCCÈS et sur le site."],
   succes: ["SUCCÈS", "Tes succès d'abonné et ta facture du mois, tenus par le central. Certains sont cachés : à toi de les trouver. L'onglet clignote quand tu en gagnes un."],
