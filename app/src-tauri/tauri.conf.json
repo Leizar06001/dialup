@@ -46,8 +46,12 @@
       "entitlements": "Entitlements.plist"
     },
     "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      },
       "deb": {
-        "depends": ["libasound2"]
+        "depends": ["libasound2"],
+        "recommends": ["gstreamer1.0-plugins-good", "gstreamer1.0-pipewire"]
       }
     }
   }
