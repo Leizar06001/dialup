@@ -106,6 +106,31 @@ fn hote_virtuel_servi_par_le_tunnel() {
     assert_eq!(code, 2, "refusé par les règles");
 }
 
+/// Images « V.Hallucination » : le choix passe par un cookie, à travers le
+/// tunnel comme le reste, et `/h` est filtré comme `/i`.
+#[test]
+fn choix_des_images_a_travers_le_tunnel() {
+    let client = link(TunnelPolicy::default());
+    let get = |path: &str, extra: &str| {
+        let (code, mut s) = socks5(client.local_addr(), HOST, 80);
+        assert_eq!(code, 0);
+        write!(s, "GET {path} HTTP/1.1\r\nHost: web1998\r\n{extra}\r\n").unwrap();
+        let mut resp = Vec::new();
+        s.read_to_end(&mut resp).unwrap();
+        String::from_utf8_lossy(&resp).into_owned()
+    };
+    let r = get("/?images=hallu", "");
+    assert!(r.contains("\r\nSet-Cookie: images=hallu; Path=/; Max-Age=31536000; SameSite=Lax\r\n"), "{r}");
+    assert!(r.contains("Images : <a href=\"/?images=normales\">normales</a> &middot; <b>V.Hallucination</b>"), "{r}");
+    let r = get("/", "Cookie: images=hallu\r\n");
+    assert!(r.contains("<b>V.Hallucination</b>") && r.contains("\r\nVary: Cookie\r\n") && !r.contains("Set-Cookie"), "{r}");
+    assert!(get("/", "").contains("Images : <b>normales</b>"));
+    for u in ["http://192.168.0.1/photo.jpg", "http://127.0.0.1:3434/x.png"] {
+        let r = get(&format!("/h?u={u}"), "Cookie: images=hallu\r\n");
+        assert!(r.starts_with("HTTP/1.0 403"), "{u} : {r}");
+    }
+}
+
 #[test]
 fn hote_virtuel_desactive() {
     let off = Web1998Config { actif: false, ..Web1998Config::default() };

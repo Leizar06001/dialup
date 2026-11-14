@@ -11,7 +11,8 @@
 //!   [`filter`]), et une ligne de test en écho ;
 //! - dans ce tunnel, l'**hôte virtuel `http://web1998/`** ([`web1998`]) :
 //!   le serveur sert lui-même des versions allégées « 1998 » des pages web
-//!   (HTML 3.2, images GIF 256 couleurs), utilisables à 3 Ko/s.
+//!   (HTML 3.2, images GIF 256 couleurs, ou « V.Hallucination » : redessinées
+//!   en quelques dizaines de formes SVG), utilisables à 3 Ko/s.
 //!
 //! La configuration est un fichier TOML ([`config`]) ; [`admin`] gère
 //! l'annuaire depuis la ligne de commande.

@@ -16,7 +16,8 @@
 //!   style, aucune classe, aucun gestionnaire d'événement.
 //!
 //! Liens : `/p?u=<url absolue>` (la page sera simplifiée à son tour),
-//! images : `/i?u=<url>` (converties en GIF), formulaires GET : action
+//! images : `/i?u=<url>` (converties en GIF ; [`with_images`] les envoie
+//! vers `/h` en mode « V.Hallucination »), formulaires GET : action
 //! `/f` avec l'action d'origine en champ caché `u`. Les ancres internes
 //! (`href="#x"` vers `id="x"`) deviennent des `<a name="x">`.
 //!
@@ -24,6 +25,7 @@
 //! du texte, seul celui-ci est rendu : menus, en-têtes et pieds de page du
 //! site sautent, ce qui allège beaucoup.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
@@ -31,6 +33,8 @@ use encoding_rs::{Encoding, UTF_8, WINDOWS_1252};
 use scraper::node::Element;
 use scraper::{ElementRef, Html, Node};
 use url::Url;
+
+use super::ImageMode;
 
 /// Images affichées au plus par page ; au-delà, un simple lien « [image] ».
 pub const MAX_IMAGES: usize = 30;
@@ -141,7 +145,25 @@ pub fn page_link(url: &Url) -> String {
 
 /// Lien vers la version convertie d'une image.
 pub fn image_link(url: &Url) -> String {
-    format!("/i?u={}", encode_param(url.as_str()))
+    image_link_for(url, ImageMode::Normal)
+}
+
+/// Lien vers une image, GIF (`/i`) ou hallucinée (`/h`) selon le mode.
+pub fn image_link_for(url: &Url, mode: ImageMode) -> String {
+    format!("{}?u={}", mode.image_path(), encode_param(url.as_str()))
+}
+
+/// Liens d'images d'un corps simplifié selon le mode : [`simplify`] les
+/// écrit vers `/i`, « V.Hallucination » les veut vers `/h`. Sans ambiguïté :
+/// textes et attributs étant échappés, un `<` en clair n'ouvre que nos
+/// propres balises, donc `<img src="/i?u=` et `<a href="/i?u=` (images en
+/// surnombre) ne peuvent être que nos liens d'images.
+pub fn with_images(body: &str, mode: ImageMode) -> Cow<'_, str> {
+    if mode == ImageMode::Normal {
+        return Cow::Borrowed(body);
+    }
+    let path = mode.image_path();
+    Cow::Owned(body.replace("<img src=\"/i?u=", &format!("<img src=\"{path}?u=")).replace("<a href=\"/i?u=", &format!("<a href=\"{path}?u=")))
 }
 
 /// Échappe un texte pour le contenu HTML.
@@ -907,6 +929,24 @@ mod tests {
         assert_eq!(pick_srcset("a.jpg 100w, b.jpg 400w, c.jpg 1200w"), Some("b.jpg"));
         assert_eq!(pick_srcset("a.jpg 100w, b.jpg 200w"), Some("b.jpg"));
         assert_eq!(pick_srcset("a.jpg 1x, b.jpg 2x"), Some("a.jpg"));
+    }
+
+    #[test]
+    fn liens_d_images_selon_le_mode() {
+        let mut html = String::from("<p>Le code &lt;img src=\"/i?u=piege\"&gt; cité, et <a href=\"/i?u=lien\">un lien</a>.</p>");
+        for i in 0..=MAX_IMAGES {
+            html.push_str(&format!("<img src=\"/i{i}.png\" alt=\"n°{i}\">"));
+        }
+        let s = simplify(&html, &Url::parse("http://a.fr/").unwrap());
+        assert!(matches!(with_images(&s.body, ImageMode::Normal), Cow::Borrowed(_)));
+        let h = with_images(&s.body, ImageMode::Hallucination);
+        assert_eq!(h.matches("<img src=\"/h?u=http://a.fr/i").count(), MAX_IMAGES, "{h}");
+        assert!(h.contains(&format!("<a href=\"/h?u=http://a.fr/i{MAX_IMAGES}.png\">[image : n°{MAX_IMAGES}]</a>")), "image en surnombre : {h}");
+        assert!(!h.contains("/i?u=http://a.fr/i"), "{h}");
+        assert!(h.contains("&lt;img src=\"/i?u=piege\"&gt;"), "texte intact : {h}");
+        assert!(h.contains("<a href=\"/p?u=http://a.fr/i?u=lien\">un lien</a>"), "liens de pages intacts : {h}");
+        assert_eq!(h.len(), s.body.len(), "même poids");
+        assert_eq!(image_link_for(&Url::parse("http://a.fr/x.png").unwrap(), ImageMode::Hallucination), "/h?u=http://a.fr/x.png");
     }
 
     #[test]

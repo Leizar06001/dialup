@@ -6,6 +6,7 @@ use std::fmt::Write as _;
 use url::Url;
 
 use super::html::{escape_attr, escape_text, page_link};
+use super::ImageMode;
 
 const DOCTYPE: &str = "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2 Final//EN\">\n";
 const BODY: &str = "<body bgcolor=\"#c0c0c0\" text=\"#000000\" link=\"#0000ee\" vlink=\"#551a8b\" alink=\"#ff0000\">\n<font face=\"Times New Roman,Times,serif\">\n";
@@ -41,8 +42,27 @@ const SITES: &[(&str, &str, &str)] = &[
     ("Hacker News", "https://news.ycombinator.com/", "les nouvelles de l'informatique (en anglais)"),
 ];
 
-/// Page d'accueil. `visits` : numéro du visiteur.
-pub fn home(visits: u64) -> String {
+/// « Images : normales · V.Hallucination » : le mode en cours en gras, l'autre
+/// en lien (`link` : adresse qui choisit ce mode ; `color` : couleur du lien,
+/// pour le bandeau).
+fn image_choice(s: &mut String, current: ImageMode, link: impl Fn(ImageMode) -> String, color: Option<&str>) {
+    s.push_str("Images : ");
+    for (i, (m, label)) in [(ImageMode::Normal, "normales"), (ImageMode::Hallucination, "V.Hallucination")].into_iter().enumerate() {
+        if i > 0 {
+            s.push_str(" &middot; ");
+        }
+        if m == current {
+            let _ = write!(s, "<b>{label}</b>");
+        } else if let Some(c) = color {
+            let _ = write!(s, "<a href=\"{}\"><font color=\"{c}\">{label}</font></a>", escape_attr(&link(m)));
+        } else {
+            let _ = write!(s, "<a href=\"{}\">{label}</a>", escape_attr(&link(m)));
+        }
+    }
+}
+
+/// Page d'accueil. `visits` : numéro du visiteur ; `mode` : images choisies.
+pub fn home(visits: u64, mode: ImageMode) -> String {
     let mut s = head("Tinyverse 1998 - Bienvenue !");
     s.push_str(
         "<center>\n<h1>Bienvenue sur Tinyverse 1998</h1>\n\
@@ -55,7 +75,13 @@ pub fn home(visits: u64) -> String {
          <input type=\"submit\" value=\"Go !\"></form>\n\
          <form action=\"/f\" method=\"get\"><input type=\"hidden\" name=\"u\" value=\"https://frogfind.com/\">\
          <b>Chercher sur FrogFind :</b> <input type=\"text\" name=\"q\" size=\"30\"> \
-         <input type=\"submit\" value=\"Chercher\"></form>\n\
+         <input type=\"submit\" value=\"Chercher\"></form>\n<p>",
+    );
+    image_choice(&mut s, mode, |m| format!("/?{}={}", ImageMode::COOKIE, m.value()), None);
+    s.push_str(
+        "<br>\n<font size=\"2\"><i>Nouveau ! <b>V.Hallucination</b> : nos serveurs ne vous envoient plus les images, \
+         seulement le souvenir qu'ils en gardent, redessiné de mémoire en une cinquantaine de formes.<br>\
+         Six fois plus léger, presque ressemblant, garanti sans intelligence artificielle.</i></font></p>\n\
          <hr width=\"80%\">\n</center>\n\
          <h3>Sites conseillés par la rédaction</h3>\n<ul>\n",
     );
@@ -76,8 +102,9 @@ pub fn home(visits: u64) -> String {
 }
 
 /// Habillage d'une page allégée : bandeau en haut (poids avant/après,
-/// lien vers l'original), éventuelle remarque, puis le corps simplifié.
-pub fn simplified(title: &str, body: &str, original: &Url, before: usize, notice: Option<&str>) -> String {
+/// lien vers l'original, choix des images), éventuelle remarque, puis le
+/// corps simplifié (liens d'images déjà selon `mode`).
+pub fn simplified(title: &str, body: &str, original: &Url, before: usize, notice: Option<&str>, mode: ImageMode) -> String {
     let title = if title.is_empty() { original.host_str().unwrap_or("Sans titre") } else { title };
     let mut s = head(title);
     let orig = escape_attr(original.as_str());
@@ -86,9 +113,11 @@ pub fn simplified(title: &str, body: &str, original: &Url, before: usize, notice
         s,
         "<b>Tinyverse 1998</b> &mdash; page allégée de {} à @TAILLE@ &mdash; \
          [<a href=\"{orig}\"><font color=\"#ffff00\">voir l'original</font></a>] \
-         [<a href=\"/\"><font color=\"#ffff00\">accueil</font></a>]",
+         [<a href=\"/\"><font color=\"#ffff00\">accueil</font></a>] &mdash; ",
         size(before)
     );
+    let here = page_link(original);
+    image_choice(&mut s, mode, |m| format!("{here}&{}={}", ImageMode::COOKIE, m.value()), Some("#ffff00"));
     s.push_str("</font></td></tr></table>\n");
     if let Some(n) = notice {
         s.push_str("<p><font size=\"2\" color=\"#800000\"><i>");
@@ -98,8 +127,17 @@ pub fn simplified(title: &str, body: &str, original: &Url, before: usize, notice
     s.push_str(body);
     s.push('\n');
     s.push_str(END);
-    // poids final (le bandeau compris, à quelques octets près)
-    let after = size(s.len() - "@TAILLE@".len() + 6);
+    // poids final, bandeau compris : la taille écrite compte aussi (point
+    // fixe atteint en un ou deux tours)
+    let rest = s.len() - "@TAILLE@".len();
+    let mut after = size(rest + 6);
+    for _ in 0..3 {
+        let next = size(rest + after.len());
+        if next == after {
+            break;
+        }
+        after = next;
+    }
     s.replacen("@TAILLE@", &after, 1)
 }
 
@@ -145,8 +183,12 @@ mod tests {
 
     #[test]
     fn accueil_et_bandeau() {
-        let h = home(42);
+        let h = home(42, ImageMode::Normal);
         assert!(h.starts_with("<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2 Final//EN\">"));
+        assert!(h.contains("Images : <b>normales</b> &middot; <a href=\"/?images=hallu\">V.Hallucination</a>"), "{h}");
+        let hh = home(42, ImageMode::Hallucination);
+        assert!(hh.contains("Images : <a href=\"/?images=normales\">normales</a> &middot; <b>V.Hallucination</b>"), "{hh}");
+        assert_eq!(hh.matches("<img ").count(), 2, "pas d'image de plus sur l'accueil");
         assert!(h.contains("bgcolor=\"#c0c0c0\"") && h.contains("Times"));
         assert!(h.contains("/compteur.gif?n=000042") && h.contains("/construction.gif"));
         assert!(h.contains("<form action=\"/p\" method=\"get\"><b>Aller à :</b> <input type=\"text\" name=\"u\""));
@@ -154,12 +196,24 @@ mod tests {
             assert!(h.contains(site), "{site}");
         }
         let u = Url::parse("https://a.fr/x?y=1&z=2").unwrap();
-        let p = simplified("Titre <x>", "<p>corps</p>", &u, 524_288, Some("page tronquée"));
+        let p = simplified("Titre <x>", "<p>corps</p>", &u, 524_288, Some("page tronquée"), ImageMode::Normal);
         assert!(p.contains("<title>Titre &lt;x&gt;</title>"));
         assert!(p.contains("page allégée de 512 Ko à "), "{p}");
         assert!(!p.contains("@TAILLE@"));
         assert!(p.contains("<a href=\"https://a.fr/x?y=1&amp;z=2\"><font color=\"#ffff00\">voir l'original</font></a>"));
         assert!(p.contains("page tronquée") && p.contains("<p>corps</p>"));
+        assert!(
+            p.contains("Images : <b>normales</b> &middot; <a href=\"/p?u=https://a.fr/x?y=1%26z=2&amp;images=hallu\"><font color=\"#ffff00\">V.Hallucination</font></a>"),
+            "{p}"
+        );
+        let h = simplified("Titre", "<p>corps</p>", &u, 524_288, None, ImageMode::Hallucination);
+        assert!(h.contains("<a href=\"/p?u=https://a.fr/x?y=1%26z=2&amp;images=normales\"><font color=\"#ffff00\">normales</font></a> &middot; <b>V.Hallucination</b>"), "{h}");
+        // poids annoncé : celui de la page envoyée (à quelques octets près)
+        for page in [&p, &h] {
+            let at = page.find("page allégée de 512 Ko à ").unwrap() + "page allégée de 512 Ko à ".len();
+            let announced = &page[at..at + page[at..].find(" &mdash;").unwrap()];
+            assert_eq!(announced, size(page.len()), "{page}");
+        }
         let e = error(404, "Fichier introuvable", "L'URL demandée n'a pas été trouvée.", Some(&u), Some(("Essayer", "/p?u=x")));
         assert!(e.contains("<h1>Fichier introuvable</h1>") && e.contains("erreur 404"));
         assert!(e.contains("<p><a href=\"/p?u=x\">Essayer</a></p>"));

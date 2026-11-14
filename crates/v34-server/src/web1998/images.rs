@@ -19,7 +19,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 
 use color_quant::NeuQuant;
-use image::{imageops, ImageFormat, ImageReader, Limits, RgbaImage};
+use image::{imageops, DynamicImage, ImageFormat, ImageReader, Limits, RgbaImage};
 
 /// Réglages de conversion.
 #[derive(Clone, Copy, Debug)]
@@ -62,13 +62,7 @@ pub fn to_gif(data: &[u8], opts: &GifOptions) -> Result<Vec<u8>, String> {
             return Ok(data.to_vec());
         }
     }
-    let mut reader = reader;
-    let mut limits = Limits::default();
-    limits.max_image_width = Some(12_000);
-    limits.max_image_height = Some(12_000);
-    limits.max_alloc = Some(256 * 1024 * 1024);
-    reader.limits(limits);
-    let img = reader.decode().map_err(|e| format!("image illisible : {e}"))?.to_rgba8();
+    let img = decode_reader(reader)?.to_rgba8();
     let (w, h) = fit(img.dimensions(), opts.max_width, opts.max_height);
     let base = if (w, h) == img.dimensions() { img } else { imageops::thumbnail(&img, w, h) };
 
@@ -106,8 +100,24 @@ pub fn to_gif(data: &[u8], opts: &GifOptions) -> Result<Vec<u8>, String> {
     best.ok_or_else(|| "conversion impossible".into())
 }
 
+/// Décode une image (PNG, JPEG, GIF, WebP, BMP ; dimensions et mémoire bornées).
+pub(crate) fn decode(data: &[u8]) -> Result<DynamicImage, String> {
+    let reader = ImageReader::new(Cursor::new(data)).with_guessed_format().map_err(|e| e.to_string())?;
+    reader.format().ok_or("format d'image inconnu")?;
+    decode_reader(reader)
+}
+
+fn decode_reader(mut reader: ImageReader<Cursor<&[u8]>>) -> Result<DynamicImage, String> {
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(12_000);
+    limits.max_image_height = Some(12_000);
+    limits.max_alloc = Some(256 * 1024 * 1024);
+    reader.limits(limits);
+    reader.decode().map_err(|e| format!("image illisible : {e}"))
+}
+
 /// Dimensions réduites (proportions gardées) pour tenir dans max_w × max_h.
-fn fit((w, h): (u32, u32), max_w: u32, max_h: u32) -> (u32, u32) {
+pub(crate) fn fit((w, h): (u32, u32), max_w: u32, max_h: u32) -> (u32, u32) {
     if w <= max_w && h <= max_h {
         return (w.max(1), h.max(1));
     }
