@@ -363,3 +363,26 @@ fn acces_fai_des_comptes_du_site() {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+/// Le central publie son état chaque seconde (page « État du réseau » du site).
+#[test]
+fn etat_publie_pour_le_site() {
+    let dir = std::env::temp_dir().join(format!("v34-etat-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("etat.json");
+    set_level(Level::Error);
+    let h = PasswordHash::new(A.1, 1000);
+    let toml = format!("[serveur]\necoute = \"127.0.0.1:0\"\n[[abonnes]]\nnom = \"{}\"\nnumero = \"{}\"\nmot_de_passe_hash = \"{h}\"\n", A.0, A.2);
+    let server = Server::bind(Config::from_toml(&toml).unwrap()).unwrap().with_status_file(path.clone()).spawn().unwrap();
+    let _a = registered(&server, A);
+    std::thread::sleep(Duration::from_millis(1300));
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(v["abonnes"], 1);
+    assert_eq!(v["connectes"], 1);
+    assert_eq!(v["appels"], 0);
+    assert_eq!(v["modems"]["max"], 4);
+    assert_eq!(v["salon"], 0);
+    assert!(v["maj"].as_u64().unwrap() >= v["depuis"].as_u64().unwrap());
+    drop(server);
+    let _ = std::fs::remove_dir_all(dir);
+}

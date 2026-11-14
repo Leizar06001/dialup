@@ -170,6 +170,10 @@ fn run(path: PathBuf) -> ExitCode {
         info!("comptes du site d'inscription : {}", f.display());
         server = server.with_comptes_file(f);
     }
+    if let Some(e) = cfg.serveur.etat_path() {
+        info!("état publié pour le site dans {}", e.display());
+        server = server.with_status_file(e);
+    }
     info!(
         "v34-server {} à l'écoute sur UDP {} — {} abonné(s), numéros spéciaux : {}",
         env!("CARGO_PKG_VERSION"),

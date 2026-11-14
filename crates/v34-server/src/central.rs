@@ -126,6 +126,10 @@ pub struct Server {
     watch: Option<ConfigWatch>,
     /// Comptes créés par le site d'inscription (ajoutés à l'annuaire)
     comptes: Option<ComptesSource>,
+    /// Fichier d'état pour le site (« État du réseau »), réécrit chaque seconde
+    etat: Option<(PathBuf, Instant)>,
+    /// Démarrage (secondes Unix)
+    depuis: u64,
     stop: Arc<AtomicBool>,
     stats: Arc<Mutex<Stats>>,
     counters: Stats,
@@ -189,6 +193,8 @@ impl Server {
             modem_threads: Vec::new(),
             watch: None,
             comptes: None,
+            etat: None,
+            depuis: unix_now(),
             stop: Arc::new(AtomicBool::new(false)),
             stats: Arc::new(Mutex::new(Stats::default())),
             counters: Stats::default(),
@@ -217,6 +223,13 @@ impl Server {
     pub fn with_comptes_file(mut self, path: PathBuf) -> Server {
         self.comptes = Some(ComptesSource::Fichier { path, modified: None, next_check: Instant::now(), liste: Vec::new() });
         self.check_comptes(Instant::now());
+        self
+    }
+
+    /// Publie l'état du central dans ce fichier JSON (chaque seconde) :
+    /// la page « État du réseau » du site le lit.
+    pub fn with_status_file(mut self, path: PathBuf) -> Server {
+        self.etat = Some((path, Instant::now()));
         self
     }
 
@@ -805,6 +818,7 @@ impl Server {
         self.penalties.retain(|_, p| p.score - now.duration_since(p.last).as_secs_f64() * decay > 0.0);
         self.check_reload(now);
         self.check_comptes(now);
+        self.write_status(now);
         // statistiques
         self.counters.registrations = self.regs.len();
         self.counters.calls = self.calls.len();
@@ -885,6 +899,36 @@ impl Server {
         }
         self.annuaire = annuaire;
         info!("annuaire rechargé : {} abonné(s)", self.annuaire.len());
+    }
+}
+
+impl Server {
+    fn write_status(&mut self, now: Instant) {
+        let Some((path, next)) = self.etat.as_mut() else { return };
+        if now < *next {
+            return;
+        }
+        *next = now + Duration::from_secs(1);
+        let path = path.clone();
+        let etat = serde_json::json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "depuis": self.depuis,
+            "maj": unix_now(),
+            "abonnes": self.annuaire.len(),
+            "connectes": self.regs.len(),
+            "appels": self.calls.len(),
+            "modems": { "occupes": self.modem_calls(), "max": self.cfg.modems.appels_max },
+            "salon": self.policy.salon.as_ref().map_or(0, |s| s.present().len()),
+        });
+        let tmp = path.with_extension("json.tmp");
+        let res = std::fs::write(&tmp, etat.to_string()).and_then(|()| std::fs::rename(&tmp, &path));
+        if let Err(e) = res {
+            // une fois par minute au plus dans le journal
+            if let Some((_, next)) = self.etat.as_mut() {
+                *next = now + Duration::from_secs(60);
+            }
+            warn!("état du central non publié dans {} : {e}", path.display());
+        }
     }
 }
 

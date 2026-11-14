@@ -57,11 +57,29 @@ pub struct Serveur {
     /// Fichier des comptes créés par le site d'inscription (`v34-portail`),
     /// ajoutés à l'annuaire et relus quand il change ; vide = aucun
     pub comptes: String,
+    /// État du central (JSON, réécrit chaque seconde) pour la page « État
+    /// du réseau » du site ; vide = `etat.json` à côté des comptes (s'il y
+    /// en a), « non » = jamais
+    pub etat: String,
+}
+
+impl Serveur {
+    /// Chemin du fichier d'état, s'il faut en écrire un.
+    pub fn etat_path(&self) -> Option<std::path::PathBuf> {
+        match self.etat.trim() {
+            "non" => None,
+            "" => {
+                let c = self.comptes.trim();
+                (!c.is_empty()).then(|| Path::new(c).with_file_name("etat.json"))
+            }
+            p => Some(p.into()),
+        }
+    }
 }
 
 impl Default for Serveur {
     fn default() -> Self {
-        Self { ecoute: "0.0.0.0:3434".into(), journal: "info".into(), comptes: String::new() }
+        Self { ecoute: "0.0.0.0:3434".into(), journal: "info".into(), comptes: String::new(), etat: String::new() }
     }
 }
 

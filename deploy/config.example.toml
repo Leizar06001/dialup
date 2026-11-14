@@ -20,6 +20,9 @@ journal = "info"
 # Les abonnés déclarés ici gardent la priorité ; ceux du site n'ont accès
 # au FAI que si l'administrateur l'accorde.
 #comptes = "/var/lib/v34-server/comptes.toml"
+# État du central pour la page « État du réseau » du site (JSON réécrit chaque
+# seconde). Vide : etat.json à côté des comptes ; "non" : jamais.
+#etat = ""
 
 [central]
 # Intervalle des keepalive annoncé aux clients (s) : maintient le NAT ouvert.
