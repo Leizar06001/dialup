@@ -774,6 +774,8 @@ const TIPS = {
   dip1: ["DIP 1 · 56K V.90", "ON : le modem propose le V.90 pendant la négociation V.8 et peut recevoir jusqu'à 56 000 bit/s d'un FAI raccordé en numérique (l'émission reste en V.34). OFF : V.34 seul, 33 600 bit/s au mieux."],
   dipres: ["DIP 2 à 8 · Réservé", "Réservé usine — ne pas modifier. Réglés en usine et sans effet sur ce modèle ; le technicien qui savait à quoi ils servaient est parti avec le mode d'emploi."],
   debit: ["DÉBIT MAX", "Plafond du débit négocié, pour imiter un modem plus ancien ou brider la ligne. Le V.34 s'arrête à 33 600 bit/s ; au-dessus, seul le 56K (V.90) monte, par paliers de 2 667 bit/s, et il ne descend pas sous 28 000. Molette de la souris, ▲ ▼ ou flèches du clavier."],
+  cast: ["COMMENTAIRES", "Le modem commente sa propre négociation comme un match à la télé : ANSam, sondage, débit symbole, CONNECT… Les phrases sont tirées au hasard dans des banques écrites à la main, avec les vraies valeurs mesurées. Aucune intelligence artificielle n'a été dérangée."],
+  karaoke: ["♪ KARAOKÉ", "Les paroles de la chanson du modem, en direct : à gauche ce que notre modem émet, à droite ce qu'on entend de l'autre bout. La boule rebondit sur la syllabe en cours. Au ralenti (TEMPS ×0,1), on arrive presque à chanter juste."],
 };
 const tip = document.createElement("div");
 tip.id = "tip";
@@ -786,6 +788,11 @@ function tipLive(key) {
   // Panneau CONFIG : la ligne en direct suit les réglages, pas l'état du modem.
   if (key === "cfg" || key === "debit") return cfgSummary();
   if (key === "dipres") return "○ OFF, scellé";
+  if (key === "cast") return cast.actif() ? "● micro ouvert" : "○ micro coupé : la régie a débranché le commentateur";
+  if (key === "karaoke") {
+    const s = state && state.status;
+    return s ? `TX ▸ ${s.tx_signal || "—"} · RX ◂ ${s.rx_signal || "—"}` : "";
+  }
   if (key === "dip1") {
     if (!cfg.v90) return "○ OFF — V.34 seul";
     return cfg.eff && !cfg.eff.v90 ? `● ON, mais débit max sous ${kbit(28000)} : 56K coupé` : "● ON — 56K proposé au prochain appel";
@@ -1019,6 +1026,8 @@ buildSliders();
 // Réglages du panneau CONFIG d'abord : avant toute connexion ou numérotation.
 cfgRender();
 cfgSend();
+// Le modem commentateur (commentateur.js) : bandeau EN DIRECT + karaoké
+const cast = typeof Commentateur !== "undefined" ? Commentateur.monter({ bridge, store }) : { actif: () => false };
 loadPresets().catch((e) => crt("Préréglages indisponibles : " + e, "ev warn"));
 invoke("app_info").then((info) => {
   crt(`V34 TINYVERSE v${info.version} — ${DEMO ? "MODE DÉMO (hors Tauri)" : "prêt"}`, "info");
@@ -1052,13 +1061,22 @@ function makeDemoBridge() {
   const timeline = [
     [0, "dialing", "Idle", "Tonalité · DTMF"], [3.2, "connecting", "Phase1", "ANSam"], [5.5, "connecting", "Phase1", "CM"],
     [7, "connecting", "Phase2", "INFO0c"], [8, "connecting", "Phase2", "L1/L2"], [10, "connecting", "Phase3", "PP · TRN"],
-    [12, "connecting", "Phase4", "MP"], [13.5, "online", "Data", "données"],
+    [12, "connecting", "Phase4", "MP"], [13.5, "online", "Data", "B1 / données"],
   ];
+  let prev = null; // étape précédente : événements pour le commentateur
   setInterval(() => {
     const el = t0 ? (performance.now() - t0) / 1000 : 0;
     let cur = [0, "idle", "Idle", ""];
     if (t0) for (const step of timeline) if (el >= step[0]) cur = step;
     const [, call, phase, sig] = cur;
+    if (cur !== prev) {
+      const ev = (type, data) => emit("v34:event", { side: "local", event: { type, data } });
+      if (!prev || prev[2] !== phase) ev("PhaseChanged", phase);
+      if (sig === "ANSam") ev("Log", { level: "Info", msg: "ANSam détecté (démo)" });
+      else if (sig) ev("TxSignal", sig);
+      if (phase === "Data") ev("Connected", { tx_rate: 33600, rx_rate: 33600 });
+      prev = cur;
+    }
     const online = phase === "Data";
     const spectrum = Array.from({ length: 128 }, (_, i) => {
       const f = i * 31.25;
@@ -1101,7 +1119,7 @@ function makeDemoBridge() {
     invoke: (cmd, args) => {
       if (cmd === "at_command") {
         const l = args.line.toUpperCase();
-        if (l.startsWith("ATD")) { t0 = performance.now(); setTimeout(() => emit("v34:console", { text: "CONNECT 33600/V34", kind: "result" }), 13500); }
+        if (l.startsWith("ATD")) { t0 = performance.now(); emit("v34:console", { text: `Numérotation ${l.slice(4)}…`, kind: "info" }); setTimeout(() => emit("v34:console", { text: "CONNECT 33600/V34", kind: "result" }), 13500); }
         else if (l.startsWith("ATH")) { t0 = null; emit("v34:console", { text: "OK", kind: "result" }); }
         else emit("v34:console", { text: "OK", kind: "result" });
       }

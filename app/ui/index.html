@@ -68,6 +68,10 @@
             <i class="cfg-icon" aria-hidden="true"><i></i><i></i><i></i><i></i></i>
             <span>CONFIG</span>
           </button>
+          <button class="key cast-key on" id="btn-cast" data-tip="cast" aria-pressed="true" aria-label="Commentaires en direct de la négociation">
+            <i class="cast-led" aria-hidden="true"></i>
+            <span>COMMENTAIRES</span>
+          </button>
         </div>
       </div>
 
@@ -82,6 +86,18 @@
         <div class="arrow">▸</div>
         <div class="ph" data-phase="Data"><b>DATA</b><small>kshhhh…</small></div>
         <div class="call-pill" id="call-pill">REPOS</div>
+      </div>
+
+      <!-- Le modem commentateur : tableau d'affichage à LEDs + piste karaoké -->
+      <div class="cast" id="cast">
+        <div class="cast-tag"><i class="cast-dot" aria-hidden="true"></i>EN DIRECT</div>
+        <div class="cast-lignes" aria-live="polite" aria-label="Commentaire en direct"><div class="cast-pile" id="cast-pile"></div></div>
+        <div class="cast-tag kara-tag">♪ KARAOKÉ</div>
+        <div class="kara" id="kara" data-tip="karaoke">
+          <span class="kara-voix nous repos" id="kara-nous"><em>NOUS ▸</em><b><span class="kara-txt">…</span></b></span>
+          <span class="kara-voix eux repos" id="kara-eux"><em id="kara-eux-nom">◂ EUX</em><b><span class="kara-txt">…</span></b></span>
+          <span class="kara-msg" id="kara-msg" hidden></span>
+        </div>
       </div>
 
       <div class="instruments">
@@ -297,6 +313,7 @@
     </div>
   </div>
 
+  <script src="commentateur.js"></script>
   <script src="app.js"></script>
   <script src="aide.js"></script>
 </body>

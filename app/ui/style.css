@@ -813,3 +813,125 @@ button.dip-col:focus-visible .dip-slot { outline: 2px solid var(--vfd); outline-
   font-family: var(--screen-font); font-size: 18px; color: var(--vfd); text-shadow: 0 0 5px rgba(103,247,228,0.5);
 }
 .cfg-note { margin: 0; font-family: var(--screen-font); font-size: 17px; color: var(--amber); text-shadow: 0 0 5px rgba(255,179,71,0.5); }
+
+/* ------------------------------------------------------------------ le modem commentateur
+   Tableau d'affichage à LEDs (matrice de points) sous la frise des phases :
+   trois lignes de commentaire qui montent comme au stade, puis la piste
+   karaoké, une ligne à deux voix (ce que nous émettons, ce que nous entendons). */
+.key.cast-key { flex-direction: column; gap: 4px; padding: 5px 8px 4px; font-size: 9px; letter-spacing: 1px; }
+.cast-led { width: 8px; height: 8px; border-radius: 50%; background: #4a1a14; box-shadow: inset 0 1px 2px rgba(0,0,0,0.7); }
+.key.cast-key.on .cast-led {
+  background: radial-gradient(circle at 35% 30%, #fff1ec, #ff6d5f 35%, var(--led-red) 70%);
+  box-shadow: 0 0 6px 1px rgba(255,59,47,0.8);
+}
+
+.cast {
+  --cast-lh: 21px;
+  --cast-led: #ffc94d;
+  --cast-dim: #7a5a26;
+  position: relative;
+  flex: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 14px; row-gap: 3px;
+  padding: 6px 14px 4px 10px;
+  border-radius: 6px;
+  border: 2px solid #0a0908;
+  background: radial-gradient(ellipse at 50% 0%, #1b1207 0%, #0a0704 70%);
+  box-shadow: inset 0 0 20px rgba(0,0,0,0.9), 0 1px 0 rgba(255,255,255,0.06);
+  font-family: var(--screen-font);
+  overflow: hidden;
+}
+.cast::after {
+  /* la matrice de LEDs */
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(circle, transparent 0.7px, rgba(0,0,0,0.4) 1.2px) 0 0 / 3px 3px;
+}
+.cast-tag {
+  align-self: start; padding-top: 3px;
+  font-size: 14px; line-height: 1; letter-spacing: 1px;
+  color: var(--cast-dim); white-space: nowrap;
+}
+.cast-dot { display: inline-block; width: 8px; height: 8px; margin: 0 6px 2px 0; border-radius: 50%; background: #3b1411; vertical-align: middle; }
+.cast.direct .cast-tag:first-child { color: #ff6d5f; text-shadow: 0 0 5px rgba(255,59,47,0.6); }
+.cast.direct .cast-dot { background: var(--led-red); box-shadow: 0 0 6px 1px rgba(255,59,47,0.8); animation: cast-clign 1.2s steps(1) infinite; }
+@keyframes cast-clign { 50% { opacity: 0.15; } }
+
+.cast-lignes {
+  height: calc(var(--cast-lh) * 3);
+  overflow: hidden;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  font-size: 19px; line-height: var(--cast-lh);
+}
+.cast-pile { display: flex; flex-direction: column; }
+.cast-pile.monte { animation: cast-monte 260ms ease-out; }
+@keyframes cast-monte { from { transform: translateY(var(--cast-lh)); } }
+.cl { display: flex; gap: 10px; color: var(--cast-led); text-shadow: 0 0 6px rgba(255,201,77,0.5); }
+.cl time { flex: none; color: #ff5a3c; text-shadow: 0 0 5px rgba(255,90,60,0.6); }
+.cl span { min-width: 0; }
+.cl:nth-last-child(2) { opacity: 0.6; }
+.cl:nth-last-child(n+3) { opacity: 0.32; }
+/* La nouvelle ligne s'écrit de gauche à droite, comme un afficheur qui défile */
+.cl.neuf span { animation: cl-tape 700ms steps(28, end) both; }
+@keyframes cl-tape { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+.cl.fort span { color: #fff3c4; text-shadow: 0 0 8px rgba(255,220,120,0.95); }
+.cl.fort.neuf span { animation: cl-tape 450ms steps(18, end) both, cl-flash 360ms steps(1) 450ms 3; }
+@keyframes cl-flash { 50% { opacity: 0.25; } }
+.cl.fin span { color: #ff6b57; text-shadow: 0 0 8px rgba(255,59,47,0.8); }
+
+.kara-tag { padding-top: 10px; }
+.kara {
+  position: relative;
+  display: flex; align-items: baseline; gap: 34px; min-width: 0;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(255,201,77,0.16);
+  font-size: 22px; line-height: 28px;
+  white-space: nowrap; overflow: hidden;
+  cursor: help;
+}
+.kara-voix { display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; }
+.kara-voix em { flex: none; font-style: normal; font-size: 15px; letter-spacing: 1px; color: var(--cast-dim); }
+.kara-voix b { position: relative; display: inline-block; font-weight: 400; }
+/* Balayage : la partie « chantée » s'allume de gauche à droite */
+.kara-txt {
+  --chante: #67f7e4;
+  background: linear-gradient(90deg, var(--chante) 0 50%, #5b5040 50% 100%) 100% 0 / 200% 100% no-repeat;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  filter: drop-shadow(0 0 4px rgba(103,247,228,0.4));
+  animation: kara-balaye 1.6s linear infinite;
+}
+.eux .kara-txt { --chante: #ff9f45; filter: drop-shadow(0 0 4px rgba(255,159,69,0.4)); }
+@keyframes kara-balaye { from { background-position: 100% 0; } to { background-position: 0 0; } }
+/* La boule qui rebondit au-dessus des syllabes */
+.balle { position: absolute; left: 0; right: 0; top: -1px; height: 6px; pointer-events: none; animation: kara-avance 1.6s linear infinite; }
+.balle i {
+  position: absolute; left: -3px; top: 0; width: 6px; height: 6px; border-radius: 50%;
+  background: #ff5a3c; box-shadow: 0 0 6px 1px rgba(255,90,60,0.8);
+  animation: kara-rebond 200ms ease-in-out infinite alternate;
+}
+@keyframes kara-avance { from { transform: translateX(0); } to { transform: translateX(100%); } }
+@keyframes kara-rebond { from { transform: translateY(0); } to { transform: translateY(-4px); } }
+/* Numérotation, tonalités : le balayage suit l'horloge (--k de 0 à 1) */
+.temps .kara-txt { animation: none; background-position: calc((1 - var(--k, 0)) * 100%) 0; }
+.temps .balle { animation: none; transform: translateX(calc(var(--k, 0) * 100%)); }
+/* Silence sur la ligne */
+.repos .kara-txt { animation: none; background: none; filter: none; -webkit-text-fill-color: #4a4032; color: #4a4032; }
+.repos .balle { display: none; }
+.kara.msg .kara-voix { display: none; }
+.kara-msg { color: var(--cast-dim); font-size: 19px; }
+
+/* Grand écran : le bandeau occupe toute la largeur, entre la frise et les instruments */
+@media (min-width: 1400px) and (min-height: 840px) {
+  .modem { grid-template-rows: auto auto minmax(0, 1fr); }
+  .modem .cast { grid-column: 1 / -1; grid-row: 2; }
+  .modem .instruments { grid-row: 3; }
+  .modem.cast-off { grid-template-rows: auto minmax(0, 1fr); }
+  .modem.cast-off .instruments { grid-row: 2; }
+  .cast { --cast-lh: 22px; }
+  .cast-lignes { font-size: 20px; }
+}
+@media (max-height: 760px) {
+  .cast-lignes { height: calc(var(--cast-lh) * 2); }
+  .kara { font-size: 19px; line-height: 26px; }
+}
