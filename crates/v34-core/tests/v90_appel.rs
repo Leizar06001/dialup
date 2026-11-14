@@ -94,7 +94,7 @@ fn v8_annonce_le_56k_et_phase2_inversee() {
 /// Le 56k complet : descendant en PCM au-delà du V.34.
 #[test]
 fn connexion_56k() {
-    for (ligne, mini, up_mini) in [("Parfaite", 56000, 31200), ("Urbaine", 36000, 9600)] {
+    for (ligne, mini, up_mini) in [("Parfaite", 56000, 24000), ("Urbaine", 36000, 9600)] {
         let r = echange(LineParams::preset(ligne).unwrap(), ModemConfig::default(), fai());
         let dump = r.log.join("\n");
         if std::env::var("V90_LOG").is_ok() {

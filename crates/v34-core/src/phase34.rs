@@ -962,9 +962,15 @@ impl P34 {
         if let Some(v) = &self.v90 {
             if let Some(i) = v.trn1d_index() {
                 // V.90, modem numérique : l'écho de notre PCM (hybride du
-                // central) s'apprend sur TRN1d, l'abonné s'étant tu ; on
-                // attend 100 ms qu'il ait cessé Ja.
-                return match i.checked_sub(800).map(|j| j / 8) {
+                // central) s'apprend sur TRN1d et le premier Jd, quand
+                // l'abonné se tait sûrement : il a cessé Ja (un aller-retour
+                // + 100 ms après le début de TRN1d) et ne peut pas encore
+                // répondre au Jd (un aller-retour après sa fin).
+                let fin = self.ec_wait as usize + crate::v90::pcmtx::TRN1D_LEN + crate::v90::seq::Jd::LEN - 100 * 8;
+                if i >= fin {
+                    return 0.0;
+                }
+                return match i.checked_sub(self.ec_wait as usize).map(|j| j / 8) {
                     None => 0.0,
                     Some(0..=99) => 1.0,
                     Some(100..=199) => 0.5,
@@ -1305,6 +1311,15 @@ impl Modem {
         }
         if let Some(link) = self.saved_link.take() {
             p.link = link;
+        }
+        // Liaison 56k : les deux bouts sont récents, on peut élargir la
+        // couche de correction d'erreurs pour encaisser l'aller-retour du
+        // réseau (trames de 256 octets, fenêtre de 31, T401 d'une seconde).
+        p.link.set_n401(256);
+        p.link.set_window(31);
+        p.link.set_t401_bits(if answer { 33600 } else { 56000 });
+        if !answer {
+            p.ec_wait = self.rtd.unwrap_or(0) + 100 * MS;
         }
         self.retrain_det = Some(crate::dsp::tone::ToneDetector::new(if answer { 1200.0 } else { 2400.0 }, 160));
         self.retrain_on = 0;

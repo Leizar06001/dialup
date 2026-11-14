@@ -25,22 +25,25 @@ pub(crate) const UINFO: u8 = 96;
 /// Silence d'une séquence de l'autre au-delà duquel on abandonne (ms).
 const STALL_MS: u64 = 9000;
 
-/// Le DIL que l'abonné demande. Signes pseudo-aléatoires sur 13 symboles
-/// (pas de période 6 : le détecteur de Ri ne s'y trompe pas).
-/// - express : 31 segments de 96 symboles, un Ucode d'apprentissage par
-///   segment (de 4 à 124) — 0,4 s ;
+/// Le DIL que l'abonné demande : un Ucode d'apprentissage par segment, du
+/// plus faible au plus fort.
+/// - express : 31 segments de 96 symboles (Ucodes 4 à 124) — 0,4 s ;
 /// - d'époque : 64 segments (un Ucode sur deux), plus longs pour les petits
-///   niveaux (le bruit y pèse le plus), un symbole de référence sur quatre
-///   comme les modems de 1999 qui guettaient bits volés et atténuateurs
-///   numériques — 1,1 s par passage, écouté quatre fois.
+///   niveaux (le bruit y pèse le plus) — 1,1 s par passage, écouté quatre
+///   fois : quatre crescendos.
 pub(crate) fn our_dil(express: bool) -> DilDescriptor {
-    let sp = (0..13).map(|i| (0b1_0110_0101_1101_u32 >> i) & 1 == 1).collect();
+    // Signes alternés « + − » : un sifflement à 4 kHz, dont le volume monte
+    // avec les niveaux (du plus faible au plus fort) — le crescendo aigu de
+    // la fin d'une connexion 56k. À 4 kHz, son écho tombe hors de la bande
+    // du récepteur V.34 du FAI (porteuse 1959 Hz ± 1,9 kHz) : il ne peut
+    // pas y passer pour le S qui annonce la fin du DIL.
+    let sp = vec![true, false];
     if express {
         return DilDescriptor { sp, tp: vec![true], h: [15; 8], refs: [UINFO; 8], train: (4..128).step_by(4).map(|u| u as u8).collect() };
     }
     DilDescriptor {
         sp,
-        tp: vec![true, true, true, false],
+        tp: vec![true],
         h: [31, 31, 23, 23, 15, 15, 15, 15],
         refs: [104; 8],
         train: (1..128).step_by(2).map(|u| u as u8).collect(),
@@ -323,6 +326,9 @@ impl P34 {
         let (tx, rx) = if digital { (down, up) } else { (up, down) };
         self.tx_rate = tx;
         self.rx_rate = rx;
+        // T401 : une seconde de notre émission (l'aller-retour du réseau
+        // dépasse souvent 300 ms ; trop court, on réémettrait sans cesse)
+        self.link.set_t401_bits(tx.max(4800) as u64);
         self.goto(Step::Connected);
         self.act(P34Action::Phase(Phase::Data));
         self.log(format!("CONNECT 56k (V.90) — descendant {down} bit/s, montant {up} bit/s"));
@@ -587,7 +593,8 @@ impl P34 {
         match self.step {
             Step::C3WaitS => false, // phase 3 : PP et TRN de l'abonné (code V.34)
             Step::P4Trn => {
-                if v.s_trans == 1 && (!v.s_after || self.s_run < 96) {
+                let dil_ok = v.ptx.as_ref().is_some_and(|t| t.dil_passes_sent() >= 1.0);
+                if v.s_trans == 1 && (!v.s_after || self.s_run < 96 || !dil_ok) {
                     // la fin de S̄ (16T) n'est pas le S 128T de fin du DIL
                     self.sdet = SDetector::new();
                     self.rx_st = RxSt::WaitS;

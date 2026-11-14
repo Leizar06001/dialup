@@ -401,6 +401,8 @@ pub struct Lapm {
     tx_queue: VecDeque<u8>,
     /// Trames I numérotées non acquittées : N(S) = V(A), V(A)+1, …
     window: VecDeque<TxEntry>,
+    /// Fenêtre k : trames I émises sans acquittement au plus
+    k: usize,
     /// Indice dans `window` de la prochaine trame à (ré)émettre :
     /// V(S) = V(A) + next_idx (modulo 128).
     next_idx: usize,
@@ -457,6 +459,7 @@ impl Lapm {
             scratch: Vec::with_capacity(N401_DEFAULT + 3),
             tx_queue: VecDeque::new(),
             window: VecDeque::with_capacity(K_WINDOW),
+            k: K_WINDOW,
             next_idx: 0,
             va: 0,
             vr: 0,
@@ -494,6 +497,13 @@ impl Lapm {
     pub fn set_n401(&mut self, n: usize) {
         self.n401 = n.clamp(1, N401_MAX);
         self.hrx.max_bits = HdlcRx::max_bits_for(self.n401);
+    }
+
+    /// Règle la fenêtre k (1..=127, numérotation modulo 128). Les deux côtés
+    /// doivent l'accepter : on ne l'élargit qu'entre modems qui le savent
+    /// (les deux bouts d'une liaison 56k sont forcément récents).
+    pub fn set_window(&mut self, k: usize) {
+        self.k = k.clamp(1, 127);
     }
 
     /// Met en file des octets utilisateur (possible avant l'établissement).
@@ -761,7 +771,7 @@ impl Lapm {
             && !self.poll_due
             && !self.peer_busy
             && (self.next_idx < self.window.len()
-                || (self.window.len() < K_WINDOW && !self.tx_queue.is_empty()))
+                || (self.window.len() < self.k && !self.tx_queue.is_empty()))
     }
 
     fn select_connected(&mut self, out: &mut Vec<u8>) -> Option<SentKind> {
@@ -909,7 +919,7 @@ impl Lapm {
             self.rej_sent = false;
             self.rej_due = false;
             self.ack_pending = true;
-        } else if diff <= K_WINDOW {
+        } else if diff <= self.k {
             // Trou de séquence : un seul REJ jusqu'à ce qu'il soit comblé.
             if !self.rej_sent {
                 self.rej_sent = true;

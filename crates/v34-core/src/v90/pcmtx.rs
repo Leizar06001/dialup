@@ -72,6 +72,11 @@ pub struct PcmTx {
     /// Ordre de terminer les MP par Ed, B1d, données
     finish_mp: bool,
     data_map: Option<Mapping>,
+    /// Symboles émis depuis le début de TRN1d, jusqu'à ce que l'abonné
+    /// reparle (son S) : fenêtre d'apprentissage de notre annuleur d'écho
+    since_trn1d: Option<usize>,
+    /// Symboles de DIL émis
+    dil_sent: usize,
 }
 
 impl PcmTx {
@@ -94,6 +99,8 @@ impl PcmTx {
             mp_ack: false,
             finish_mp: false,
             data_map: None,
+            since_trn1d: None,
+            dil_sent: 0,
         }
     }
 
@@ -122,6 +129,7 @@ impl PcmTx {
     /// L'abonné a reçu Jd (son S est là) : finir le Jd en cours, J′d, puis DIL.
     pub fn finish_jd(&mut self) {
         self.finish_jd = true;
+        self.since_trn1d = None;
     }
 
     /// L'abonné a assez écouté le DIL : finir le segment en cours, puis Ri.
@@ -151,23 +159,32 @@ impl PcmTx {
         self.finish_mp = true;
     }
 
+    /// Passages complets du DIL déjà émis (le demandeur en écoute au moins un).
+    pub fn dil_passes_sent(&self) -> f64 {
+        match &self.dil {
+            Some(d) if d.total_len() > 0 => self.dil_sent as f64 / d.total_len() as f64,
+            _ => f64::MAX,
+        }
+    }
+
     pub fn in_data(&self) -> bool {
         self.st == St::Data
     }
 
-    /// Position dans TRN1d (pendant ce signal) : l'abonné se tait alors,
-    /// notre annuleur d'écho peut apprendre.
+    /// Symboles émis depuis le début de TRN1d, tant que l'abonné n'a pas
+    /// repris la parole : il se tait alors (après un aller-retour), notre
+    /// annuleur d'écho peut apprendre sur notre PCM.
     pub fn trn1d_index(&self) -> Option<usize> {
-        match self.st {
-            St::Trn1d { i } => Some(i),
-            _ => None,
-        }
+        self.since_trn1d
     }
 
     /// Prochain échantillon émis ; `bit` fournit les bits de données.
     pub fn next_sample(&mut self, bit: &mut dyn FnMut() -> bool) -> f32 {
         while self.queue.is_empty() {
             self.produce(bit);
+        }
+        if let Some(i) = self.since_trn1d.as_mut() {
+            *i += 1;
         }
         self.queue.pop_front().unwrap()
     }
@@ -187,6 +204,7 @@ impl PcmTx {
                 }
                 self.st = if i + 1 >= 432 {
                     self.scr.reset();
+                    self.since_trn1d = Some(0);
                     self.signal("TRN1d");
                     St::Trn1d { i: 0 }
                 } else {
@@ -239,6 +257,7 @@ impl PcmTx {
                 let len = dil.segment_len(seg);
                 let nseg = dil.train.len();
                 self.queue.push_back(self.sym(u, pos));
+                self.dil_sent += 1;
                 self.st = if i + 1 < len {
                     St::Dil { seg, i: i + 1 }
                 } else if self.stop_dil {
