@@ -62,6 +62,23 @@ pub struct Info0 {
     pub tx_clock: u8,
     /// Acquittement d'un INFO0 reçu (reprise sur erreur)
     pub ack: bool,
+    /// Champs propres à l'INFO0d du modem numérique V.90 (tableau 7/V.90)
+    pub v90d: Option<Info0d>,
+}
+
+/// Bits 29:41 de l'INFO0d (V.90) : puissance et loi du modem numérique.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Info0d {
+    /// Puissance nominale en phase 2, par pas de −1 dBm0 (0 = −6 dBm0)
+    pub nominal_power: u8,
+    /// Puissance maximale, par pas de −0,5 dBm0 (0 = −0,5 dBm0)
+    pub max_power: u8,
+    /// Puissance mesurée en sortie du codec (sinon aux bornes du modem)
+    pub power_at_codec: bool,
+    /// Loi A (sinon µ)
+    pub alaw: bool,
+    /// V.90 possible avec 3429 bauds en montée
+    pub up3429: bool,
 }
 
 impl Info0 {
@@ -81,10 +98,13 @@ impl Info0 {
             c1664: true,
             tx_clock: 0,
             ack: false,
+            v90d: None,
         }
     }
 
     pub const INFO_BITS: usize = 17; // bits 12..28
+    /// INFO0d du modem numérique V.90 : bits 12..41
+    pub const INFO0D_BITS: usize = 30;
 
     pub fn to_bits(&self) -> Vec<bool> {
         let mut i = Vec::new();
@@ -96,6 +116,14 @@ impl Info0 {
         i.push(self.c1664);
         push_field(&mut i, self.tx_clock as u32, 2);
         i.push(self.ack);
+        if let Some(d) = &self.v90d {
+            push_field(&mut i, d.nominal_power as u32, 4);
+            push_field(&mut i, d.max_power as u32, 5);
+            i.push(d.power_at_codec);
+            i.push(d.alaw);
+            i.push(d.up3429);
+            i.push(false); // réservé (bit 41)
+        }
         frame(&i)
     }
 
@@ -115,6 +143,13 @@ impl Info0 {
             c1664: i[13],
             tx_clock: field(i, 14, 2) as u8,
             ack: i[16],
+            v90d: (i.len() >= Self::INFO0D_BITS).then(|| Info0d {
+                nominal_power: field(i, 17, 4) as u8,
+                max_power: field(i, 21, 5) as u8,
+                power_at_codec: i[26],
+                alaw: i[27],
+                up3429: i[28],
+            }),
         }
     }
 }
@@ -189,9 +224,13 @@ pub struct Info1a {
     pub max_rate: u8,
     /// Vitesse de symbole appelé→appelant (index 0..5)
     pub sr_a2c: u8,
-    /// Vitesse de symbole appelant→appelé (index 0..5)
+    /// Vitesse de symbole appelant→appelé (index 0..5 ; 6 = V.90, 8000
+    /// symboles PCM par seconde)
     pub sr_c2a: u8,
     pub freq_offset: i16,
+    /// V.90 (tableau 10/V.90) : Ucode du point de l'apprentissage à deux
+    /// niveaux (UINFO) ; présent si et seulement si `sr_c2a == 6`
+    pub uinfo: Option<u8>,
 }
 
 impl Info1a {
@@ -199,6 +238,17 @@ impl Info1a {
 
     pub fn to_bits(&self) -> Vec<bool> {
         let mut i = Vec::new();
+        if let Some(u) = self.uinfo {
+            // INFO1a du V.90 : réservés, MD, UINFO, réservés, montée, 6
+            push_field(&mut i, 0, 6);
+            push_field(&mut i, self.md_len as u32, 7);
+            push_field(&mut i, u as u32, 7);
+            push_field(&mut i, 0, 2);
+            push_field(&mut i, self.sr_a2c as u32, 3);
+            push_field(&mut i, 6, 3);
+            push_field(&mut i, (self.freq_offset as i32 & 0x3FF) as u32, 10);
+            return frame(&i);
+        }
         push_field(&mut i, self.min_power_red as u32, 3);
         push_field(&mut i, self.add_power_red as u32, 3);
         push_field(&mut i, self.md_len as u32, 7);
@@ -214,6 +264,20 @@ impl Info1a {
     pub fn from_info(i: &[bool]) -> Self {
         let fo = field(i, 28, 10) as i32;
         let fo = if fo & 0x200 != 0 { fo - 1024 } else { fo };
+        if field(i, 25, 3) == 6 {
+            return Info1a {
+                min_power_red: 0,
+                add_power_red: 0,
+                md_len: field(i, 6, 7) as u8,
+                high_carrier: false,
+                preemph: 0,
+                max_rate: 0,
+                sr_a2c: field(i, 22, 3) as u8,
+                sr_c2a: 6,
+                freq_offset: fo as i16,
+                uinfo: Some(field(i, 13, 7) as u8),
+            };
+        }
         Info1a {
             min_power_red: field(i, 0, 3) as u8,
             add_power_red: field(i, 3, 3) as u8,
@@ -224,6 +288,7 @@ impl Info1a {
             sr_a2c: field(i, 22, 3) as u8,
             sr_c2a: field(i, 25, 3) as u8,
             freq_offset: fo as i16,
+            uinfo: None,
         }
     }
 }
@@ -468,6 +533,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn info0d_et_info1a_du_v90() {
+        let mut i = Info0::ours(&crate::api::ModemConfig::default());
+        i.v90d = Some(Info0d { nominal_power: 3, max_power: 1, power_at_codec: true, alaw: true, up3429: false });
+        let bits = i.to_bits();
+        assert_eq!(bits.len(), 62, "tableau 7/V.90 : bits 0..61");
+        let mut f = InfoFramer::new(Info0::INFO0D_BITS);
+        let got = bits.iter().find_map(|&b| f.push(b)).unwrap().unwrap();
+        assert_eq!(Info0::from_info(&got), i);
+
+        let a = Info1a { min_power_red: 0, add_power_red: 0, md_len: 4, high_carrier: false, preemph: 0, max_rate: 0, sr_a2c: 4, sr_c2a: 6, freq_offset: -3, uinfo: Some(90) };
+        let bits = a.to_bits();
+        assert_eq!(bits.len(), 70);
+        let mut f = InfoFramer::new(Info1a::INFO_BITS);
+        let got = bits.iter().find_map(|&b| f.push(b)).unwrap().unwrap();
+        assert_eq!(Info1a::from_info(&got), a);
+        // bits 25:31 = UINFO, 37:39 = 6 (tableau 10/V.90)
+        assert_eq!(field(&bits, 25, 7), 90);
+        assert_eq!(field(&bits, 37, 3), 6);
+    }
+
+    #[test]
     fn info0_roundtrip() {
         let i = Info0::ours(&crate::api::ModemConfig::default());
         let bits = i.to_bits();
@@ -488,7 +574,7 @@ mod tests {
         assert_eq!(c.to_bits().len(), 109);
         let info: Vec<bool> = c.to_bits()[12..89].to_vec();
         assert_eq!(Info1c::from_info(&info), c);
-        let a = Info1a { min_power_red: 1, add_power_red: 2, md_len: 0, high_carrier: true, preemph: 5, max_rate: 13, sr_a2c: 5, sr_c2a: 4, freq_offset: 12 };
+        let a = Info1a { min_power_red: 1, add_power_red: 2, md_len: 0, high_carrier: true, preemph: 5, max_rate: 13, sr_a2c: 5, sr_c2a: 4, freq_offset: 12, uinfo: None };
         assert_eq!(a.to_bits().len(), 70);
         let info: Vec<bool> = a.to_bits()[12..50].to_vec();
         assert_eq!(Info1a::from_info(&info), a);

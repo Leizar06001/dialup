@@ -80,7 +80,17 @@ pub struct Menu {
     pub lapm: bool,
     /// Octet « accès RTC » (bits b5..b7), si présent
     pub access: Option<u8>,
+    /// Catégorie « modem PCM » (bits b5..b7, tableau 5/V.8), si présente :
+    /// [`PCM_ANALOG`], [`PCM_DIGITAL`], V.91
+    pub pcm: Option<u8>,
 }
+
+/// Modem analogique V.90/V.92 disponible (b5 de l'octet pcm0).
+pub const PCM_ANALOG: u8 = 0b001;
+/// Modem numérique V.90/V.92 disponible (b6).
+pub const PCM_DIGITAL: u8 = 0b010;
+/// Accès RTC : le modem est raccordé en numérique (b7 de l'octet access0).
+pub const ACCESS_DIGITAL: u8 = 0b100;
 
 impl Menu {
     /// Menu annoncé par notre modem : V.34 duplex + modes classiques.
@@ -90,7 +100,26 @@ impl Menu {
             modes: Modes { v34: true, v32bis: true, v22bis: true, v21: true, ..Modes::default() },
             lapm: true,
             access: None,
+            pcm: None,
         }
+    }
+
+    /// Menu annoncé selon la configuration : avec le 56k, l'appelant se
+    /// déclare modem analogique V.90 ; l'appelé, s'il est raccordé en
+    /// numérique (le FAI), modem numérique. Le V.90 impose alors d'indiquer
+    /// aussi le type d'accès au réseau (§9.1.1/V.90).
+    pub fn ours_for(cfg: &crate::api::ModemConfig, answer: bool) -> Self {
+        let mut m = Menu::ours();
+        if cfg.v90 {
+            if !answer {
+                m.pcm = Some(PCM_ANALOG);
+                m.access = Some(if cfg.digital { ACCESS_DIGITAL } else { 0 });
+            } else if cfg.digital {
+                m.pcm = Some(PCM_DIGITAL);
+                m.access = Some(ACCESS_DIGITAL);
+            }
+        }
+        m
     }
 
     /// Octets d'information (sans préambule ni bits start/stop).
@@ -98,7 +127,7 @@ impl Menu {
         let m = &self.modes;
         let b = |c: bool, v: u8| if c { v } else { 0 };
         let mut o = vec![0x01 | (self.call_function & 7) << 5];
-        o.push(0x05 | b(m.v34, 0x40) | b(m.v34hdx, 0x80));
+        o.push(0x05 | b(self.pcm.is_some(), 0x20) | b(m.v34, 0x40) | b(m.v34hdx, 0x80));
         let ext1 = b(m.v32bis, 0x01) | b(m.v22bis, 0x02) | b(m.v17, 0x04) | b(m.v29hdx, 0x40) | b(m.v27ter, 0x80);
         let ext2 = b(m.v26ter, 0x01) | b(m.v26bis, 0x02) | b(m.v23, 0x04) | b(m.v23hdx, 0x40) | b(m.v21, 0x80);
         if ext1 != 0 || ext2 != 0 {
@@ -106,6 +135,9 @@ impl Menu {
         }
         if ext2 != 0 {
             o.push(0x10 | ext2);
+        }
+        if let Some(p) = self.pcm {
+            o.push(0x07 | (p & 7) << 5);
         }
         if self.lapm {
             o.push(0x0A | 0x20);
@@ -164,6 +196,7 @@ impl Menu {
                 }
                 0x0A => menu.lapm = opts == 0b001,
                 0x0D => menu.access = Some(opts),
+                0x07 => menu.pcm = Some(opts),
                 _ => {}
             }
         }

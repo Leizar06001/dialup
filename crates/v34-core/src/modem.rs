@@ -10,7 +10,7 @@ use crate::dsp::tone::{PowerMeter, ToneDetector};
 use crate::info::{Info0, Info1a, Info1c, InfoRx};
 use crate::probe::{ProbeAnalyzer, ProbeReport};
 use crate::tx::{FskTx, Transmitter, TxMode};
-use crate::v8::{AnsamDetector, AnsamGen, Menu, V8Parser, V8Rx};
+use crate::v8::{AnsamDetector, AnsamGen, Menu, V8Parser, V8Rx, PCM_ANALOG, PCM_DIGITAL};
 
 pub(crate) const MS: u64 = 8; // échantillons par milliseconde
 
@@ -128,6 +128,10 @@ pub struct Modem {
     pub(crate) tone_amp_ref: f32,
     /// Inversion en attente de confirmation : (instant, échéance, amplitude)
     pub(crate) pending_rev: Option<(u64, u64, f32)>,
+    /// 56k (V.90) convenu en V.8 : nous sommes le modem analogique
+    /// (appelant) ou numérique (appelé). Les rôles des phases 2 à 4 sont
+    /// alors inversés par rapport au V.34 (voir [`Modem::p2_answer`]).
+    pub(crate) v90: bool,
 }
 
 impl Modem {
@@ -181,11 +185,19 @@ impl Modem {
             tone_drop_at: 0,
             tone_amp_ref: 0.0,
             pending_rev: None,
+            v90: false,
         }
     }
 
     pub fn role(&self) -> Role {
         self.role
+    }
+
+    /// Rôle tenu en phases 2 à 4 : celui de V.8, sauf en V.90 où le modem
+    /// analogique (l'appelant) se comporte comme l'appelé du V.34 et le
+    /// numérique comme l'appelant (§9.2.1.1.8 et §9.2.2.1.9/V.90).
+    pub(crate) fn p2_answer(&self) -> bool {
+        (self.role == Role::Answer) != self.v90
     }
 
     pub fn command(&mut self, cmd: ModemCommand) {
@@ -524,7 +536,7 @@ impl Modem {
             }
             St::CallTe => {
                 if self.n >= self.t_mark {
-                    let menu = Menu::ours();
+                    let menu = Menu::ours_for(&self.cfg, false);
                     let mut fsk = FskTx::new(V21Channel::Low);
                     fsk.set_repeat(menu.sequence_bits());
                     self.set_tx(TxMode::Fsk(fsk), "CM");
@@ -544,6 +556,12 @@ impl Modem {
                     if !jm.modes.v34 {
                         self.fail("l'autre modem ne propose pas V.34");
                         return;
+                    }
+                    // §9.1.1/V.90 : 56k si nous sommes analogique et l'autre numérique
+                    self.v90 = Menu::ours_for(&self.cfg, false).pcm.is_some() && jm.pcm.is_some_and(|p| p & PCM_DIGITAL != 0);
+                    if self.v90 {
+                        self.log(LogLevel::Info, "Le FAI est raccordé en numérique : 56k (V.90) possible, nous serons le modem analogique");
+                        self.status.params.v8_modes.insert(0, "V.90".into());
                     }
                     self.remote_menu = Some(jm.clone());
                     if let TxMode::Fsk(fsk) = &mut self.tx.mode {
@@ -577,10 +595,23 @@ impl Modem {
             St::AnsAnsam => {
                 if let Some(V8Rx::Confirmed(cm)) = &f.v8 {
                     self.rx_name("CM");
-                    let common = cm.modes.intersect(&Menu::ours().modes);
-                    self.log(LogLevel::Info, &format!("CM reçu ×2 : l'appelant propose {}", cm.modes.names().join(", ")));
-                    let jm = Menu { call_function: cm.call_function, modes: common, lapm: cm.lapm && Menu::ours().lapm, access: None };
+                    let ours = Menu::ours_for(&self.cfg, true);
+                    let common = cm.modes.intersect(&ours.modes);
+                    self.log(LogLevel::Info, &format!("CM reçu ×2 : l'appelant propose {}{}", if cm.pcm.is_some_and(|p| p & PCM_ANALOG != 0) { "V.90, " } else { "" }, cm.modes.names().join(", ")));
+                    // §9.1.1/V.90 : nous sommes numérique et l'autre analogique
+                    self.v90 = ours.pcm.is_some_and(|p| p & PCM_DIGITAL != 0) && cm.pcm.is_some_and(|p| p & PCM_ANALOG != 0);
+                    let jm = Menu {
+                        call_function: cm.call_function,
+                        modes: common,
+                        lapm: cm.lapm && ours.lapm,
+                        access: if self.v90 { ours.access } else { None },
+                        pcm: if self.v90 { Some(PCM_DIGITAL) } else { None },
+                    };
                     self.status.params.v8_modes = common.names();
+                    if self.v90 {
+                        self.log(LogLevel::Info, "L'abonné propose le 56k : nous serons le modem numérique (V.90)");
+                        self.status.params.v8_modes.insert(0, "V.90".into());
+                    }
                     self.params_changed();
                     self.remote_menu = Some(cm.clone());
                     let mut fsk = FskTx::new(V21Channel::High);

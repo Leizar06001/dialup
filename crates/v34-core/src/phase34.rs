@@ -1192,7 +1192,7 @@ impl Modem {
 
     pub(crate) fn start_phase3(&mut self) {
         self.set_phase(Phase::Phase3);
-        let answer = self.role == Role::Answer;
+        let answer = self.p2_answer();
         let i1a: Info1a = self.info1a.clone().unwrap();
         let i1c: Info1c = self.info1c.clone().unwrap();
         let (sr_tx, tx_high, sr_rx, rx_high) = if answer {
@@ -1280,7 +1280,7 @@ impl Modem {
     }
 
     pub(crate) fn retrain_step(&mut self, f: &crate::modem::RxFlags) {
-        let answer = self.role == Role::Answer;
+        let answer = self.p2_answer();
         match self.st {
             St::RtSilence => {
                 if self.n >= self.t_mark {
@@ -1292,7 +1292,7 @@ impl Modem {
                     self.pending_rev = None;
                     // On écoute aussi les INFO0 : si l'autre les répète, on
                     // rejoint la répétition (§11.5.1.1 / §11.5.2.1).
-                    self.info_rx = Some(crate::info::InfoRx::new(!answer, crate::info::Info0::INFO_BITS));
+                    self.info_rx = Some(crate::info::InfoRx::new(!answer, self.remote_info0_bits()));
                     self.probe = None;
                     if answer {
                         self.set_tx(TxMode::Tone(ToneTx::tone_a()), "A");

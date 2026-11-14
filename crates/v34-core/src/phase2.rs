@@ -21,8 +21,8 @@ const L2_ANALYSIS: u32 = 20; // blocs de 20 ms = 400 ms
 impl Modem {
     pub(crate) fn start_phase2(&mut self) {
         self.set_phase(Phase::Phase2);
-        let answer = self.role == Role::Answer;
-        let info0 = Info0::ours(&self.cfg);
+        let answer = self.p2_answer();
+        let info0 = self.our_info0();
         self.info0_local = Some(info0.clone());
         let mut itx = InfoTx::new(answer);
         itx.queue(&info0.to_bits());
@@ -37,13 +37,32 @@ impl Modem {
     /// §11.2.1.x.1 : le récepteur est conditionné PENDANT le silence de
     /// 75 ms qui termine la phase 1 (sinon on rate le début de l'INFO0).
     pub(crate) fn prepare_phase2_rx(&mut self) {
-        let answer = self.role == Role::Answer;
+        let answer = self.p2_answer();
         // On reçoit les INFO de l'autre : 2400 Hz si on est l'appelant.
-        self.info_rx = Some(InfoRx::new(!answer, Info0::INFO_BITS));
+        self.info_rx = Some(InfoRx::new(!answer, self.remote_info0_bits()));
         let f = if answer { 1200.0 } else { 2400.0 };
         self.tone_rx = Some(ToneDetector::new(f, 40));
         self.tone_presence = Some(ToneDetector::new(f, 160));
         self.tone_on = 0;
+    }
+
+    /// Notre INFO0 : en V.90, le modem numérique envoie l'INFO0d, avec sa
+    /// puissance maximale (−0,5 dBm0) et sa loi (A, réseau français).
+    pub(crate) fn our_info0(&self) -> Info0 {
+        let mut i = Info0::ours(&self.cfg);
+        if self.v90 && !self.p2_answer() {
+            i.v90d = Some(crate::info::Info0d { nominal_power: 0, max_power: 0, power_at_codec: false, alaw: true, up3429: self.cfg.allow_3429 });
+        }
+        i
+    }
+
+    /// Longueur des bits d'information de l'INFO0 de l'autre.
+    pub(crate) fn remote_info0_bits(&self) -> usize {
+        if self.v90 && self.p2_answer() {
+            Info0::INFO0D_BITS
+        } else {
+            Info0::INFO_BITS
+        }
     }
 
     fn info_tx_done(&self) -> bool {
@@ -66,7 +85,7 @@ impl Modem {
             }
             if self.info0_remote.is_none() {
                 let i0 = Info0::from_info(bits);
-                let me = if self.role == Role::Call { "INFO0a" } else { "INFO0c" };
+                let me = if !self.p2_answer() { "INFO0a" } else { "INFO0c" };
                 self.rx_name(me);
                 let mut rates = vec!["2400", "3000", "3200"];
                 if i0.sr2743 {
@@ -136,13 +155,13 @@ impl Modem {
     /// répète son INFO0, avec le bit 28 à 1 dès qu'il a reçu celui de
     /// l'autre ; on repart vers les tons quand on reçoit un INFO0 acquitté.
     pub(crate) fn start_info0_repeat(&mut self, why: &str) {
-        let answer = self.role == Role::Answer;
+        let answer = self.p2_answer();
         self.log(LogLevel::Warn, &format!("{why} : répétition des INFO0 (§11.2.2)"));
         self.set_phase(Phase::Phase2);
         if self.info_rx.is_none() || self.tone_rx.is_none() {
             self.prepare_phase2_rx();
         }
-        let mut i0 = self.info0_local.clone().unwrap_or_else(|| Info0::ours(&self.cfg));
+        let mut i0 = self.info0_local.clone().unwrap_or_else(|| self.our_info0());
         i0.ack = self.info0_remote.is_some();
         self.info0_local = Some(i0.clone());
         let mut itx = InfoTx::new(answer);
@@ -153,7 +172,7 @@ impl Modem {
     }
 
     fn info0_repeat_step(&mut self, f: &RxFlags) {
-        let answer = self.role == Role::Answer;
+        let answer = self.p2_answer();
         if let Some(Ok(bits)) = &f.info {
             let r = Info0::from_info(bits);
             if self.info0_remote.is_none() {
@@ -611,6 +630,7 @@ impl Modem {
             sr_a2c: a2c as u8,
             sr_c2a: c2a as u8,
             freq_offset: self.freq_offset_field(),
+            uinfo: None,
         };
         self.log(
             LogLevel::Info,
