@@ -118,6 +118,11 @@ impl Args {
     fn modem_config(&self) -> Result<ModemConfig, String> {
         let mut cfg = ModemConfig::default();
         cfg.max_rate = self.num("max-rate", cfg.max_rate)?;
+        // 56k (V.90) : --v90 non pour s'en passer, --express oui pour la
+        // poignée de main pressée, --max-rate-56k R pour le plafonner
+        cfg.v90 = self.get("v90") != Some("non");
+        cfg.express = self.get("express") == Some("oui");
+        cfg.max_rate_pcm = self.num("max-rate-56k", cfg.max_rate_pcm)?;
         Ok(cfg)
     }
 }
@@ -441,7 +446,8 @@ fn central_config(args: &Args) -> Result<CentralConfig, String> {
     };
     let mut cfg = CentralConfig::new(server, user, password);
     cfg.codec = args.codec()?;
-    cfg.jitter_target_ms = args.num("jitter-ms", 60u32)?;
+    // même tampon que l'appli (adapté au modem : sans glissement)
+    cfg.jitter_target_ms = args.num("jitter-ms", cfg.jitter_target_ms)?;
     cfg.local_port = args.num("local-port", 0u16)?;
     Ok(cfg)
 }
@@ -512,6 +518,11 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
     let period = Duration::from_millis(20);
     let (mut rx, mut rx_line, mut tx, mut prev_tx) = (vec![0.0f32; BLOCK], vec![0.0f32; BLOCK], vec![0.0f32; BLOCK], vec![0.0f32; BLOCK]);
     let mut line = preset.as_ref().map(|(_, p)| (LineSim::new(p.clone()), EchoPath::new(p.clone())));
+    // comme l'appli : notre émission traverse aussi la boucle locale
+    let mut line_up = preset.as_ref().map(|(_, p)| LineSim::with_seed(p.clone(), 0x5eed_0bad));
+    let mut tx_line = vec![0.0f32; BLOCK];
+    // comme l'appli : cadence calée sur l'horloge du central
+    let mut pacer = v34_net::Pacer::new();
     let mut call: Option<CentralCall> = None;
     let mut ring_at: Option<Instant> = None;
     let start = Instant::now();
@@ -574,7 +585,14 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
                 None => &rx,
             };
             c.modem.process(input, &mut tx);
-            client.send_block(&tx).map_err(|e| format!("envoi UDP : {e}"))?;
+            let out: &[f32] = match line_up.as_mut() {
+                Some(sim) => {
+                    sim.process(&tx, &mut tx_line);
+                    &tx_line
+                }
+                None => &tx,
+            };
+            client.send_block(out).map_err(|e| format!("envoi UDP : {e}"))?;
             prev_tx.copy_from_slice(&tx);
             let role = c.modem.role();
             for ev in c.modem.drain_events() {
@@ -656,7 +674,9 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
                 return Ok(());
             }
         }
-        next += period;
+        // +1 : un bloc de plus tout de suite ; −1 : un bloc de moins
+        let adj = pacer.update(client.jitter_level());
+        next += period.mul_f64((1.0 - adj).max(0.0));
         let now = Instant::now();
         if next > now {
             std::thread::sleep(next - now);
