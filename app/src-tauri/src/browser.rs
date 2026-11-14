@@ -1,14 +1,24 @@
-//! Navigateur intégré : une deuxième fenêtre avec deux vues web.
+//! Navigateur intégré : une deuxième fenêtre avec plusieurs vues web.
 //! - en haut, la barre d'outils rétro (page locale `navigateur.html`) ;
 //! - en dessous, la page, dont TOUT le trafic passe par le proxy SOCKS5 du
 //!   tunnel, donc par le modem (aucun autre accès réseau) ;
 //! - tout en bas, la barre d'état (page locale `nav-statut.html`) : jauge
-//!   de chargement d'après le compteur du proxy.
+//!   de chargement d'après le compteur du proxy ;
+//! - ou bien, à la place de la page et de la barre d'état, la messagerie
+//!   (page locale `messagerie.html`) : chat, visiophone, fichiers, contacts.
 //!
-//! Deux modes :
+//! Trois modes :
 //! - « web 1998 » : on passe par l'hôte virtuel `web1998` du FAI, qui va
 //!   chercher la page et la renvoie allégée (HTML simple, GIF 256 couleurs) ;
-//! - « moderne » : le vrai web, tel quel (lent !).
+//! - « moderne » : le vrai web, tel quel (lent !) ;
+//! - « messagerie » : pas de web, l'appel en cours (entre abonnés : chat,
+//!   visio, fichiers ; avec le FAI : son salon), et les contacts du central
+//!   (l'annuaire reste aussi dans la fenêtre du modem).
+//!
+//! La page web n'a jamais accès aux commandes de l'appli (elle affiche des
+//! sites quelconques) ; la messagerie, page locale, y a droit.
+
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::webview::{PageLoadEvent, WebviewBuilder};
 use tauri::window::WindowBuilder;
@@ -18,6 +28,11 @@ pub const WINDOW: &str = "navigateur";
 pub const CHROME: &str = "nav-chrome";
 pub const PAGE: &str = "nav-page";
 pub const STATUS: &str = "nav-status";
+pub const MESSAGERIE: &str = "nav-messagerie";
+/// La messagerie est affichée (sinon la page web)
+static VUE_MESSAGERIE: AtomicBool = AtomicBool::new(false);
+/// La page web existe (voir [`check_platform`])
+static WEB_OK: AtomicBool = AtomicBool::new(false);
 /// Hauteur de la barre d'outils (pixels logiques)
 const CHROME_H: f64 = 100.0;
 /// Hauteur de la barre d'état
@@ -47,14 +62,59 @@ pub fn check_platform() -> Result<(), String> {
     Ok(())
 }
 
-/// Ouvre (ou ramène au premier plan) la fenêtre du navigateur.
-pub fn open(app: &AppHandle, proxy_port: u16) -> tauri::Result<()> {
-    if let Some(w) = app.get_window(WINDOW) {
-        let _ = w.unminimize();
-        return w.set_focus();
+/// Vue affichée et disponibilité du web, pour la barre d'outils.
+#[derive(Clone, serde::Serialize)]
+pub struct Vue {
+    /// "messagerie" ou "web"
+    pub vue: &'static str,
+    /// La page web existe (macOS 14 ou plus récent)
+    pub web: bool,
+}
+
+pub fn vue() -> Vue {
+    Vue { vue: if VUE_MESSAGERIE.load(Ordering::Relaxed) { "messagerie" } else { "web" }, web: WEB_OK.load(Ordering::Relaxed) }
+}
+
+/// Passe de la page web à la messagerie (ou l'inverse) dans la fenêtre ouverte.
+pub fn set_vue(app: &AppHandle, messagerie: bool) -> Result<Vue, String> {
+    if !messagerie {
+        check_platform()?;
     }
+    VUE_MESSAGERIE.store(messagerie, Ordering::Relaxed);
+    if let Some(win) = app.get_window(WINDOW) {
+        layout(&win);
+        let _ = win.set_title(titre(messagerie));
+    }
+    let v = vue();
+    let _ = app.emit_to(CHROME, "nav:vue", v.clone());
+    Ok(v)
+}
+
+fn titre(messagerie: bool) -> &'static str {
+    if messagerie { "Tinyverse Messagerie — chat, visiophone, fichiers" } else { "Tinyverse Navigator — Internet par modem" }
+}
+
+/// Ouvre (ou ramène au premier plan) la fenêtre du navigateur, sur la
+/// messagerie ou sur la page web. Sans le web (macOS antérieur à 14), la
+/// fenêtre n'a que la messagerie.
+pub fn open(app: &AppHandle, proxy_port: u16, messagerie: bool) -> Result<(), String> {
+    let web_ok = check_platform();
+    if !messagerie {
+        web_ok.clone()?;
+    }
+    if let Some(w) = app.get_window(WINDOW) {
+        set_vue(app, messagerie)?;
+        let _ = w.unminimize();
+        return w.set_focus().map_err(|e| e.to_string());
+    }
+    VUE_MESSAGERIE.store(messagerie, Ordering::Relaxed);
+    WEB_OK.store(web_ok.is_ok(), Ordering::Relaxed);
+    build(app, proxy_port, web_ok.is_ok()).map_err(|e| e.to_string())
+}
+
+fn build(app: &AppHandle, proxy_port: u16, web_ok: bool) -> tauri::Result<()> {
     let win = WindowBuilder::new(app, WINDOW)
-        .title("Tinyverse Navigator — Internet par modem")
+        .title(titre(VUE_MESSAGERIE.load(Ordering::Relaxed)))
         .inner_size(1100.0, 820.0)
         .min_inner_size(640.0, 480.0)
         .build()?;
@@ -64,6 +124,31 @@ pub fn open(app: &AppHandle, proxy_port: u16) -> tauri::Result<()> {
         LogicalPosition::new(0.0, 0.0),
         LogicalSize::new(size.width, CHROME_H),
     )?;
+    win.add_child(
+        WebviewBuilder::new(MESSAGERIE, WebviewUrl::App("messagerie.html".into())),
+        LogicalPosition::new(0.0, CHROME_H),
+        LogicalSize::new(size.width, (size.height - CHROME_H).max(100.0)),
+    )?;
+    if web_ok {
+        add_page(app, &win, proxy_port, size)?;
+    }
+    layout(&win);
+    let (w2, a3) = (win.clone(), app.clone());
+    win.on_window_event(move |ev| match ev {
+        tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => layout(&w2),
+        // Fenêtre fermée : la caméra du visiophone s'éteint avec elle
+        tauri::WindowEvent::Destroyed => {
+            if let Some(st) = a3.try_state::<crate::AppState>() {
+                let _ = st.send(crate::engine::EngineCmd::VisioCamera(false));
+            }
+        }
+        _ => {}
+    });
+    Ok(())
+}
+
+/// La page web (tout son trafic par le proxy du modem) et sa barre d'état.
+fn add_page(app: &AppHandle, win: &tauri::Window, proxy_port: u16, size: LogicalSize<f64>) -> tauri::Result<()> {
     let proxy = Url::parse(&format!("socks5://127.0.0.1:{proxy_port}")).expect("adresse de proxy");
     let (a1, a2) = (app.clone(), app.clone());
     let page = WebviewBuilder::new(PAGE, WebviewUrl::App("hors-ligne.html".into()))
@@ -84,13 +169,6 @@ pub fn open(app: &AppHandle, proxy_port: u16) -> tauri::Result<()> {
         LogicalPosition::new(0.0, (size.height - STATUS_H).max(0.0)),
         LogicalSize::new(size.width, STATUS_H),
     )?;
-    layout(&win);
-    let w2 = win.clone();
-    win.on_window_event(move |ev| {
-        if matches!(ev, tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. }) {
-            layout(&w2);
-        }
-    });
     Ok(())
 }
 
@@ -102,23 +180,39 @@ fn titlebar(win: &tauri::Window) -> f64 {
     if cfg!(target_os = "macos") { 28.0 } else { 0.0 }
 }
 
-/// Recalcule la place des deux vues quand la fenêtre change de taille.
+/// Recalcule la place des vues quand la fenêtre change de taille ou de
+/// mode : la messagerie prend la place de la page et de la barre d'état.
 fn layout(win: &tauri::Window) {
     let (Ok(sz), Ok(sf)) = (win.inner_size(), win.scale_factor()) else { return };
     let s = sz.to_logical::<f64>(sf);
     let tb = titlebar(win);
+    let msg = VUE_MESSAGERIE.load(Ordering::Relaxed);
     for wv in win.webviews() {
-        if wv.label() == CHROME {
-            let _ = wv.set_position(LogicalPosition::new(0.0, 0.0));
-            let _ = wv.set_size(LogicalSize::new(s.width, tb + CHROME_H));
-        } else if wv.label() == PAGE {
-            let _ = wv.set_position(LogicalPosition::new(0.0, tb + CHROME_H));
-            let _ = wv.set_size(LogicalSize::new(s.width, (s.height - tb - CHROME_H - STATUS_H).max(100.0)));
-        } else if wv.label() == STATUS {
-            // la hauteur intérieure compte déjà la barre de titre (macOS)
-            let _ = wv.set_position(LogicalPosition::new(0.0, (s.height - STATUS_H).max(tb + CHROME_H)));
-            let _ = wv.set_size(LogicalSize::new(s.width, STATUS_H));
-        }
+        let shown = match wv.label() {
+            CHROME => {
+                let _ = wv.set_position(LogicalPosition::new(0.0, 0.0));
+                let _ = wv.set_size(LogicalSize::new(s.width, tb + CHROME_H));
+                true
+            }
+            MESSAGERIE => {
+                let _ = wv.set_position(LogicalPosition::new(0.0, tb + CHROME_H));
+                let _ = wv.set_size(LogicalSize::new(s.width, (s.height - tb - CHROME_H).max(100.0)));
+                msg
+            }
+            PAGE => {
+                let _ = wv.set_position(LogicalPosition::new(0.0, tb + CHROME_H));
+                let _ = wv.set_size(LogicalSize::new(s.width, (s.height - tb - CHROME_H - STATUS_H).max(100.0)));
+                !msg
+            }
+            STATUS => {
+                // la hauteur intérieure compte déjà la barre de titre (macOS)
+                let _ = wv.set_position(LogicalPosition::new(0.0, (s.height - STATUS_H).max(tb + CHROME_H)));
+                let _ = wv.set_size(LogicalSize::new(s.width, STATUS_H));
+                !msg
+            }
+            _ => continue,
+        };
+        let _ = if shown { wv.show() } else { wv.hide() };
     }
 }
 

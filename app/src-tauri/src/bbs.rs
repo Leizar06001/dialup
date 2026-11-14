@@ -4,12 +4,32 @@
 //! Trame : `A5 | type | longueur (u16 LE) | charge`. Les octets qui ne sont
 //! pas dans une trame sont du texte brut (ex. l'invite « login: » d'un
 //! serveur à l'ancienne) et sont affichés tels quels.
+//!
+//! Types : 1 chat, 2 à 5 fichier (offre, morceau, fin, abandon), 6 image
+//! du visiophone ([`crate::visio`]). Les types 7 à 15 sont réservés aux
+//! versions futures : une trame bien formée d'un type inconnu est ignorée
+//! sans bruit.
+//!
+//! Compatibilité : les applis d'avant le visiophone ne connaissent que les
+//! types 1 à 5 et afficheraient une trame de type 6 comme du texte (des
+//! hiéroglyphes dans le chat). L'annonce du visiophone se déguise donc en
+//! « abandon du fichier n° 0 », qui n'existe jamais (les numéros commencent
+//! à 1) : une vieille appli l'ignore poliment, sans répondre. Les images ne
+//! partent que vers un correspondant qui s'est annoncé à son tour.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 const MAGIC: u8 = 0xA5;
 const MAX_PAYLOAD: usize = 2048;
+/// Dernier type connu de cette version
+const LAST_KNOWN: u8 = 6;
+/// Types acceptés comme trames (au-delà de `LAST_KNOWN` : ignorées)
+const LAST_TYPE: u8 = 15;
+/// Annonce du visiophone, après l'identifiant de fichier 0 d'un « abandon »
+const VISIO_TAG: &[u8] = b"VISIO";
+/// Version du visiophone annoncée
+const VISIO_VERSION: u8 = 1;
 /// Taille des morceaux de fichier
 pub const CHUNK: usize = 512;
 
@@ -20,6 +40,11 @@ pub enum Frame {
     FileData { id: u32, data: Vec<u8> },
     FileEnd { id: u32, crc: u32 },
     FileAbort { id: u32 },
+    /// Visiophone : « je sais recevoir des images », caméra allumée ou non
+    /// (annonce, puis à chaque changement)
+    Visio { camera: bool },
+    /// Visiophone : une image au format de [`crate::visio`]
+    Video(Vec<u8>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -48,6 +73,13 @@ pub fn encode(f: &Frame) -> Vec<u8> {
             (4, p)
         }
         Frame::FileAbort { id } => (5, id.to_le_bytes().to_vec()),
+        Frame::Visio { camera } => {
+            let mut p = 0u32.to_le_bytes().to_vec();
+            p.extend(VISIO_TAG);
+            p.extend([VISIO_VERSION, *camera as u8]);
+            (5, p)
+        }
+        Frame::Video(data) => (6, data.clone()),
     };
     let mut out = vec![MAGIC, t];
     out.extend((payload.len() as u16).to_le_bytes());
@@ -62,7 +94,11 @@ fn decode_frame(t: u8, p: &[u8]) -> Option<Frame> {
         2 => Frame::FileOffer { id: id(p)?, size: u64::from_le_bytes(p.get(4..12)?.try_into().ok()?), name: String::from_utf8_lossy(p.get(12..)?).into_owned() },
         3 => Frame::FileData { id: id(p)?, data: p.get(4..)?.to_vec() },
         4 => Frame::FileEnd { id: id(p)?, crc: u32::from_le_bytes(p.get(4..8)?.try_into().ok()?) },
-        5 => Frame::FileAbort { id: id(p)? },
+        5 => match (id(p)?, p.get(4..4 + VISIO_TAG.len())) {
+            (0, Some(VISIO_TAG)) => Frame::Visio { camera: p.get(4 + VISIO_TAG.len() + 1).is_some_and(|f| f & 1 != 0) },
+            (id, _) => Frame::FileAbort { id },
+        },
+        6 => Frame::Video(p.to_vec()),
         _ => return None,
     })
 }
@@ -92,7 +128,7 @@ impl Decoder {
             }
             let t = self.buf[1];
             let len = u16::from_le_bytes([self.buf[2], self.buf[3]]) as usize;
-            if !(1..=5).contains(&t) || len > MAX_PAYLOAD {
+            if !(1..=LAST_TYPE).contains(&t) || len > MAX_PAYLOAD {
                 // Pas une trame : ce A5 est du texte brut
                 raw.push(self.buf.remove(0));
                 continue;
@@ -106,6 +142,8 @@ impl Decoder {
             }
             match decode_frame(t, &frame[4..]) {
                 Some(f) => out.push(Item::Frame(f)),
+                // type d'une version plus récente : ignoré sans bruit
+                None if t > LAST_KNOWN => {}
                 None => raw.extend(frame),
             }
         }
@@ -223,6 +261,34 @@ mod tests {
         assert!(crc_ok);
         let raw: Vec<u8> = items.iter().filter_map(|i| if let Item::Raw(r) = i { Some(r.clone()) } else { None }).flatten().collect();
         assert!(raw.ends_with(b"texte brut"));
+    }
+
+    #[test]
+    fn visiophone_et_types_inconnus() {
+        let img: Vec<u8> = (0..300u32).map(|i| (i * 13) as u8).collect();
+        let mut stream = encode(&Frame::Visio { camera: true });
+        stream.extend(encode(&Frame::Video(img.clone())));
+        // trame d'une version future (type 9) : ignorée sans bruit
+        stream.extend([MAGIC, 9, 3, 0, 1, 2, 3]);
+        stream.extend(encode(&Frame::Visio { camera: false }));
+        stream.extend(encode(&Frame::FileAbort { id: 0 }));
+        stream.extend(encode(&Frame::Chat("toujours là".into())));
+        let mut d = Decoder::default();
+        let items: Vec<Item> = stream.chunks(7).flat_map(|c| d.push(c)).collect();
+        assert_eq!(
+            items,
+            vec![
+                Item::Frame(Frame::Visio { camera: true }),
+                Item::Frame(Frame::Video(img)),
+                Item::Frame(Frame::Visio { camera: false }),
+                Item::Frame(Frame::FileAbort { id: 0 }),
+                Item::Frame(Frame::Chat("toujours là".into())),
+            ]
+        );
+        // Une appli d'avant le visiophone lit l'annonce comme un abandon du
+        // fichier n° 0 (type 5, identifiant nul), qu'elle ignore.
+        let a = encode(&Frame::Visio { camera: true });
+        assert_eq!((a[1], u16::from_le_bytes([a[2], a[3]]) as usize, &a[4..8]), (5, a.len() - 4, &[0u8; 4][..]));
     }
 
     #[test]

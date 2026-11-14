@@ -63,6 +63,15 @@
     .dot { width: 10px; height: 10px; border-radius: 50%; background: #600; box-shadow: inset 1px 1px 1px #000; }
     .dot.on { background: #0c0; box-shadow: 0 0 4px #0f0; }
     .call { margin-left: 4px; }
+    [hidden] { display: none !important; }
+    /* Mode MESSAGERIE : point rouge quand la caméra du visiophone tourne */
+    #m-msg .rec { display: none; color: #e00000; margin-right: 4px; }
+    #m-msg.rec .rec { display: inline; animation: clignote 1.2s steps(2, jump-none) infinite; }
+    @keyframes clignote { 50% { opacity: .25; } }
+    /* Ligne de l'appel (mode MESSAGERIE), à la place de l'adresse */
+    .callinfo { flex: 1; display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 6px; background: #fff;
+      border: 2px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo); white-space: nowrap; overflow: hidden; }
+    .callinfo b { font-weight: normal; overflow: hidden; text-overflow: ellipsis; }
   </style>
 </head>
 <body>
@@ -76,6 +85,7 @@
     <div class="seg" role="group" aria-label="Mode de navigation">
       <button id="m-1998" class="on" title="Pages allégées par le FAI : texte, liens, images 256 couleurs">WEB 1998</button>
       <button id="m-mod" title="Le vrai web, tel quel… à 33,6 kbit/s">MODERNE</button>
+      <button id="m-msg" title="Chat, visiophone, fichiers et contacts : l'appel en cours, sans le web"><span class="rec">●</span>MESSAGERIE</button>
     </div>
     <div class="throbber" id="throbber" title="Tinyverse Navigator"><b>T</b><i></i><i></i><i></i></div>
   </div>
@@ -86,25 +96,58 @@
     <div class="status" id="status"><i class="dot" id="dot"></i><span id="st-text">Hors ligne</span>
       <button type="button" class="call" id="b-call" title="Composer le numéro du FAI">Appeler le FAI</button></div>
   </form>
+  <div class="row" id="r-msg" hidden>
+    <label>Appel :</label>
+    <div class="callinfo"><i class="dot" id="dot2"></i><b id="call-text">Pas d'appel</b></div>
+    <button type="button" id="b-hang" title="Raccrocher (ATH)">Raccrocher</button>
+  </div>
   <script src="nav-progres.js"></script>
   <script>
     const T = window.__TAURI__;
     const $ = (id) => document.getElementById(id);
+    const fmtNum = (n) => String(n).replace(/(\d{2})(?=\d)/g, "$1 ");
     let mode = localStorage.getItem("nav-mode") || "1998";
+    if (mode !== "1998" && mode !== "moderne") mode = "1998";
     let online = false;
     let last = { t: performance.now(), rx: 0, tx: 0 }, rate = { rx: 0, tx: 0 };
 
+    // Vue : la page web ("web") ou la messagerie ("messagerie", décidée par
+    // l'appli : touche MESSAGERIE du modem, appel entre abonnés…)
+    let vue = "web", webOk = true;
+    function render() {
+      const msg = vue === "messagerie";
+      $("m-1998").classList.toggle("on", !msg && mode === "1998");
+      $("m-mod").classList.toggle("on", !msg && mode === "moderne");
+      $("m-msg").classList.toggle("on", msg);
+      $("f-go").hidden = msg;
+      $("r-msg").hidden = !msg;
+      for (const id of ["b-back", "b-fwd", "b-reload", "b-home"]) $(id).disabled = msg;
+      for (const id of ["m-1998", "m-mod"]) {
+        $(id).disabled = !webOk;
+        if (!webOk) $(id).title = "Le navigateur intégré demande macOS 14 (Sonoma) ou plus récent : ici, seulement la messagerie.";
+      }
+    }
     function setMode(m) {
       mode = m;
       try { localStorage.setItem("nav-mode", m); } catch (_) {}
-      $("m-1998").classList.toggle("on", m === "1998");
-      $("m-mod").classList.toggle("on", m === "moderne");
+      render();
+    }
+    function setVue(v) {
+      vue = v.vue;
+      webOk = v.web;
+      render();
     }
     setMode(mode);
+    T.core.invoke("nav_vue").then(setVue);
+    T.event.listen("nav:vue", (e) => setVue(e.payload));
     T.core.invoke("nav_initial").then((v) => { if (v) { setMode(v[0]); $("addr").value = v[1]; } });
     const go = (addr) => T.core.invoke("nav_go", { input: addr, mode }).catch((e) => alert(e));
-    $("m-1998").onclick = () => { setMode("1998"); go($("addr").value); };
-    $("m-mod").onclick = () => { setMode("moderne"); go($("addr").value); };
+    /** Choix d'un mode web : on quitte la messagerie s'il le faut. */
+    const web = (m) => T.core.invoke("nav_vue", { vue: "web" }).then((v) => { setVue(v); setMode(m); go($("addr").value); }).catch((e) => alert(e));
+    $("m-1998").onclick = () => web("1998");
+    $("m-mod").onclick = () => web("moderne");
+    $("m-msg").onclick = () => T.core.invoke("nav_vue", { vue: "messagerie" }).then(setVue);
+    $("b-hang").onclick = () => T.core.invoke("at_command", { line: "ATH" });
     $("f-go").onsubmit = (e) => { e.preventDefault(); go($("addr").value); };
     $("b-home").onclick = () => { $("addr").value = ""; go(""); };
     for (const [id, cmd] of [["b-back", "back"], ["b-fwd", "forward"], ["b-reload", "reload"], ["b-stop", "stop"]])
@@ -144,6 +187,19 @@
       else if (s.call_state === "online") txt = "En ligne (chat) — appelez le FAI pour Internet";
       else txt = "Hors ligne";
       $("st-text").textContent = txt;
+      // Ligne de l'appel (mode MESSAGERIE) ; point rouge si la caméra tourne
+      const bbs = s.session !== "internet", v = s.visio || {};
+      let call;
+      if (s.incoming) call = `On t'appelle : le ${fmtNum(s.incoming)}…`;
+      else if (s.call_state === "dialing" || s.call_state === "ringing") call = "Numérotation…";
+      else if (s.call_state === "connecting") call = "Les modems négocient…";
+      else if (s.call_state === "online" && !bbs) call = "En ligne avec le FAI : la conversation, c'est son salon";
+      else if (s.call_state === "online") call = `En ligne d'abonné à abonné${r ? " · " + r.toLocaleString("fr-FR") + " bit/s" : ""}${s.net ? "" : " · boucle locale : l'écho te répond"}`;
+      else call = "Pas d'appel : choisis un abonné dans les contacts (ou l'annuaire du modem)";
+      if ($("call-text").textContent !== call) $("call-text").textContent = call;
+      $("dot2").classList.toggle("on", s.call_state === "online");
+      $("b-hang").disabled = s.call_state === "idle" && !s.incoming;
+      $("m-msg").classList.toggle("rec", !!v.camera);
       if (online && !wasOnline) go($("addr").value);
       if (!online && wasOnline) T.core.invoke("nav_offline");
     });

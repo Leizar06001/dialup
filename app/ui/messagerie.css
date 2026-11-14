@@ -1,0 +1,160 @@
+/* Tinyverse Messagerie — mode MESSAGERIE du navigateur.
+   Gris Windows 98 comme la barre d'outils (on pense à NetMeeting), le chat
+   dans son terminal ambre du BBS, le visiophone dans un petit téléviseur. */
+
+@font-face {
+  font-family: "VT323";
+  src: url("fonts/VT323-Regular.ttf") format("truetype");
+  font-display: block;
+}
+
+:root {
+  --face: #c0c0c0; --hi: #ffffff; --lo: #808080; --dk: #000000; --navy: #000080;
+  --amber: #ffb347; --amber-dim: #9a6420; --amber-bg: #120b03;
+  --led-red: #ff3b2f; --led-green: #49ff6a;
+  --screen-font: "VT323", "Menlo", "Consolas", "DejaVu Sans Mono", monospace;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--face); color: #000;
+  font: 12px Tahoma, Verdana, "Segoe UI", sans-serif; -webkit-user-select: none; user-select: none; }
+button, input { font: inherit; }
+
+.msgr {
+  height: 100%; display: grid; gap: 14px 10px; padding: 14px 10px 10px;
+  grid-template-columns: minmax(260px, 400px) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: "visio chat" "dir chat";
+}
+.visio { grid-area: visio; }
+.chat  { grid-area: chat; }
+.dir   { grid-area: dir; }
+
+/* Cadre de groupe gravé, titre dans la bordure */
+.box { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px;
+  padding: 12px 8px 8px; border: 2px groove #f4f4f4; }
+.legend { position: absolute; top: -9px; left: 8px; margin: 0; padding: 0 4px; background: var(--face);
+  font: inherit; font-weight: normal; white-space: nowrap; }
+.legend i { font-style: normal; color: #404040; }
+.legend .count { color: #404040; }
+
+/* Boutons et cases en relief Windows 98 */
+button, .btn { background: var(--face); color: #000; cursor: pointer; padding: 2px 10px; min-height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 2px solid; border-color: var(--hi) var(--dk) var(--dk) var(--hi);
+  box-shadow: inset -1px -1px 0 var(--lo), inset 1px 1px 0 #dfdfdf; }
+button:active, .btn:active, button.on { border-color: var(--dk) var(--hi) var(--hi) var(--dk);
+  box-shadow: inset 1px 1px 0 var(--lo); }
+button.on { background: #d8d8d8 repeating-conic-gradient(#c0c0c0 0 25%, #e0e0e0 0 50%) 0 0 / 2px 2px; }
+.seg { display: flex; }
+.seg button { font-weight: bold; min-width: 64px; }
+.cell { display: flex; align-items: center; height: 20px; padding: 0 5px; white-space: nowrap; overflow: hidden;
+  border: 1px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo); font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------------------ visiophone */
+.tv {
+  position: relative; width: min(100%, 50vh * 4 / 3); aspect-ratio: 4 / 3; margin: 0 auto; flex: none;
+  border: 2px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+  background: radial-gradient(ellipse at center, #10141a 0%, #040506 80%);
+  overflow: hidden;
+}
+.tv::after {
+  /* lignes de balayage et coins sombres d'un petit téléviseur */
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 3;
+  background:
+    radial-gradient(ellipse at center, transparent 62%, rgba(0,0,0,0.5) 100%),
+    repeating-linear-gradient(0deg, rgba(0,0,0,0.22) 0 1px, transparent 1px 3px);
+}
+.pic { position: absolute; inset: 0; }
+.pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain;
+  opacity: 0; transition: opacity 350ms ease-in-out; }
+.pic img.on { opacity: 1; }
+#visio-remote img { filter: saturate(1.15) contrast(1.05); }
+.osd {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2;
+  max-width: 90%; padding: 4px 12px; text-align: center; pointer-events: none;
+  font-family: var(--screen-font); font-size: 24px; letter-spacing: 2px; line-height: 1.1;
+  color: #e6f0ff; text-shadow: 0 0 8px rgba(160,200,255,0.7); background: rgba(0,0,0,0.45);
+}
+.osd small { display: block; font-size: 17px; letter-spacing: 1px; color: #9fb4cc; text-shadow: none; }
+.pip {
+  position: absolute; right: 8px; bottom: 8px; z-index: 2; width: 28%; aspect-ratio: 4 / 3;
+  border: 2px solid #000; background: #000; overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(230,240,255,0.4), 0 3px 8px rgba(0,0,0,0.8);
+}
+.pip.mirror .pic { transform: scaleX(-1); }
+.pip span { position: absolute; left: 3px; top: 0; z-index: 1; font: 14px var(--screen-font);
+  color: #e6f0ff; text-shadow: 0 0 3px #000, 0 0 2px #000; }
+.rec { position: absolute; top: 4px; right: 8px; z-index: 2; pointer-events: none;
+  font: 15px var(--screen-font); color: var(--led-red); text-shadow: 0 0 6px rgba(255,59,47,0.8);
+  animation: rec 1.2s steps(2, jump-none) infinite; }
+@keyframes rec { 50% { opacity: 0.25; } }
+.vbar { display: flex; align-items: center; gap: 6px; }
+.cells { display: flex; gap: 4px; }
+.cells .cell { flex: 1; min-width: 0; font-size: 11px; }
+.vmsg { margin: 0; min-height: 2.6em; line-height: 1.3; color: #202020; }
+.vmsg.warn { color: #800000; }
+
+/* ------------------------------------------------------------------ conversation (terminal ambre) */
+.amber {
+  position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column;
+  border: 2px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+  background: radial-gradient(ellipse at center, #1c1206 0%, var(--amber-bg) 80%);
+  font-family: var(--screen-font); font-size: 19px; line-height: 1.12;
+  color: var(--amber); text-shadow: 0 0 5px rgba(255,179,71,0.5);
+  padding: 6px 10px 4px; overflow: hidden;
+}
+.amber::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(0,0,0,0.22) 0 1px, transparent 1px 3px); mix-blend-mode: multiply; }
+.bbs-banner { margin: 0 0 4px; font: inherit; font-size: 15px; line-height: 1; color: var(--amber-dim); white-space: pre; overflow: hidden; }
+.bbs-out { flex: 1; min-height: 0; overflow-y: auto; white-space: pre-wrap; word-break: break-word; user-select: text; -webkit-user-select: text; }
+.bbs-out .me b { color: #ffe0a8; font-weight: 400; }
+.bbs-out .them b { color: #ff8a3d; font-weight: 400; }
+.bbs-out .sys { color: var(--amber-dim); text-shadow: none; }
+.bbs-in { display: flex; align-items: center; gap: 6px; padding-top: 3px; }
+.bbs-in input { flex: 1; border: 0; outline: none; background: transparent;
+  font-family: var(--screen-font); font-size: inherit; color: inherit; text-shadow: inherit;
+  caret-color: currentColor; user-select: text; -webkit-user-select: text; }
+.bbs-in input::placeholder { color: #5a3a12; }
+.filebar { display: flex; align-items: center; gap: 6px; }
+.filebar .btn { white-space: nowrap; }
+.progress { position: relative; flex: 1; height: 22px; padding: 2px;
+  border: 1px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo); }
+/* blocs bleu marine façon Windows 98 */
+.progress i { display: block; height: 100%; width: 0%;
+  background: repeating-linear-gradient(90deg, var(--navy) 0 8px, transparent 8px 10px); transition: width 200ms linear; }
+.progress i.err { background: repeating-linear-gradient(90deg, #a00000 0 8px, transparent 8px 10px); }
+.progress span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: #000; text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff; }
+.filebar .rate { width: 80px; justify-content: flex-end; height: 22px; }
+
+/* ------------------------------------------------------------------ annuaire */
+.dir-list { flex: 1; min-height: 60px; overflow-y: auto; background: #fff;
+  border: 2px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo); }
+.dir-row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto 76px; align-items: center; gap: 8px;
+  padding: 2px 6px; min-height: 26px; }
+.dir-row:hover { background: #e8eef8; }
+.dir-row .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dir-row .who small { color: #606060; }
+.dir-row .num { font-family: "Courier New", monospace; font-size: 12px; white-space: nowrap; }
+.dir-row .dot { width: 9px; height: 9px; border-radius: 50%; justify-self: center;
+  background: #8a8a8a; box-shadow: inset 1px 1px 1px rgba(0,0,0,0.5); }
+.dir-row.online .dot { background: #00b000; box-shadow: 0 0 3px #0c0; }
+.dir-row.busy .dot { background: #e08000; box-shadow: 0 0 3px #f90; }
+.dir-row.absent { color: #808080; }
+.dir-row button { min-height: 20px; padding: 0 6px; font-size: 11px; }
+.dir-row .state { font-size: 11px; color: #606060; text-align: center; }
+.dir-sep { margin: 6px 6px 2px; color: #404040; border-bottom: 1px solid #c0c0c0; }
+.dir-note { color: #303030; padding: 8px; line-height: 1.4; }
+
+/* ------------------------------------------------------------------ petites fenêtres */
+@media (max-width: 820px) {
+  .msgr { grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); }
+  .seg button { min-width: 0; padding: 2px 6px; }
+  .cells { flex-direction: column; }
+  .bbs-banner { display: none; }
+}
+@media (max-height: 620px) {
+  .bbs-banner { display: none; }
+  .vmsg { min-height: 1.3em; }
+}

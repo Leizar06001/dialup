@@ -111,11 +111,11 @@ button, input { font: inherit; }
   display: grid;
   gap: 10px;
   padding: 10px;
-  grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr) minmax(280px, 320px);
+  grid-template-columns: minmax(0, 1.12fr) 86px minmax(0, 1fr) minmax(280px, 320px);
   grid-template-rows: minmax(0, 1.08fr) minmax(0, 1fr);
   grid-template-areas:
-    "modem   modem line"
-    "console bbs   monitor";
+    "modem   modem modem line"
+    "console keys  bbs   monitor";
 }
 
 .panel {
@@ -141,6 +141,7 @@ button, input { font: inherit; }
 .line    { grid-area: line; }
 .console { grid-area: console; }
 .bbs     { grid-area: bbs; }
+.keys    { grid-area: keys; }
 .monitor { grid-area: monitor; }
 
 .panel-title {
@@ -424,8 +425,8 @@ input[type=range]::-moz-range-thumb {
 .crt-out .ev.remote { color: #2a6f42; }
 .crt-out .ev.warn { color: var(--amber); }
 .crt-out .cmd { color: #b8ffca; }
-.crt-in, .bbs-in { display: flex; align-items: center; gap: 6px; padding-top: 3px; }
-.crt-in input, .bbs-in input {
+.crt-in { display: flex; align-items: center; gap: 6px; padding-top: 3px; }
+.crt-in input {
   flex: 1; border: 0; outline: none; background: transparent;
   font-family: var(--screen-font); font-size: inherit; color: inherit; text-shadow: inherit;
   caret-color: currentColor;
@@ -433,7 +434,8 @@ input[type=range]::-moz-range-thumb {
 }
 .crt-in input::placeholder { color: var(--ph-faint); }
 
-/* ------------------------------------------------------------------ BBS */
+/* ------------------------------------------------------------------ annuaire (écran ambre)
+   Le chat et les fichiers sont dans la MESSAGERIE du navigateur (messagerie.css). */
 .amber {
   flex: 1; min-height: 0;
   display: flex; flex-direction: column;
@@ -444,33 +446,6 @@ input[type=range]::-moz-range-thumb {
   text-shadow: 0 0 5px rgba(255,179,71,0.5);
   padding: 6px 10px 4px;
 }
-.bbs-banner { margin: 0 0 4px; font: inherit; font-size: 15px; line-height: 1; color: var(--amber-dim); white-space: pre; overflow: hidden; }
-.bbs-out { flex: 1; min-height: 0; overflow-y: auto; white-space: pre-wrap; word-break: break-word; user-select: text; -webkit-user-select: text; }
-.bbs-out .me b { color: #ffe0a8; font-weight: 400; }
-.bbs-out .them b { color: #ff8a3d; font-weight: 400; }
-.bbs-out .sys { color: var(--amber-dim); text-shadow: none; }
-.bbs-in input::placeholder { color: #5a3a12; }
-.filebar { display: flex; align-items: center; gap: 8px; }
-.progress {
-  position: relative; flex: 1; height: 22px;
-  border-radius: 4px; border: 2px solid #0a0908;
-  background: var(--amber-bg);
-  box-shadow: inset 0 0 8px rgba(0,0,0,0.9);
-  overflow: hidden;
-}
-.progress i {
-  position: absolute; left: 0; top: 0; bottom: 0; width: 0%;
-  background: repeating-linear-gradient(90deg, var(--amber) 0 8px, #c47d22 8px 10px);
-  box-shadow: 0 0 10px rgba(255,179,71,0.5);
-  transition: width 200ms linear;
-}
-.progress i.err { background: repeating-linear-gradient(90deg, var(--led-red) 0 8px, #8e1d15 8px 10px); }
-.progress span {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  font-family: var(--screen-font); font-size: 16px; color: #ffd9a0;
-  text-shadow: 0 0 4px #000, 0 0 2px #000;
-}
-.file-rate { font-family: var(--screen-font); font-size: 18px; color: var(--amber); min-width: 76px; text-align: right; }
 
 /* barres de défilement discrètes */
 ::-webkit-scrollbar { width: 8px; }
@@ -479,7 +454,8 @@ input[type=range]::-moz-range-thumb {
 
 /* ------------------------------------------------------------------ petites fenêtres */
 @media (max-width: 1180px) {
-  .rack { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 270px; }
+  .rack { grid-template-columns: minmax(0, 1fr) 74px minmax(0, 1fr) 270px; }
+  .dir-row.fai .who small { display: none; }
   .instruments { grid-template-columns: 220px minmax(0, 1fr) clamp(140px, 16vw, 200px); }
   .leds { gap: 12px; }
   .brand-model { display: none; }
@@ -490,19 +466,19 @@ input[type=range]::-moz-range-thumb {
   .front { padding: 6px 12px; }
   .grill { width: 44px; height: 44px; }
   .resp-box { height: 110px; }
-  .bbs-banner { display: none; }
 }
 
 /* ------------------------------------------------------------------ grands écrans
    Disposition réorganisée quand la place le permet :
    ┌ MODEM : LEDs │ frise des phases │ HP ───────────────┬ LIGNE ───────┐
    │ paramètres │ spectre / oscillo (large) │ constellation│ préréglages  │
-   ├ TERMINAL ───────────────┬ CHAT · FICHIERS ──────────┤ curseurs ×2  │
-   │                         │                           │ réponse      │
-   └─────────────────────────┴───────────────────────────┴──────────────┘ */
+   ├ TERMINAL ─────────────┬──┬ ANNUAIRE ──────────────┤ curseurs ×2  │
+   │                       │◘ │                        │ réponse      │
+   │                       │◘ │ (boutons NAVIGATEUR,   │              │
+   └───────────────────────┴──┴─ MESSAGERIE au milieu) ┴──────────────┘ */
 @media (min-width: 1400px) and (min-height: 840px) {
   .rack {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 400px;
+    grid-template-columns: minmax(0, 1fr) 92px minmax(0, 1fr) 400px;
     grid-template-rows: minmax(0, 1.4fr) minmax(0, 1fr);
     gap: 12px;
     padding: 12px;
@@ -576,27 +552,65 @@ input[type=range]::-moz-range-thumb {
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
 .modal-status { min-height: 1.3em; margin: 4px 0 0; font-family: var(--screen-font); font-size: 18px; color: var(--vfd); }
 
-/* Barre Internet du terminal : FAI + NAVIGATEUR mis en avant */
-.netbar { display: flex; gap: 8px; align-items: stretch; margin-top: 8px; }
-.key.isp { background: linear-gradient(#ffe6b0, #f5c060 45%, #c98a2a); padding-left: 14px; padding-right: 14px; }
-.key.web {
-  flex: none; justify-content: flex-start; gap: 10px; padding: 5px 14px 5px 12px;
-  background: linear-gradient(#cfeeff, #7cc6ee 45%, #3a8fc0);
-  color: #062033;
+/* ------------------------------------------------------------------ boutons-poussoirs
+   Le module entre le terminal et l'annuaire : deux gros boutons de façade
+   (capuchon beige bombé dans un puits sombre, course de 3 px, étiquette
+   gravée), chacun avec sa LED. NAVIGATEUR : verte quand Internet est prêt.
+   MESSAGERIE : verte en ligne avec un abonné, rouge qui clignote quand un
+   message attend (comme un répondeur). */
+.keys { align-items: center; justify-content: space-evenly; padding: 18px 6px 14px; gap: 10px; }
+.push {
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  padding: 0; border: 0; background: none; cursor: pointer; color: var(--engrave);
+  -webkit-tap-highlight-color: transparent;
 }
-.web-txt { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.1; font-size: 14px; letter-spacing: 3px; }
-.web-txt small { font-size: 10px; letter-spacing: 1px; font-weight: 600; opacity: 0.75; }
-.web-led {
-  width: 12px; height: 12px; border-radius: 50%; flex: none;
-  background: #26414f; box-shadow: inset 0 1px 2px rgba(0,0,0,0.7);
+.push:focus-visible { outline: none; }
+.push:focus-visible .push-well { box-shadow: inset 0 2px 6px rgba(0,0,0,0.85), 0 0 0 2px rgba(103,247,228,0.45); }
+.push-well {
+  display: block; padding: 4px 4px 7px; border-radius: 8px;
+  background: linear-gradient(180deg, #0c0b0a, #171513);
+  border: 1px solid #000;
+  box-shadow: inset 0 2px 6px rgba(0,0,0,0.85), 0 1px 0 rgba(255,255,255,0.07);
 }
-.key.web.ready { animation: web-glow 1.6s ease-in-out infinite; }
-.key.web.ready .web-led { background: var(--led-green); box-shadow: 0 0 8px var(--led-green); }
-.key.web.ready .web-txt small { opacity: 1; }
-@keyframes web-glow {
-  0%, 100% { box-shadow: 0 2px 0 #1f4a63, 0 3px 4px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.7), 0 0 0 rgba(124,198,238,0); }
-  50%      { box-shadow: 0 2px 0 #1f4a63, 0 3px 4px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.7), 0 0 18px rgba(124,198,238,0.85); }
+.push-cap {
+  display: grid; place-items: center; width: 50px; height: 40px; border-radius: 5px;
+  color: #4a4236;
+  background:
+    radial-gradient(ellipse at 50% 18%, rgba(255,255,255,0.55), transparent 60%),
+    linear-gradient(180deg, #ece4d4, #d3c9b6 55%, #b7ab95);
+  border: 1px solid #0b0a09;
+  box-shadow:
+    0 3px 0 #6d6455, 0 4px 0 #2a2620, 0 6px 8px rgba(0,0,0,0.6),
+    inset 0 1px 0 rgba(255,255,255,0.8), inset 0 -2px 3px rgba(0,0,0,0.18);
+  transform: translateY(0);
+  transition: transform 50ms linear, box-shadow 50ms linear;
 }
+.push-cap svg {
+  width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round;
+  filter: drop-shadow(0 1px 0 rgba(255,255,255,0.6)); /* gravé dans le plastique */
+}
+.push:active .push-cap {
+  transform: translateY(3px);
+  box-shadow:
+    0 0 0 #6d6455, 0 1px 0 #2a2620, 0 2px 3px rgba(0,0,0,0.6),
+    inset 0 1px 2px rgba(0,0,0,0.25), inset 0 -1px 2px rgba(0,0,0,0.12);
+}
+.push-label {
+  font-size: 9px; font-weight: 700; letter-spacing: 1px; white-space: nowrap;
+  color: var(--engrave);
+  text-shadow: 0 1px 0 rgba(0,0,0,0.8), 0 -1px 0 rgba(255,255,255,0.08);
+}
+.push .led { width: 10px; height: 10px; }
+.led.blink { animation: led-blink 0.9s steps(2, jump-none) infinite; }
+@keyframes led-blink { 50% { opacity: 0.25; } }
+/* Onglet CHAT ↗ de l'annuaire : un message attend dans la messagerie */
+#bbs-tabs button.unread { color: #1a0d0a; background: linear-gradient(#ffd08a, var(--amber)); animation: led-blink 0.9s steps(2, jump-none) infinite; }
+/* Le FAI, épinglé en tête de l'annuaire */
+.dir-row.fai .who small { color: var(--amber-dim); font-size: 14px; }
+/* fenêtre étroite : le nom reste lisible, le numéro se raccourcit d'abord */
+.dir-row.fai { grid-template-columns: 18px minmax(84px, 1fr) minmax(0, auto) 92px; }
+.dir-row.fai .num { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ------------------------------------------------------------------ moniteur de liaison */
 .mon { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 8px 10px 6px; gap: 6px;

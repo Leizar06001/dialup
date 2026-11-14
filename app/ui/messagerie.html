@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Tinyverse Messagerie</title>
+  <!-- Mode MESSAGERIE du navigateur : l'appel en cours (chat, visiophone,
+       fichiers) et les contacts du central, façon logiciel de visioconférence
+       de 1997. Page locale, avec accès aux commandes de l'appli. -->
+  <link rel="stylesheet" href="messagerie.css">
+</head>
+<body>
+  <main class="msgr">
+    <!-- ======================== VISIOPHONE ======================== -->
+    <section class="box visio" aria-label="Visiophone">
+      <h2 class="legend">Visiophone <i>· V.Hallucination</i></h2>
+      <div class="tv" id="visio-tv" title="Ton correspondant, redessiné de mémoire en une quarantaine de formes">
+        <div class="pic" id="visio-remote"><img alt=""><img alt=""></div>
+        <div class="osd" id="visio-osd">AUCUN SIGNAL</div>
+        <div class="pip" id="visio-pip" hidden title="Toi, tel que ton correspondant te reçoit">
+          <div class="pic" id="visio-self"><img alt=""><img alt=""></div>
+          <span>MOI</span>
+        </div>
+        <span class="rec" id="visio-rec" hidden>● REC</span>
+      </div>
+      <div class="vbar">
+        <span class="lbl">Image :</span>
+        <div class="seg" id="visio-src" role="group" aria-label="Source d'image du visiophone">
+          <button data-src="off" class="on" title="Rien n'est filmé (réglage d'usine)">OFF</button>
+          <button data-src="cam" title="La webcam : tu te montres">CAMÉRA</button>
+          <button data-src="mire" title="Monsieur Mire, présentateur de synthèse, pour essayer sans caméra">MIRE</button>
+        </div>
+      </div>
+      <div class="cells">
+        <span class="cell" id="visio-up" title="Tes images : par seconde, octets par image, débit">↑ —</span>
+        <span class="cell" id="visio-down" title="Images reçues : par seconde, octets par image, débit">↓ —</span>
+      </div>
+      <p class="vmsg" id="visio-msg"></p>
+    </section>
+
+    <!-- ======================== CONVERSATION ======================== -->
+    <section class="box chat" aria-label="Conversation">
+      <h2 class="legend" id="chat-title">Conversation</h2>
+      <div class="amber">
+        <pre class="bbs-banner">╔════════════════════════════════════════╗
+║  T I N Y V E R S E   B B S   · 1996 ·  ║
+╚════════════════════════════════════════╝</pre>
+        <div class="bbs-out" id="bbs-out"></div>
+        <form class="bbs-in" id="bbs-form" autocomplete="off">
+          <span class="prompt">&lt;moi&gt;</span>
+          <input id="bbs-input" spellcheck="false" aria-label="Message" placeholder="tape ton message…">
+        </form>
+      </div>
+      <div class="filebar">
+        <label class="btn" for="file-input">Envoyer un fichier…</label>
+        <input type="file" id="file-input" hidden>
+        <div class="progress"><i id="file-progress"></i><span id="file-label">aucun transfert</span></div>
+        <span class="cell rate" id="file-rate">0,0 Ko/s</span>
+      </div>
+    </section>
+
+    <!-- ======================== ANNUAIRE ======================== -->
+    <section class="box dir" aria-label="Contacts">
+      <h2 class="legend"><span id="dir-title">Contacts</span> <span class="count" id="dir-count"></span></h2>
+      <div class="dir-list" id="dir-list"></div>
+    </section>
+  </main>
+  <script src="messagerie.js"></script>
+</body>
+</html>

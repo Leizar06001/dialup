@@ -156,6 +156,10 @@ pub enum EngineCmd {
     /// Panneau CONFIG : configuration des prochains appels (voir `modem_config`)
     /// Panneau CONFIG : configuration du modem, réponse automatique
     SetConfig(ModemConfig, bool),
+    /// Visiophone : caméra (ou mire) allumée / éteinte
+    VisioCamera(bool),
+    /// Visiophone : une image hallucinée à envoyer, si la ligne le permet
+    VisioFrame(Vec<u8>),
 }
 
 /// Débit le plus bas du V.90 (sens descendant), en bit/s : en dessous, le
@@ -230,6 +234,8 @@ pub struct UiState {
     pub ppp: Option<&'static str>,
     /// Appel entrant qui sonne (réponse manuelle) : numéro de l'appelant
     pub incoming: Option<String>,
+    /// Visiophone : correspondant, cadence, débits
+    pub visio: crate::visio::VisioUi,
 }
 
 #[derive(Clone, Serialize)]
@@ -327,6 +333,7 @@ pub struct Engine {
     counters: Counters,
     /// Réseau : on joue le retour d'appel tant que l'autre n'a pas décroché
     ringback: bool,
+    visio: crate::visio::Visio,
 }
 
 fn fmt_speed(x: f64) -> String {
@@ -388,6 +395,7 @@ impl Engine {
             ppp_shown: 0,
             counters: Counters::default(),
             ringback: false,
+            visio: Default::default(),
         }
     }
 
@@ -578,6 +586,27 @@ impl Engine {
                 self.chat("system", format!("Envoi de « {name} » ({:.1} Ko) — environ {:.0} s à {} bit/s", data.len() as f64 / 1024.0, eta, rate as u32));
                 self.outgoing.push_back(crate::bbs::Outgoing { name, size: data.len() as u64, stream_start: start, stream_end: self.stream_pos, started: Instant::now() });
             }
+            EngineCmd::VisioCamera(on) => {
+                if let Some(b) = self.visio.set_camera(on, &self.visio_ctx(), Instant::now()) {
+                    self.send_bytes(b);
+                }
+            }
+            EngineCmd::VisioFrame(img) => {
+                if let Some(b) = self.visio.offer(img, &self.visio_ctx(), Instant::now()) {
+                    self.send_bytes(b);
+                }
+            }
+        }
+    }
+
+    /// Visiophone : ce qu'il doit savoir de la liaison (appel entre
+    /// abonnés en données, file d'émission, débit, fichier en cours).
+    fn visio_ctx(&self) -> crate::visio::LinkCtx {
+        crate::visio::LinkCtx {
+            online: self.session == Session::Bbs && self.tunnel.is_none() && self.status.phase == Phase::Data,
+            tx_queue: self.status.link.as_ref().map_or(0, |l| l.tx_queue),
+            rate_bps: self.status.params.data_rate_tx.unwrap_or(0),
+            file_busy: !self.outgoing.is_empty(),
         }
     }
 
@@ -731,6 +760,7 @@ impl Engine {
         self.stream_pos = 0;
         self.outgoing.clear();
         self.incoming = None;
+        self.visio.reset();
     }
 
     /// Signalisation du central (mode réseau).
@@ -1006,6 +1036,16 @@ impl Engine {
                     if self.incoming.as_ref().is_some_and(|i| i.id == id) {
                         let inc = self.incoming.take().unwrap();
                         self.chat("system", format!("Transfert de « {} » annulé par l'autre", inc.name));
+                    }
+                }
+                Item::Frame(Frame::Visio { camera }) => {
+                    if let Some(b) = self.visio.on_announce(camera, &self.visio_ctx(), Instant::now()) {
+                        self.send_bytes(b);
+                    }
+                }
+                Item::Frame(Frame::Video(img)) => {
+                    if let Some(f) = self.visio.on_video(&img, Instant::now()) {
+                        let _ = self.app.emit("v34:visio", f);
                     }
                 }
                 Item::Raw(raw) => self.on_raw_text(&raw),
@@ -1397,6 +1437,7 @@ impl Engine {
             incoming: self.ringing_from.clone(),
             ppp: self.ppp.map(|t0| ppp_stage(t0.elapsed()).map_or("Connecté", |i| PPP_STEPS[i].1)),
             audio_device: self.speaker.device_name(),
+            visio: self.visio.ui(&self.visio_ctx(), Instant::now()),
         };
         let _ = self.app.emit("v34:state", state);
     }

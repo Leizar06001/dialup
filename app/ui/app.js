@@ -84,10 +84,6 @@ $("dial-number").addEventListener("keydown", (e) => {
   if (e.key === "Enter") sendAt("ATDT" + e.target.value.trim());
 });
 $("btn-hangup").addEventListener("click", () => sendAt("ATH"));
-$("btn-isp").addEventListener("click", () => {
-  $("dial-number").value = "0836154286";
-  invoke("at_command", { line: "ATDT0836154286" });
-});
 $("btn-browser").addEventListener("click", () => invoke("open_browser").catch((e) => crt("Navigateur : " + e, "info")));
 $("btn-retrain").addEventListener("click", () => {
   crt("> [RETRAIN]", "cmd");
@@ -119,82 +115,37 @@ bridge.listen("v34:event", ({ side, event }) => {
   }
 });
 
-/* ---------------------------------------------------------------- BBS */
-const bbsOut = $("bbs-out");
-let remoteLine = null;
-function bbsLine(cls, who, text) {
-  const div = document.createElement("div");
-  div.className = cls;
-  if (who) {
-    const b = document.createElement("b");
-    b.textContent = who + " ";
-    div.appendChild(b);
-  }
-  div.appendChild(document.createTextNode(text));
-  bbsOut.appendChild(div);
-  while (bbsOut.childElementCount > 400) bbsOut.firstChild.remove();
-  bbsOut.scrollTop = bbsOut.scrollHeight;
-  return div;
+/* ---------------------------------------------------------------- messagerie
+   Le chat, les fichiers et le visiophone sont dans le mode MESSAGERIE du
+   navigateur (messagerie.html). Ici : le bouton-poussoir qui l'ouvre, sa
+   LED (verte en ligne avec un abonné, rouge qui clignote quand un message
+   attend), et l'ouverture automatique quand un appel entre abonnés aboutit. */
+const messagerie = { unread: false, bbsOnline: false };
+function openMessagerie() {
+  messagerie.unread = false;
+  invoke("open_browser", { mode: "messagerie" }).catch((e) => crt("Messagerie : " + e, "info"));
 }
-bbsLine("sys", "", "*** Bienvenue ! Compose un numéro (ATDT…) puis discute ici une fois connecté.");
-bbsLine("sys", "", "*** En boucle locale, le modem distant te renvoie tes messages (écho).");
-
-bridge.listen("v34:chat", ({ from, text }) => {
-  if (from === "local") { bbsLine("me", "<moi>", text); return; }
-  if (from === "system") { bbsLine("sys", "", "*** " + text); return; }
-  if (from === "salon") {
-    // « <nom> texte » : message d'un autre abonné du salon du FAI
-    const m = /^<([^>]{1,40})> ?(.*)$/.exec(text);
-    if (m) bbsLine("them", `<${m[1]}>`, m[2]); else bbsLine("them", "", text);
-    return;
-  }
-  // Flux distant : on assemble jusqu'au retour à la ligne
-  const parts = text.split("\n");
-  parts.forEach((part, i) => {
-    if (!remoteLine) remoteLine = bbsLine("them", "<distant>", "");
-    remoteLine.lastChild.textContent += part;
-    if (i < parts.length - 1) remoteLine = null;
-  });
-  bbsOut.scrollTop = bbsOut.scrollHeight;
+$("btn-messagerie").addEventListener("click", openMessagerie);
+bridge.listen("v34:chat", ({ from }) => {
+  if (from === "remote" || from === "salon") messagerie.unread = true;
 });
-
-$("bbs-form").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const inp = $("bbs-input");
-  if (!inp.value) return;
-  invoke("send_chat", { text: inp.value }).catch((err) => bbsLine("sys", "", "*** " + err));
-  inp.value = "";
-});
-
-$("file-input").addEventListener("change", async (e) => {
-  const f = e.target.files[0];
-  e.target.value = "";
-  if (!f) return;
-  if (f.size > 8 * 1024 * 1024) {
-    bbsLine("sys", "", `*** « ${f.name} » est trop gros (max 8 Mo) — c'est un modem 33,6k !`);
-    return;
-  }
-  $("file-label").textContent = `↑ ${f.name} · 0 %`;
-  $("file-progress").style.width = "0%";
-  try {
-    const buf = new Uint8Array(await f.arrayBuffer());
-    await invoke("send_file", { name: f.name, data: Array.from(buf) });
-  } catch (err) {
-    bbsLine("sys", "", "*** " + err);
-    $("file-label").textContent = "aucun transfert";
-  }
-});
-
-// Progression des transferts (↑ envoi, ↓ réception)
-bridge.listen("v34:file", ({ dir, name, done, total, rate, state }) => {
-  const pct = total ? Math.min(100, (100 * done) / total) : 0;
-  const arrow = dir === "tx" ? "↑" : "↓";
-  $("file-progress").style.width = pct.toFixed(1) + "%";
-  $("file-progress").classList.toggle("err", state === "error");
-  const what = state === "done" ? "terminé" : state === "error" ? "ERREUR" : `${pct.toFixed(0)} %`;
-  $("file-label").textContent = `${arrow} ${name} · ${what}`;
-  $("file-rate").textContent = `${rate.toFixed(2).replace(".", ",")} Ko/s`;
-});
+// La messagerie a été lue (sa fenêtre a le focus)
+bridge.listen("messagerie:vu", () => { messagerie.unread = false; });
+// Un numéro choisi dans l'annuaire s'affiche aussi dans le terminal
+bridge.listen("messagerie:compose", (num) => { $("dial-number").value = num; });
+function updateMessagerie(s) {
+  const bbs = s.session !== "internet" && s.call_state === "online";
+  if (bbs && !messagerie.bbsOnline) openMessagerie(); // l'appel aboutit : place à la conversation
+  messagerie.bbsOnline = bbs;
+  led("led-msg", messagerie.unread ? "led on blink" : bbs ? "led green on" : "led green");
+  const tab = document.querySelector('#bbs-tabs [data-view="chat"]');
+  if (tab.classList.contains("unread") !== messagerie.unread) tab.classList.toggle("unread", messagerie.unread);
+}
+/** LED d'un bouton-poussoir (ne touche au DOM que si elle change). */
+function led(id, cls) {
+  const el = $(id);
+  if (el.className !== cls) el.className = cls;
+}
 
 /* ---------------------------------------------------------------- central (mode réseau) */
 const store = {
@@ -523,14 +474,10 @@ function onState(s) {
   const dial = $("btn-dial");
   setText("btn-dial", s.incoming ? "DÉCROCHER" : "APPELER");
   dial.classList.toggle("ringing", !!s.incoming);
-  const web = $("btn-browser"), dialingIsp = s.session === "internet" || (s.call_state !== "idle" && $("dial-number").value.trim() === "0836154286");
-  web.classList.toggle("ready", !!s.proxy);
-  // Session Internet : le chat n'a pas de destinataire (la ligne porte le tunnel).
-  const inet = s.session === "internet" && s.call_state !== "idle";
-  const ph = inet ? "parle au salon du FAI… (/qui : présents)" : "tape ton message…";
-  if ($("bbs-input").placeholder !== ph) $("bbs-input").placeholder = ph;
-  if (bbsView === "chat") setText("bbs-title", inet ? "SALON DU FAI" : "CHAT · FICHIERS");
-  setText("web-sub", s.proxy ? "Internet prêt · clique !" : dialingIsp && s.call_state !== "idle" ? "connexion au FAI…" : s.call_state === "online" ? "en ligne (chat) · appelle le FAI" : "appelle d'abord le FAI");
+  // Bouton NAVIGATEUR : sa LED s'allume quand le tunnel Internet est prêt
+  led("led-nav", s.proxy ? "led green on" : "led green");
+  updateMessagerie(s);
+  renderDir(s.net);
 
   updateNet(s.net);
   updateMonitor(s);
@@ -538,7 +485,6 @@ function onState(s) {
   // Panneau CONFIG : pendant un appel, les réglages attendent le suivant.
   const cfgNote = $("cfg-note"), quiet = s.call_state === "idle";
   if (cfgNote.hidden !== quiet) cfgNote.hidden = quiet;
-  renderDir(s.net);
   if (s.speed != null) {
     document.querySelectorAll("#speed-seg button").forEach((b) =>
       b.classList.toggle("on", Math.abs(+b.dataset.speed - s.speed) < 1e-6));
@@ -797,6 +743,9 @@ const TIPS = {
   dipres: ["DIP 4 à 8 · Réservé", "Réservé usine — ne pas modifier. Réglés en usine et sans effet sur ce modèle ; le technicien qui savait à quoi ils servaient est parti avec le mode d'emploi."],
   debit: ["DÉBIT MAX", "Plafond du débit négocié, pour imiter un modem plus ancien ou brider la ligne. Le V.34 s'arrête à 33 600 bit/s ; au-dessus, seul le 56K (V.90) monte, par paliers de 2 667 bit/s, et il ne descend pas sous 28 000. Molette de la souris, ▲ ▼ ou flèches du clavier."],
   cast: ["COMMENTAIRES", "Le modem commente sa propre négociation comme un match à la télé : ANSam, sondage, débit symbole, CONNECT… Les phrases sont tirées au hasard dans des banques écrites à la main, avec les vraies valeurs mesurées. Aucune intelligence artificielle n'a été dérangée."],
+  messagerie: ["MESSAGERIE", "Ouvre la messagerie du navigateur : le chat (ou le salon du FAI), l'envoi de fichiers et le visiophone V.Hallucination, avec les contacts du central. Elle s'ouvre toute seule quand un appel entre abonnés aboutit. LED verte : en ligne avec un abonné ; rouge qui clignote : un message t'attend, comme sur un répondeur."],
+  nav: ["NAVIGATEUR", "Ouvre Tinyverse Navigator, sur le web 1998 ou moderne : tout son trafic passe par le modem. Appelle d'abord TINYVERSE, en tête de l'ANNUAIRE ; la LED s'allume quand Internet est prêt."],
+  chat: ["CHAT ↗", "Le chat et l'envoi de fichiers ont déménagé dans la MESSAGERIE du navigateur, avec le visiophone : cet onglet l'ouvre. Il clignote quand un message t'y attend."],
   karaoke: ["♪ KARAOKÉ", "Les paroles de la chanson du modem, en direct : à gauche ce que notre modem émet, à droite ce qu'on entend de l'autre bout. La boule rebondit sur la syllabe en cours. Au ralenti (TEMPS ×0,1), on arrive presque à chanter juste."],
 };
 const tip = document.createElement("div");
@@ -810,6 +759,16 @@ function tipLive(key) {
   // Panneau CONFIG : la ligne en direct suit les réglages, pas l'état du modem.
   if (key === "cfg" || key === "debit") return cfgSummary();
   if (key === "dipres") return "○ OFF, scellé";
+  if (key === "nav") {
+    const s = state;
+    return s && s.proxy ? "● Internet prêt : clique !" : s && s.session === "internet" && s.call_state !== "idle" ? "◐ connexion au FAI…" : "○ pas d'Internet : appelle TINYVERSE dans l'ANNUAIRE";
+  }
+  if (key === "messagerie" || key === "chat") {
+    const v = state && state.visio;
+    const l = [messagerie.unread ? "● nouveau message" : messagerie.bbsOnline ? "● en ligne avec un abonné" : "○ pas d'appel entre abonnés"];
+    if (v && v.camera) l.push("visiophone : ta caméra tourne");
+    return l.join("\n");
+  }
   if (key === "cast") return cast.actif() ? "● micro ouvert" : "○ micro coupé : la régie a débranché le commentateur";
   if (key === "karaoke") {
     const s = state && state.status;
@@ -983,17 +942,13 @@ function drawSpark() {
   ctx.fillText(`${fr1(max)} Ko/s`, 2, top + 10);
 }
 
-/* ---------------------------------------------------------------- chat / annuaire */
-let bbsView = "chat";
-function setBbsView(v) {
-  bbsView = v;
-  document.querySelectorAll("#bbs-tabs button").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
-  document.querySelectorAll(".bbs .chat-view").forEach((el) => (el.hidden = v !== "chat"));
-  $("dir").hidden = v !== "dir";
-  setText("bbs-title", v === "dir" ? "ANNUAIRE" : "CHAT · FICHIERS"); // corrigé au prochain état si salon
-  if (v === "dir") invoke("net_directory").catch(() => {});
-}
-document.querySelectorAll("#bbs-tabs button").forEach((b) => b.addEventListener("click", () => setBbsView(b.dataset.view)));
+/* ---------------------------------------------------------------- annuaire
+   Le panneau sous le modem, comme avant ; son onglet CHAT ↗ ouvre la
+   messagerie du navigateur, où vivent maintenant le chat et les fichiers. */
+document.querySelectorAll("#bbs-tabs button").forEach((b) => b.addEventListener("click", () => {
+  if (b.dataset.view === "chat") return openMessagerie();
+  invoke("net_directory").catch(() => {}); // l'annuaire se met à jour à chaque ouverture
+}));
 function dialFromDir(num) {
   $("dial-number").value = num;
   invoke("at_command", { line: "ATDT" + num });
@@ -1005,16 +960,20 @@ $("dir-list").addEventListener("click", (e) => {
 let dirKey = null;
 function renderDir(net) {
   // Ne reconstruire la liste que si elle change (sinon les clics se perdent).
-  const key = JSON.stringify(net ? [net.registered, net.number, net.directory, net.services, net.server] : null);
+  const key = JSON.stringify(net ? [net.registered, net.number, net.directory, net.services, net.server, net.isp_number] : null);
   if (key === dirKey) return;
   dirKey = key;
   const list = $("dir-list");
   list.textContent = "";
   const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  // Le FAI d'abord : c'est par là qu'on va sur Internet (ancien bouton ☎ FAI)
+  const svcAll = (net && net.services) || [];
+  const isp = (svcAll.find(([, kind]) => kind === "fai") || [(net && net.isp_number) || "0836154286"])[0];
+  const fai = `<div class="dir-row online fai"><i class="dot"></i><span class="who">TINYVERSE <small>· accès Internet</small></span><span class="num">${fmtNum(isp)}</span><button class="key primary" id="btn-isp" data-num="${esc(isp)}" title="Appeler le fournisseur d'accès : Internet par le modem">☎ APPELER</button></div>`;
   if (!net || !net.registered) {
     setText("dir-title", "ANNUAIRE");
     setText("dir-count", "");
-    list.innerHTML = `<div class="dir-note">${net ? "Connexion au central en cours…" :
+    list.innerHTML = fai + `<div class="dir-note">${net ? "Connexion au central en cours…" :
       "Tu es en <b>boucle locale</b> : pas de central, donc pas d'annuaire. Tous les numéros répondent ici (modem simulé), le 08 36 15 42 86 compris.<br><br>Clique sur le badge en haut à droite pour te connecter à ton central."}</div>`;
     return;
   }
@@ -1025,7 +984,7 @@ function renderDir(net) {
   const label = { online: "en ligne", busy: "en ligne · occupé", absent: "absent" };
   const order = { online: 0, busy: 1, absent: 2 };
   const rows = [...dir].sort((a, b) => (a.number === net.number ? -1 : b.number === net.number ? 1 : order[a.status] - order[b.status] || a.name.localeCompare(b.name)));
-  let html = "";
+  let html = fai;
   for (const d of rows) {
     const me = d.number === net.number;
     const action = me ? `<span class="state">c'est toi</span>`
@@ -1034,7 +993,7 @@ function renderDir(net) {
     html += `<div class="dir-row ${d.status}"><i class="dot"></i><span class="who">${esc(d.name)}${me ? " <small>(toi)</small>" : ""}</span><span class="num">${fmtNum(d.number)}</span>${action}</div>`;
   }
   if (!dir.length) html += `<div class="dir-note">Le central n'a pas encore envoyé l'annuaire (ou il est trop ancien : mets-le à jour).</div>`;
-  const svc = net.services || [];
+  const svc = svcAll.filter(([, kind]) => kind !== "fai"); // le FAI est déjà en tête
   if (svc.length) {
     html += `<div class="dir-sep">── NUMÉROS SPÉCIAUX ──</div>`;
     const names = { fai: "Fournisseur d'accès (Internet)", echo: "Ligne de test (écho)" };

@@ -139,6 +139,22 @@ pub fn hallucinate(img: &DynamicImage, opts: &HalluOptions, seed: u64) -> (Drawi
     (approximate(&work, opts.shapes_for(dw, dh), opts, seed), dw, dh)
 }
 
+/// Hallucine des pixels bruts RGBA (`w` × `h`, ligne après ligne, comme
+/// les rend `getImageData` d'un canevas) : réduits à la taille de travail
+/// (jamais agrandis), puis `max_shapes` formes au plus. Pour le visiophone,
+/// qui n'a ni GIF ni JPEG à décoder. Le budget en octets de SVG
+/// (`opts.max_bytes`) s'applique toujours : le mettre large si seul le
+/// nombre de formes compte.
+pub fn from_rgba(rgba: &[u8], w: u32, h: u32, max_shapes: usize, opts: &HalluOptions, seed: u64) -> Result<Drawing, String> {
+    let want = w as usize * h as usize * 4;
+    if w == 0 || h == 0 || rgba.len() != want {
+        return Err(format!("image {w}×{h} : {} octets au lieu de {want}", rgba.len()));
+    }
+    let img = image::RgbaImage::from_raw(w, h, rgba.to_vec()).ok_or("image RGBA invalide")?;
+    let work = working_image(&DynamicImage::ImageRgba8(img), w, h, opts.work_size);
+    Ok(approximate(&work, max_shapes, opts, seed))
+}
+
 /// Image de travail : réduite (plus grand côté `size`, jamais agrandie
 /// au-delà de la taille d'affichage), transparence posée sur le gris des pages.
 pub fn working_image(img: &DynamicImage, dw: u32, dh: u32, size: u32) -> RgbImage {
@@ -718,6 +734,23 @@ mod tests {
         let svg = String::from_utf8(to_svg(&png(&paysage(500, 333)), &opts, 3).unwrap()).unwrap();
         assert!(svg.contains("viewBox=\"0 0 96 63.9\" width=\"320\" height=\"213\""), "{}", &svg[..120]);
         assert!(to_svg(b"pas une image", &opts, 3).is_err());
+    }
+
+    #[test]
+    fn pixels_bruts_rgba() {
+        // 160×120 opaque, comme une webcam lue sur un canevas : réduite à 64×48
+        let opts = HalluOptions { work_size: 64, max_bytes: 1 << 20, ..HalluOptions::default() };
+        let src = paysage(160, 120);
+        let rgba: Vec<u8> = src.pixels().flat_map(|p| [p[0], p[1], p[2], 255]).collect();
+        let d = from_rgba(&rgba, 160, 120, 30, &opts, 9).unwrap();
+        assert_eq!((d.width, d.height, d.shapes.len()), (64, 48, 30));
+        assert!(d.rmse < 30.0, "{:.1}", d.rmse);
+        // même résultat que par le chemin habituel (image décodée)
+        let work = working_image(&DynamicImage::ImageRgb8(src), 160, 120, 64);
+        assert_eq!(approximate(&work, 30, &opts, 9).shapes, d.shapes);
+        // tailles incohérentes : refusées, pas de panique
+        assert!(from_rgba(&rgba[4..], 160, 120, 30, &opts, 9).is_err());
+        assert!(from_rgba(&[], 0, 0, 30, &opts, 9).is_err());
     }
 
     #[test]

@@ -3,7 +3,11 @@
 //! Le moteur temps réel tourne dans son propre thread (`engine`) ; les
 //! commandes de l'IHM lui sont transmises par un canal, et il renvoie
 //! l'état par des événements Tauri (`v34:state`, `v34:event`,
-//! `v34:console`, `v34:chat`).
+//! `v34:console`, `v34:chat`, `v34:file`, `v34:visio`).
+//!
+//! Le chat, les fichiers et le visiophone vivent dans la
+//! messagerie de la fenêtre du navigateur ([`browser`]) ; elle peut s'ouvrir
+//! en cours d'appel : un journal garde les messages reçus depuis le lancement.
 
 // Pas de console noire derrière la fenêtre sous Windows (en release).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -15,13 +19,15 @@ mod engine;
 mod fft;
 mod link;
 mod tones;
+mod visio;
 
+use std::collections::VecDeque;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::Manager;
 use tauri::State;
+use tauri::{Emitter, Listener, Manager};
 use v34_core::{LineParams, ModemCommand};
 
 use audio::Speaker;
@@ -109,11 +115,66 @@ fn net_local(state: State<AppState>) -> Result<(), String> {
     state.send(EngineCmd::NetLocal)
 }
 
-/// Ouvre la fenêtre du navigateur (trafic par le proxy du modem).
+/// Ouvre la fenêtre du navigateur (trafic par le proxy du modem), sur la
+/// page web ou, avec `mode` = "messagerie", sur le chat et le visiophone.
 #[tauri::command]
-fn open_browser(app: tauri::AppHandle) -> Result<(), String> {
-    browser::check_platform()?;
-    browser::open(&app, engine::PROXY_PORT).map_err(|e| e.to_string())
+fn open_browser(app: tauri::AppHandle, mode: Option<String>) -> Result<(), String> {
+    browser::open(&app, engine::PROXY_PORT, mode.as_deref() == Some("messagerie"))
+}
+
+/// Barre d'outils du navigateur : passer à la messagerie ("messagerie") ou
+/// au web (autre chose) ; sans argument, la vue actuelle.
+#[tauri::command]
+fn nav_vue(app: tauri::AppHandle, vue: Option<String>) -> Result<browser::Vue, String> {
+    match vue {
+        Some(v) => browser::set_vue(&app, v == "messagerie"),
+        None => Ok(browser::vue()),
+    }
+}
+
+/// Journal de la messagerie : les derniers messages du chat (numérotés) et
+/// le dernier état des transferts, pour une fenêtre ouverte en cours d'appel.
+#[derive(Default, Serialize, Clone)]
+struct Journal {
+    chat: VecDeque<serde_json::Value>,
+    file: Option<serde_json::Value>,
+    #[serde(skip)]
+    seq: u64,
+}
+
+/// Messages gardés dans le journal
+const JOURNAL_MAX: usize = 400;
+
+#[tauri::command]
+fn messagerie_historique(journal: State<Mutex<Journal>>) -> Journal {
+    journal.lock().map(|j| j.clone()).unwrap_or_default()
+}
+
+/// Tient le journal : chaque message du chat (`v34:chat`) y entre avec un
+/// numéro, et repart vers la messagerie (`messagerie:chat`) avec ce numéro,
+/// qui lui évite les doublons avec l'historique.
+fn tenir_journal(app: &tauri::AppHandle) {
+    let h = app.clone();
+    app.listen_any("v34:chat", move |ev| {
+        let Ok(mut msg) = serde_json::from_str::<serde_json::Value>(ev.payload()) else { return };
+        {
+            let st = h.state::<Mutex<Journal>>();
+            let Ok(mut j) = st.lock() else { return };
+            j.seq += 1;
+            msg["seq"] = j.seq.into();
+            j.chat.push_back(msg.clone());
+            while j.chat.len() > JOURNAL_MAX {
+                j.chat.pop_front();
+            }
+        }
+        let _ = h.emit_to(browser::MESSAGERIE, "messagerie:chat", msg);
+    });
+    let h = app.clone();
+    app.listen_any("v34:file", move |ev| {
+        if let (Ok(v), Ok(mut j)) = (serde_json::from_str::<serde_json::Value>(ev.payload()), h.state::<Mutex<Journal>>().lock()) {
+            j.file = Some(v);
+        }
+    });
 }
 
 #[tauri::command]
@@ -161,6 +222,25 @@ fn send_file(state: State<AppState>, name: String, data: Vec<u8>) -> Result<(), 
     state.send(EngineCmd::SendFile(name, data))
 }
 
+/// Visiophone : caméra (ou mire) allumée ou éteinte.
+#[tauri::command]
+fn visio_camera(state: State<AppState>, on: bool) -> Result<(), String> {
+    state.send(EngineCmd::VisioCamera(on))
+}
+
+/// Visiophone : une image de la caméra (RGBA, `w` × `h`), hallucinée ici
+/// (quelques millisecondes, hors du fil principal) puis confiée au moteur
+/// si `send` (il ne l'envoie que si la ligne le permet). Renvoie l'aperçu :
+/// exactement ce que verra le correspondant.
+#[tauri::command]
+async fn visio_frame(state: State<'_, AppState>, rgba: Vec<u8>, w: u32, h: u32, send: bool) -> Result<visio::Encoded, String> {
+    let enc = visio::encode_rgba(&rgba, w, h)?;
+    if send {
+        state.send(EngineCmd::VisioFrame(enc.wire.clone()))?;
+    }
+    Ok(enc)
+}
+
 /// Panneau CONFIG : interrupteurs DIP 1 (56K V.90) et 2 (réponse
 /// automatique), molette DÉBIT MAX (bit/s). Pris en compte au prochain
 /// appel ; renvoie la configuration obtenue, que le panneau affiche.
@@ -181,12 +261,15 @@ struct AppInfo {
     /// Connexion automatique au central au lancement (V34_NOAUTONET=1 :
     /// non, pour les tests ; V34_NET choisit déjà le mode)
     autonet: bool,
+    /// Démo / tests : V34_VISIO=mire (ou cam) allume le visiophone à
+    /// l'ouverture de la messagerie
+    visio: Option<String>,
 }
 
 #[tauri::command]
 fn app_info(state: State<AppState>) -> AppInfo {
     let autonet = std::env::var_os("V34_NOAUTONET").is_none() && std::env::var_os("V34_NET").is_none();
-    AppInfo { version: env!("CARGO_PKG_VERSION"), audio_device: state.speaker.device_name(), autonet }
+    AppInfo { version: env!("CARGO_PKG_VERSION"), audio_device: state.speaker.device_name(), autonet, visio: std::env::var("V34_VISIO").ok() }
 }
 
 /// Taille initiale : la plus grande fenêtre 16:10 qui tient dans ~90 % de
@@ -202,7 +285,11 @@ fn fit_to_screen(win: &tauri::WebviewWindow) {
     } else {
         h = w / 1.6;
     }
-    let (w, h) = (w.max(1024.0), h.max(700.0));
+    let (mut w, mut h) = (w.max(1024.0), h.max(700.0));
+    // Tests : V34_TAILLE=1024x700 impose la taille (mise en page des petits écrans)
+    if let Some((tw, th)) = std::env::var("V34_TAILLE").ok().and_then(|v| v.split_once('x').and_then(|(a, b)| Some((a.parse::<f64>().ok()?, b.parse::<f64>().ok()?)))) {
+        (w, h) = (tw.max(1024.0), th.max(700.0));
+    }
     let _ = win.set_size(tauri::LogicalSize::new(w, h));
     // Position calculée nous-mêmes : `center()` utiliserait l'ancienne taille
     // tant que le redimensionnement n'est pas appliqué.
@@ -218,7 +305,9 @@ fn main() {
 
     tauri::Builder::default()
         .manage(AppState { tx: Mutex::new(tx), speaker })
+        .manage(Mutex::new(Journal::default()))
         .setup(move |app| {
+            tenir_journal(app.handle());
             let handle = app.handle().clone();
             std::thread::Builder::new()
                 .name("v34-engine".into())
@@ -232,7 +321,7 @@ fn main() {
                     std::thread::sleep(std::time::Duration::from_secs(2));
                     let h2 = h.clone();
                     let _ = h.run_on_main_thread(move || {
-                        let _ = browser::open(&h2, engine::PROXY_PORT);
+                        let _ = browser::open(&h2, engine::PROXY_PORT, false);
                     });
                 });
             }
@@ -259,6 +348,10 @@ fn main() {
             send_file,
             set_speed,
             set_modem_config,
+            visio_camera,
+            visio_frame,
+            nav_vue,
+            messagerie_historique,
             open_browser,
             net_connect,
             net_local,

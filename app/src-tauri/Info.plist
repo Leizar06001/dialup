@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Complète l'Info.plist généré par Tauri : fusionné dans le paquet .app
+     (tauri build), et intégré au binaire des versions de développement
+     (cargo build / cargo run). macOS refuse la caméra à une appli qui ne
+     dit pas pourquoi elle la veut. -->
+<plist version="1.0">
+<dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Le visiophone V.Hallucination filme ton visage pour le redessiner en une quarantaine de formes et l'envoyer à ton correspondant par le modem. Rien n'est filmé tant que tu n'as pas choisi CAMÉRA dans l'onglet VISIO.</string>
+</dict>
+</plist>

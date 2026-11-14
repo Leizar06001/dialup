@@ -159,13 +159,6 @@
         <button class="key" id="btn-retrain" title="Réentraînement complet">RETRAIN</button>
         <button class="key" id="btn-reneg" title="Renégociation de débit">RENÉGO</button>
       </div>
-      <div class="netbar">
-        <button class="key isp" id="btn-isp" title="Appeler le fournisseur d'accès (0836154286) : Internet par le modem">☎ FAI</button>
-        <button class="key web" id="btn-browser" title="Ouvrir le navigateur : tout son trafic passe par le modem">
-          <i class="web-led" aria-hidden="true"></i>
-          <span class="web-txt">NAVIGATEUR<small id="web-sub">appelle d'abord le FAI</small></span>
-        </button>
-      </div>
       <div class="crt screen-green" id="crt">
         <div class="crt-out" id="crt-out"></div>
         <form class="crt-in" id="crt-form" autocomplete="off">
@@ -175,33 +168,40 @@
       </div>
     </section>
 
-    <!-- ======================== BBS ======================== -->
-    <section class="panel bbs" aria-label="Chat et fichiers">
+    <!-- ======================== BOUTONS ========================
+         Deux vrais boutons-poussoirs entre le terminal et l'annuaire : ils
+         ouvrent la fenêtre du navigateur, sur le web ou sur la messagerie. -->
+    <section class="panel keys" aria-label="Navigateur et messagerie">
       <div class="screw tl"></div><div class="screw tr"></div><div class="screw bl"></div><div class="screw br"></div>
-      <h2 class="panel-title" id="bbs-title">CHAT · FICHIERS</h2>
+      <button class="push" id="btn-browser" data-tip="nav" aria-label="Navigateur : Internet par le modem">
+        <i class="led green" id="led-nav" aria-hidden="true"></i>
+        <span class="push-well"><span class="push-cap" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><ellipse cx="12" cy="12" rx="3.6" ry="8.5"/><path d="M3.5 12h17M5 7.6h14M5 16.4h14"/></svg>
+        </span></span>
+        <span class="push-label">NAVIGATEUR</span>
+      </button>
+      <button class="push" id="btn-messagerie" data-tip="messagerie" aria-label="Messagerie : chat, visiophone, fichiers">
+        <i class="led green" id="led-msg" aria-hidden="true"></i>
+        <span class="push-well"><span class="push-cap" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M4 5.5h16v10H10l-4.5 3.5v-3.5H4z"/><path d="M8 9.2h8M8 12h5"/></svg>
+        </span></span>
+        <span class="push-label">MESSAGERIE</span>
+      </button>
+    </section>
+
+    <!-- ======================== ANNUAIRE ========================
+         Le chat et les fichiers sont dans la MESSAGERIE du navigateur :
+         l'onglet CHAT l'ouvre. Le FAI (TINYVERSE) s'appelle d'ici. -->
+    <section class="panel bbs" aria-label="Annuaire">
+      <div class="screw tl"></div><div class="screw tr"></div><div class="screw bl"></div><div class="screw br"></div>
+      <h2 class="panel-title" id="bbs-title">ANNUAIRE</h2>
       <div class="panel-tabs seg small" id="bbs-tabs" role="tablist">
-        <button data-view="chat" class="on" role="tab">CHAT</button>
-        <button data-view="dir" role="tab">ANNUAIRE</button>
+        <button data-view="chat" role="tab" data-tip="chat">CHAT ↗</button>
+        <button data-view="dir" class="on" role="tab">ANNUAIRE</button>
       </div>
-      <div class="amber dir-view" id="dir" hidden>
+      <div class="amber dir-view" id="dir">
         <div class="dir-head"><span id="dir-title">ANNUAIRE DU CENTRAL</span><span id="dir-count"></span></div>
         <div class="dir-list" id="dir-list"></div>
-      </div>
-      <div class="amber chat-view" id="amber">
-        <pre class="bbs-banner">╔════════════════════════════════════════╗
-║  T I N Y V E R S E   B B S   · 1996 ·  ║
-╚════════════════════════════════════════╝</pre>
-        <div class="bbs-out" id="bbs-out"></div>
-        <form class="bbs-in" id="bbs-form" autocomplete="off">
-          <span class="prompt">&lt;moi&gt;</span>
-          <input id="bbs-input" spellcheck="false" aria-label="Message" placeholder="tape ton message…">
-        </form>
-      </div>
-      <div class="filebar chat-view">
-        <label class="key" for="file-input">ENVOYER UN FICHIER…</label>
-        <input type="file" id="file-input" hidden>
-        <div class="progress"><i id="file-progress"></i><span id="file-label">aucun transfert</span></div>
-        <span class="file-rate" id="file-rate">0,0 Ko/s</span>
       </div>
     </section>
 
