@@ -644,6 +644,20 @@ function drawScope() {
 function drawConstellation() {
   const info = canvases.constellation;
   const { ctx, w, h } = info;
+  const pcm = state && state.status && state.status.pcm;
+  if (pcm && pcm.points && pcm.points.length) {
+    // 56k : l'échelle des niveaux à la place de la constellation
+    setConstLabel(pcm.data ? "NIVEAUX 56K · LOI A" : "NIVEAUX 56K · APPRENTISSAGE");
+    fade(info, 0.12);
+    const g = pcmGeometry(info, pcm);
+    drawPcmGrid(ctx, g, pcm);
+    if (stateFresh) {
+      stateFresh = false;
+      drawPcmPoints(ctx, g, pcm);
+    }
+    return;
+  }
+  setConstLabel("CONSTELLATION");
   fade(info, 0.16);
   const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 8;
   ctx.strokeStyle = `rgba(${PH},0.12)`;
@@ -664,6 +678,60 @@ function drawConstellation() {
   ctx.shadowColor = `rgba(${PH},1)`;
   ctx.shadowBlur = 5;
   for (const [x, y] of pts) ctx.fillRect(cx + x * k - 1, cy - y * k - 1, 2.2, 2.2);
+  ctx.shadowBlur = 0;
+}
+
+let constLabel = "";
+function setConstLabel(t) {
+  if (t === constLabel) return;
+  constLabel = t;
+  const el = document.getElementById("const-label");
+  if (el) el.textContent = t;
+}
+
+// 56k : pas de constellation 2D. Chaque symbole est un niveau de la loi A,
+// pris dans le jeu de sa position (0 à 5) dans la trame : six lignes, une
+// par position. Graduations = niveaux possibles (les deux signes), points =
+// symboles reçus après l'égaliseur. L'épaisseur des grappes, c'est le
+// bruit ; l'écart entre deux graduations, la marge.
+function pcmGeometry(info, pcm) {
+  const { w, h } = info;
+  const top = 22, bottom = h - 8, left = 18, right = w - 8;
+  let vmax = 0;
+  for (const set of pcm.levels) for (const a of set) vmax = Math.max(vmax, a);
+  const half = (right - left) / 2;
+  return { top, bottom, left, right, rowH: (bottom - top) / 6, cx: left + half, k: half / ((vmax || 1) * 1.06) };
+}
+
+function drawPcmGrid(ctx, g, pcm) {
+  ctx.font = "12px VT323, monospace";
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 6; i++) {
+    const y = g.top + g.rowH * (i + 0.5);
+    ctx.fillStyle = `rgba(${PH},0.35)`;
+    ctx.fillText(String(i), 4, y + 4);
+    ctx.strokeStyle = `rgba(${PH},0.16)`;
+    ctx.beginPath();
+    for (const a of (pcm.levels[i] || [])) {
+      for (const v of a === 0 ? [0] : [a, -a]) {
+        const x = Math.round(g.cx + v * g.k) + 0.5;
+        ctx.moveTo(x, y - g.rowH * 0.36); ctx.lineTo(x, y + g.rowH * 0.36);
+      }
+    }
+    ctx.stroke();
+  }
+}
+
+function drawPcmPoints(ctx, g, pcm) {
+  ctx.fillStyle = `rgba(${PH},0.95)`;
+  ctx.shadowColor = `rgba(${PH},1)`;
+  ctx.shadowBlur = 4;
+  const lim = (g.right - g.left) / 2;
+  for (const [i, v] of pcm.points) {
+    const dx = Math.max(-lim, Math.min(lim, v * g.k));
+    const y = g.top + g.rowH * (i + 0.5) + (Math.random() - 0.5) * g.rowH * 0.5;
+    ctx.fillRect(g.cx + dx - 1, y - 1, 2.2, 2.2);
+  }
   ctx.shadowBlur = 0;
 }
 

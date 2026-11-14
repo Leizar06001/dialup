@@ -139,6 +139,7 @@
         [["DÉBIT", "SYMBOLES", "PORTEUSE", "SNR"], "L'afficheur cyan : paramètres négociés, signaux TX/RX en cours, durée. Survole une valeur pour le détail émission/réception."],
         [["SPECTRE", "OSCILLO"], "Le son de la ligne en fréquences (crêtes en orange) ou en forme d'onde ; jauges de niveau TX/RX dessous."],
         [["CONSTELLATION"], "Les points reçus après l'égaliseur : plus ils sont nets, meilleure est la ligne."],
+        [["NIVEAUX 56K"], "En 56K, pas de constellation : le central envoie directement des niveaux de la loi A, 8 000 par seconde. L'écran devient une échelle à six lignes, une par position de la trame (chacune a son jeu de niveaux) : les traits sont les niveaux possibles, les points ce qui arrive. Grappes fines = ligne propre ; si elles débordent jusqu'au trait voisin, les erreurs commencent."],
         [["OFF", "AUTO", "ON", "VOL"], "Haut-parleur : coupé, jusqu'à la connexion, toujours ; et son volume. La grille vibre quand il joue."],
         [["MONITEUR DE LIAISON"], "RÉSEAU (ping, gigue, tampon, pertes), MODEM (débits, SNR, recalages), LAPM (trames, retransmissions, rejets), TUNNEL (connexions du navigateur), et le débit utile sur 60 s."],
       ],

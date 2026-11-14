@@ -168,6 +168,19 @@ impl Default for ModemConfig {
     }
 }
 
+/// Réception 56k vue comme une échelle : chaque symbole est un niveau de la
+/// loi A (ou µ) choisi dans le jeu de sa position dans la trame de 6.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PcmView {
+    /// Niveaux attendus (amplitudes ≥ 0, normalisées à ±1) pour chacune des
+    /// 6 positions de la trame ; le signe s'y ajoute
+    pub levels: Vec<Vec<f32>>,
+    /// Derniers symboles reçus après l'égaliseur : (position 0..5, valeur)
+    pub points: Vec<(u8, f32)>,
+    /// Jeu des données (vrai) ou d'apprentissage de la phase 4 (faux)
+    pub data: bool,
+}
+
 /// Instantané de l'état, à interroger à ~30 Hz par l'interface.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ModemStatus {
@@ -179,6 +192,9 @@ pub struct ModemStatus {
     pub params: LinkParams,
     /// Derniers points de constellation reçus (après égaliseur), normalisés
     pub constellation: Vec<(f32, f32)>,
+    /// 56k (modem analogique) : pas de constellation 2D, des niveaux PCM
+    #[serde(default)]
+    pub pcm: Option<PcmView>,
     /// Octets envoyés / reçus depuis la connexion
     pub bytes_tx: u64,
     pub bytes_rx: u64,

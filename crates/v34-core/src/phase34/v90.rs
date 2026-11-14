@@ -244,6 +244,11 @@ impl P34 {
         self.act(P34Action::Tx("silence".into()));
     }
 
+    /// 56k, côté abonné : l'échelle des niveaux PCM reçus (affichage).
+    pub fn pcm_view(&self) -> Option<crate::api::PcmView> {
+        self.v90.as_ref()?.prx.as_ref()?.view()
+    }
+
     fn v90_mut(&mut self) -> &mut V90 {
         self.v90.as_mut().expect("mode V.90")
     }

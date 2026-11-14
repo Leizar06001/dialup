@@ -146,6 +146,7 @@ impl Modem {
             rx_signal: String::new(),
             params: LinkParams::default(),
             constellation: Vec::new(),
+            pcm: None,
             bytes_tx: 0,
             bytes_rx: 0,
             link: None,
@@ -267,6 +268,7 @@ impl Modem {
         }
         if let Some(p) = self.p34.as_ref() {
             self.status.constellation = p.constellation();
+            self.status.pcm = p.pcm_view();
             self.status.link = Some(p.link_stats());
         } else if let Some(l) = self.saved_link.as_ref() {
             self.status.link = Some(l.stats());

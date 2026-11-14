@@ -253,6 +253,9 @@ pub struct PcmRx {
     /// V90_DEBUG : derniers (y, décision) pour l'autopsie d'une perte
     dbg_hist: std::collections::VecDeque<(f64, f64, usize)>,
     dbg_onset: bool,
+    /// Derniers symboles des trames (position, sortie de l'égaliseur), pour
+    /// l'affichage
+    vue: VecDeque<(u8, f32)>,
 }
 
 impl PcmRx {
@@ -309,6 +312,7 @@ impl PcmRx {
             dbg: std::env::var_os("V90_DEBUG").map(|_| (0, 0.0, 0, 0.0)),
             dbg_hist: std::collections::VecDeque::new(),
             dbg_onset: false,
+            vue: VecDeque::new(),
         }
     }
 
@@ -460,6 +464,17 @@ impl PcmRx {
         self.replay();
     }
 
+    /// Échelle des niveaux pour l'affichage (en phase 4 et en données).
+    pub fn view(&self) -> Option<crate::api::PcmView> {
+        if self.st != St::Frames || self.vue.is_empty() {
+            return None;
+        }
+        let data = self.ed_frames >= 2;
+        let map = if data { self.data_map.as_ref() } else { self.train_map.as_ref() }?;
+        let levels = map.sets.iter().map(|set| set.iter().map(|&u| codes::linear(self.law, u) as f32 / codes::SCALE as f32).collect()).collect();
+        Some(crate::api::PcmView { levels, points: self.vue.iter().copied().collect(), data })
+    }
+
     /// Repasse le tampon dans l'égaliseur en continu, depuis le début.
     fn replay(&mut self) {
         let buf = std::mem::take(&mut self.buf);
@@ -588,6 +603,12 @@ impl PcmRx {
         let map = if self.ed_frames >= 2 { self.data_map.clone() } else { self.train_map.clone() };
         let Some(map) = map else { return };
         let s = if ku < TRAIN_MIN { self.trn2d[ku] } else { slice(y, &map.sets[i], self.law) };
+        if ku >= TRAIN_MIN {
+            self.vue.push_back((i as u8, y as f32));
+            if self.vue.len() > 480 {
+                self.vue.pop_front();
+            }
+        }
         let v = value(&s, self.law);
         if ku >= TRAIN_MIN {
             let e = (y - v) * codes::SCALE as f64;

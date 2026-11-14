@@ -130,7 +130,7 @@ pub struct NetLink {
     /// Cadence calée sur l'horloge du central
     pacer: v34_net::Pacer,
     /// V34_TRACE : derniers compteurs réseau affichés
-    trace_prev: Option<(u64, u64, u64, u64, u64, u64, u64)>,
+    trace_prev: Option<(u64, u64, u64, u64, u64, u64, u64, u64)>,
     /// V34_DUMP=fichier : (reçu du réseau, entrée du modem, sortie du modem) en f32
     dump: Option<std::io::BufWriter<std::fs::File>>,
 }
@@ -220,9 +220,9 @@ impl Link for NetLink {
         }
         if active && trace_on() {
             let j = self.central.stats().jitter;
-            let k = (j.lost, j.late, j.underruns, j.dropped, j.resyncs, self.pacer.extra, self.pacer.skipped);
+            let k = (j.lost, j.late, j.underruns, j.dropped, j.resyncs, self.pacer.extra, self.pacer.skipped, j.recovered);
             if self.trace_prev.is_some_and(|p| p != k) {
-                eprintln!("[réseau] perdus {} · en retard {} · trous {} · jetés {} · recalages {} · blocs +{} −{} · tampon {:.0}/{:.0} ms · gigue {:.1} ms", k.0, k.1, k.2, k.3, k.4, k.5, k.6, j.depth_ms, j.target_ms, j.jitter_ms);
+                eprintln!("[réseau] perdus {} · rattrapés {} · en retard {} · trous {} · jetés {} · recalages {} · blocs +{} −{} · tampon {:.0}/{:.0} ms · gigue {:.1} ms", k.0, k.7, k.1, k.2, k.3, k.4, k.5, k.6, j.depth_ms, j.target_ms, j.jitter_ms);
             }
             self.trace_prev = Some(k);
         }
