@@ -548,6 +548,7 @@ impl P34 {
                         self.pp_start = st;
                         self.trained = 0;
                         self.rx_st = RxSt::Train;
+                        self.rx.start_ls();
                         self.act(P34Action::Rx("PP".into()));
                         self.detail(format!("PP recalé (rythme {tau:+.2} T) — entraînement de l'égaliseur"));
                     }
@@ -574,6 +575,10 @@ impl P34 {
                 self.rx.adapt(s.z, r);
                 self.trained += 1;
                 if i >= 288 + 512 {
+                    // Coefficients optimaux sur tout l'apprentissage (le LMS
+                    // n'a fait que dégrossir) ; on saute les 160 premiers
+                    // symboles, le temps que la boucle de phase s'accroche.
+                    self.rx.finish_ls(160);
                     // Fin de l'entraînement supervisé : on lit les bits (J)
                     self.prev_z = quadrant_of(r);
                     self.rx_st = RxSt::Bits;

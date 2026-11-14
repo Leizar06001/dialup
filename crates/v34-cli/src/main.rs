@@ -523,6 +523,7 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
     let mut tx_line = vec![0.0f32; BLOCK];
     // comme l'appli : cadence calée sur l'horloge du central
     let mut pacer = v34_net::Pacer::new();
+    let mut net_prev: Option<(u64, u64, u64, u64, u64, u64, u64, u64)> = None;
     // --charge N : envoie N octets/s en continu (ligne de test : ils
     // reviennent en écho) et fait le bilan toutes les 10 s
     let charge: usize = args.num("charge", 0usize)?;
@@ -709,11 +710,24 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
         }
         // +1 : un bloc de plus tout de suite ; −1 : un bloc de moins
         let adj = pacer.update(client.jitter_level());
+        // incidents réseau (pertes, trous, retards, recalages, cadence) au fil de l'eau
+        {
+            let j = client.stats().jitter;
+            let k = (j.lost, j.recovered, j.late, j.underruns, j.dropped, j.resyncs, pacer.extra, pacer.skipped);
+            if net_prev.is_some_and(|p| p != k) {
+                println!(
+                    "[{:7} ms] réseau : perdus {} · rattrapés {} · en retard {} · trous {} · jetés {} · recalages {} · blocs +{} −{} · tampon {:.0}/{:.0} ms · gigue {:.1} ms",
+                    t / 8, k.0, k.1, k.2, k.3, k.4, k.5, k.6, k.7, j.depth_ms, j.target_ms, j.jitter_ms
+                );
+            }
+            net_prev = Some(k);
+        }
         next += period.mul_f64((1.0 - adj).max(0.0));
         let now = Instant::now();
         if next > now {
             std::thread::sleep(next - now);
         } else if now - next > Duration::from_millis(200) {
+            println!("[{:7} ms] moteur en retard de {} ms : temps de ligne sauté", t / 8, (now - next).as_millis());
             next = now;
         }
     }

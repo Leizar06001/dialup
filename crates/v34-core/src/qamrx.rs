@@ -14,12 +14,12 @@ use crate::dsp::shaping::{Downconverter, TimingEstimator};
 use crate::dsp::Cpx;
 use crate::train::{QAM_ALPHA, QAM_SPAN};
 
-/// Nombre de coefficients de l'égaliseur (espacés de T/2) : 16 symboles.
-const NT: usize = 32;
+/// Nombre de coefficients de l'égaliseur (espacés de T/2) : 24 symboles.
+const NT: usize = 48;
 /// Coefficient central (échantillon à l'instant symbole)
-const CENTER: usize = 15;
+const CENTER: usize = 23;
 /// Retard de l'égaliseur en symboles : (NT − 1 − CENTER) / 2
-pub const EQ_DELAY: i64 = 8;
+pub const EQ_DELAY: i64 = 12;
 
 /// Un symbole en sortie du récepteur.
 #[derive(Clone, Copy, Debug)]
@@ -55,6 +55,9 @@ pub struct QamRx {
     mse: f32,
     trained_syms: u64,
     pub mu: f32,
+    /// Apprentissage supervisé enregistré (mémoire de l'égaliseur, cible
+    /// dans le domaine non tourné) pour le calcul des coefficients optimaux
+    ls: Option<Vec<(Vec<Cpx>, Cpx)>>,
 }
 
 impl QamRx {
@@ -85,6 +88,7 @@ impl QamRx {
             mse: 1.0,
             trained_syms: 0,
             mu: 0.25,
+            ls: None,
         }
     }
 
@@ -238,6 +242,10 @@ impl QamRx {
         if pw_ref > 0.0 && pw < 0.15 * pw_ref {
             return;
         }
+        if let Some(rows) = self.ls.as_mut() {
+            // cible non tournée : la phase est celle appliquée à cette sortie
+            rows.push((self.buf.iter().copied().collect(), r * Cpx::from_polar(1.0, self.phase)));
+        }
         let e = r - z;
         self.mse = 0.99 * self.mse + 0.01 * e.norm_sqr();
         // Erreur de phase (sin de l'écart), normalisée
@@ -257,6 +265,73 @@ impl QamRx {
             *c += eu * b.conj() * mu;
         }
         self.trained_syms += 1;
+    }
+
+    /// Commence à enregistrer l'apprentissage supervisé (symboles connus).
+    pub fn start_ls(&mut self) {
+        self.ls = Some(Vec::new());
+    }
+
+    /// Fin de l'apprentissage supervisé : remplace les coefficients trouvés
+    /// pas à pas (LMS, encore loin de l'optimum après quelques centaines de
+    /// symboles) par la solution des moindres carrés sur tout ce qui a été
+    /// reçu, en ignorant les `skip` premiers symboles (boucle de phase pas
+    /// encore accrochée). Renvoie la nouvelle erreur quadratique moyenne.
+    pub fn finish_ls(&mut self, skip: usize) -> Option<f32> {
+        let rows = self.ls.take()?;
+        let rows = rows.get(skip..)?;
+        let n = 2 * NT;
+        if rows.len() < n {
+            return None;
+        }
+        // c = x + j·y ; sortie = Σ b·c : partie réelle p·x − q·y, imaginaire q·x + p·y
+        let mut a = vec![0.0f64; n * n];
+        let mut v = vec![0.0f64; n];
+        let mut row = vec![0.0f64; n];
+        for (b, u) in rows {
+            for part in 0..2 {
+                for i in 0..NT {
+                    let (p, q) = (b[i].re as f64, b[i].im as f64);
+                    if part == 0 {
+                        row[i] = p;
+                        row[NT + i] = -q;
+                    } else {
+                        row[i] = q;
+                        row[NT + i] = p;
+                    }
+                }
+                let t = if part == 0 { u.re } else { u.im } as f64;
+                for i in 0..n {
+                    v[i] += row[i] * t;
+                    for j in 0..=i {
+                        a[i * n + j] += row[i] * row[j];
+                    }
+                }
+            }
+        }
+        for i in 0..n {
+            for j in 0..i {
+                a[j * n + i] = a[i * n + j];
+            }
+        }
+        let scale = (0..n).map(|i| a[i * n + i]).sum::<f64>() / n as f64;
+        crate::v90::dfe::solve_spd(&mut a, &mut v, n, scale * 1e-6 + 1e-12)?;
+        let eq: Vec<Cpx> = (0..NT).map(|i| Cpx::new(v[i] as f32, v[NT + i] as f32)).collect();
+        let mut e2 = 0.0f64;
+        for (b, u) in rows {
+            let mut z = Cpx::ZERO;
+            for (c, x) in eq.iter().zip(b.iter()) {
+                z += *c * *x;
+            }
+            e2 += (*u - z).norm_sqr() as f64;
+        }
+        let mse = (e2 / rows.len() as f64) as f32;
+        // garde-fou : on ne remplace que si c'est réellement meilleur
+        if mse < self.mse {
+            self.eq = eq;
+            self.mse = mse;
+        }
+        Some(self.mse)
     }
 
     /// Phase de rythme estimée (pour l'affichage / le débogage).
