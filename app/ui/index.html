@@ -269,6 +269,17 @@
   </div>
 
   <!-- ======================== CONFIGURATION (face arrière) ======================== -->
+  <!-- « Accès réseau à distance » de Windows 98 : la fin de la connexion au
+       FAI, avec les lenteurs d'époque (interrupteur 3 sur OFF) -->
+  <div class="w98" id="ppp" hidden role="status" aria-live="polite">
+    <div class="w98-title"><span>Connexion à TINYVERSE</span><b aria-hidden="true">×</b></div>
+    <div class="w98-body">
+      <div class="w98-anim" aria-hidden="true"><i class="w98-pc"></i><span class="w98-dots"><i></i><i></i><i></i><i></i><i></i></span><i class="w98-pc"></i></div>
+      <div class="w98-text">État : <span id="ppp-etat">…</span></div>
+      <div class="w98-btns"><button class="w98-btn" id="ppp-cancel">Annuler</button></div>
+    </div>
+  </div>
+
   <div class="modal" id="cfg-modal" hidden>
     <div class="modal-box panel cfg-box" id="cfg-box" role="dialog" aria-labelledby="cfg-title" tabindex="-1">
       <div class="screw tl"></div><div class="screw tr"></div><div class="screw bl"></div><div class="screw br"></div>
@@ -284,7 +295,9 @@
             <button class="dip-col" id="dip2" role="switch" aria-checked="true" aria-label="Interrupteur 2 : réponse automatique" data-tip="dip2">
               <span class="dip-slot"><i class="dip-knob"></i></span><span class="dip-n">2</span>
             </button>
-            <div class="dip-col res" data-tip="dipres" aria-disabled="true"><span class="dip-slot"><i class="dip-knob"></i></span><span class="dip-n">3</span></div>
+            <button class="dip-col" id="dip3" role="switch" aria-checked="false" aria-label="Interrupteur 3 : 56K express" data-tip="dip3">
+              <span class="dip-slot"><i class="dip-knob"></i></span><span class="dip-n">3</span>
+            </button>
             <div class="dip-col res" data-tip="dipres" aria-disabled="true"><span class="dip-slot"><i class="dip-knob"></i></span><span class="dip-n">4</span></div>
             <div class="dip-col res" data-tip="dipres" aria-disabled="true"><span class="dip-slot"><i class="dip-knob"></i></span><span class="dip-n">5</span></div>
             <div class="dip-col res" data-tip="dipres" aria-disabled="true"><span class="dip-slot"><i class="dip-knob"></i></span><span class="dip-n">6</span></div>
@@ -295,6 +308,7 @@
           <div class="dip-legend" aria-hidden="true">
             <span class="dip-l1">56K<br>V.90</span>
             <span class="dip-l1">RÉP.<br>AUTO</span>
+            <span class="dip-l1">56K<br>EXPR.</span>
             <span class="dip-lres">RÉSERVÉ</span>
           </div>
         </div>

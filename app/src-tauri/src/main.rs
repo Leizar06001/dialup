@@ -165,11 +165,11 @@ fn send_file(state: State<AppState>, name: String, data: Vec<u8>) -> Result<(), 
 /// automatique), molette DÉBIT MAX (bit/s). Pris en compte au prochain
 /// appel ; renvoie la configuration obtenue, que le panneau affiche.
 #[tauri::command]
-fn set_modem_config(state: State<AppState>, v90: bool, max_rate: u32, auto_answer: Option<bool>) -> Result<v34_core::ModemConfig, String> {
+fn set_modem_config(state: State<AppState>, v90: bool, max_rate: u32, auto_answer: Option<bool>, express: Option<bool>) -> Result<v34_core::ModemConfig, String> {
     if !(2400..=56000).contains(&max_rate) {
         return Err(format!("débit max hors limites : {max_rate} bit/s (2 400 à 56 000)"));
     }
-    let cfg = engine::modem_config(v90, max_rate);
+    let cfg = engine::modem_config(v90, max_rate, express.unwrap_or(false));
     state.send(EngineCmd::SetConfig(cfg.clone(), auto_answer.unwrap_or(true)))?;
     Ok(cfg)
 }

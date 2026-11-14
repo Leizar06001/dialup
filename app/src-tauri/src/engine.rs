@@ -68,6 +68,28 @@ enum SalonMsg {
     Closed(String),
 }
 
+/// Étapes de la fenêtre « Connexion à… » de Windows 98 (instant de fin, texte).
+const PPP_STEPS: [(f32, &str); 2] = [
+    (1.8, "Vérification du nom d'utilisateur et du mot de passe…"),
+    (4.2, "Enregistrement de votre ordinateur sur le réseau…"),
+];
+
+/// Étape PPP en cours d'après le temps écoulé (`None` : fini).
+fn ppp_stage(e: std::time::Duration) -> Option<usize> {
+    PPP_STEPS.iter().position(|(fin, _)| e.as_secs_f32() < *fin)
+}
+
+/// Démarre le salon du FAI (connexion par le tunnel).
+fn start_salon(t: &mut ActiveTunnel) {
+    if t.salon_rx.is_none() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let proxy = t.client.local_addr();
+        if std::thread::Builder::new().name("salon".into()).spawn(move || salon_thread(proxy, tx)).is_ok() {
+            t.salon_rx = Some(rx);
+        }
+    }
+}
+
 /// Se connecte au salon du FAI (`salon:6667`) par le proxy SOCKS5 local du
 /// tunnel, puis remonte chaque ligne reçue.
 fn salon_thread(proxy: std::net::SocketAddr, tx: std::sync::mpsc::Sender<SalonMsg>) {
@@ -151,12 +173,13 @@ const V90_MIN_RATE: u32 = 28000;
 ///   l'interrupteur est sur ON.
 ///
 /// Les autres réglages gardent leurs valeurs par défaut.
-pub fn modem_config(v90: bool, max_rate: u32) -> ModemConfig {
+pub fn modem_config(v90: bool, max_rate: u32, express: bool) -> ModemConfig {
     // (la réponse automatique, DIP 2, est un réglage de l'appli, pas du modem)
     ModemConfig {
         max_rate: max_rate.min(33600),
         v90: v90 && max_rate >= V90_MIN_RATE,
         max_rate_pcm: max_rate.clamp(V90_MIN_RATE, 56000),
+        express,
         ..ModemConfig::default()
     }
 }
@@ -203,6 +226,8 @@ pub struct UiState {
     pub counters: Counters,
     /// Avancement des chargements du navigateur (session Internet)
     pub nav: Option<v34_net::tunnel::Progress>,
+    /// Fenêtre « Connexion à… » façon Windows 98 : étape en cours
+    pub ppp: Option<&'static str>,
     /// Appel entrant qui sonne (réponse manuelle) : numéro de l'appelant
     pub incoming: Option<String>,
 }
@@ -295,6 +320,9 @@ pub struct Engine {
     session: Session,
     tunnel: Option<ActiveTunnel>,
     tunnel_ready: bool,
+    /// Connexion « Accès réseau à distance » en cours (lenteurs d'époque)
+    ppp: Option<Instant>,
+    ppp_shown: usize,
     /// Compteurs de l'appel en cours (moniteur de liaison)
     counters: Counters,
     /// Réseau : on joue le retour d'appel tant que l'autre n'a pas décroché
@@ -356,6 +384,8 @@ impl Engine {
             session: Session::Bbs,
             tunnel: None,
             tunnel_ready: false,
+            ppp: None,
+            ppp_shown: 0,
             counters: Counters::default(),
             ringback: false,
         }
@@ -794,6 +824,7 @@ impl Engine {
                 self.console(&format!("Proxy Internet sur {} (SOCKS5 et HTTP) — ouvre le navigateur", client.local_addr()), "info");
                 self.tunnel = Some(ActiveTunnel { pipe, client, salon: None, salon_rx: None });
                 self.tunnel_ready = false;
+        self.ppp = None;
             }
             Err(e) => self.console(&format!("Tunnel impossible : {e}"), "info"),
         }
@@ -826,6 +857,7 @@ impl Engine {
             t.client.stop();
         }
         self.tunnel_ready = false;
+        self.ppp = None;
         self.counters.tunnel_open = 0;
     }
 
@@ -850,14 +882,16 @@ impl Engine {
                     }
                 }
                 TunnelEvent::Ready { max_streams } => {
-                    self.tunnel_ready = true;
                     lines.push(format!("Tunnel Internet établi ({max_streams} connexions simultanées)"));
-                    if t.salon_rx.is_none() {
-                        let (tx, rx) = std::sync::mpsc::channel();
-                        let proxy = t.client.local_addr();
-                        if std::thread::Builder::new().name("salon".into()).spawn(move || salon_thread(proxy, tx)).is_ok() {
-                            t.salon_rx = Some(rx);
-                        }
+                    if self.cfg.express {
+                        self.tunnel_ready = true;
+                        start_salon(t);
+                    } else {
+                        // Comme en 1998 : l'Accès réseau à distance de Windows
+                        // négocie encore (PPP) avant qu'on puisse surfer.
+                        self.ppp = Some(Instant::now());
+                        self.ppp_shown = 0;
+                        lines.push(PPP_STEPS[0].1.to_string());
                     }
                 }
                 TunnelEvent::Opened { target, .. } => {
@@ -1099,9 +1133,33 @@ impl Engine {
 
     // ------------------------------------------------------------ temps réel
 
+    /// Fenêtre « Connexion à… » : étapes successives, puis Internet prêt.
+    fn ppp_step(&mut self) {
+        let Some(t0) = self.ppp else { return };
+        let e = t0.elapsed();
+        match ppp_stage(e) {
+            Some(i) => {
+                if i > self.ppp_shown {
+                    self.ppp_shown = i;
+                    self.console(PPP_STEPS[i].1, "info");
+                }
+            }
+            None => {
+                self.ppp = None;
+                self.tunnel_ready = true;
+                if let Some(t) = self.tunnel.as_mut() {
+                    start_salon(t);
+                }
+                let r = self.status.params.data_rate_rx.unwrap_or(0);
+                self.console(&format!("Connecté à TINYVERSE à {r} bit/s — bonne navigation !"), "result");
+            }
+        }
+    }
+
     fn tick(&mut self) {
         self.update_transfers();
         self.pump_tunnel();
+        self.ppp_step();
         for ev in self.link.poll_net() {
             self.on_net_event(ev);
         }
@@ -1326,6 +1384,7 @@ impl Engine {
             proxy: self.tunnel.as_ref().filter(|_| self.tunnel_ready).map(|t| t.client.local_addr().to_string()),
             nav: self.tunnel.as_ref().map(|t| t.client.progress()),
             incoming: self.ringing_from.clone(),
+            ppp: self.ppp.map(|t0| ppp_stage(t0.elapsed()).map_or("Connecté", |i| PPP_STEPS[i].1)),
             audio_device: self.speaker.device_name(),
         };
         let _ = self.app.emit("v34:state", state);
@@ -1339,26 +1398,26 @@ mod tests {
     #[test]
     fn config_panel_maps_to_modem_config() {
         // 56K au maximum : V.34 plafonné à 33 600, V.90 jusqu'à 56 000
-        let c = modem_config(true, 56000);
+        let c = modem_config(true, 56000, false);
         assert_eq!((c.max_rate, c.v90, c.max_rate_pcm), (33600, true, 56000));
         // Palier V.90 intermédiaire
-        let c = modem_config(true, 45333);
+        let c = modem_config(true, 45333, false);
         assert_eq!((c.max_rate, c.v90, c.max_rate_pcm), (33600, true, 45333));
         // Interrupteur 56K sur OFF : V.34 seul
-        let c = modem_config(false, 56000);
+        let c = modem_config(false, 56000, false);
         assert_eq!((c.max_rate, c.v90, c.max_rate_pcm), (33600, false, 56000));
         // 28 800 : V.90 encore possible (plancher à 28 000)
-        let c = modem_config(true, 28800);
+        let c = modem_config(true, 28800, false);
         assert_eq!((c.max_rate, c.v90, c.max_rate_pcm), (28800, true, 28800));
         // Sous 28 000 : plus de V.90, même sur ON
-        let c = modem_config(true, 26400);
+        let c = modem_config(true, 26400, false);
         assert_eq!((c.max_rate, c.v90, c.max_rate_pcm), (26400, false, 28000));
-        let c = modem_config(true, 2400);
+        let c = modem_config(true, 2400, false);
         assert_eq!((c.max_rate, c.v90, c.max_rate_pcm), (2400, false, 28000));
         // Les autres réglages gardent leurs valeurs par défaut
         let d = ModemConfig::default();
         assert_eq!(ModemConfig { max_rate: d.max_rate, v90: d.v90, max_rate_pcm: d.max_rate_pcm, ..c }, d);
         // Réglages d'usine du panneau = configuration par défaut du modem
-        assert_eq!(modem_config(true, 56000), d);
+        assert_eq!(modem_config(true, 56000, false), d);
     }
 }

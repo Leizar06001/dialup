@@ -961,3 +961,48 @@ button.dip-col:focus-visible .dip-slot { outline: 2px solid var(--vfd); outline-
 /* APPELER devenu DÉCROCHER : ça sonne ! */
 #btn-dial.ringing { animation: sonne 0.5s steps(2) infinite; }
 @keyframes sonne { 50% { filter: brightness(1.45); transform: translateX(1px); } }
+
+/* Interrupteur 3 (56K express) : le ruban ne couvre plus que les 4 à 8. */
+.dip-tape { left: 103px; }
+.dip-legend { grid-template-columns: 26px 26px 26px 1fr; }
+
+/* ------------------------------------------------------------------ « Connexion à… » (Windows 98)
+   La fenêtre de l'Accès réseau à distance, le temps que PPP s'installe. */
+.w98 {
+  position: fixed; left: 50%; top: 34%; transform: translateX(-50%); z-index: 60;
+  width: min(380px, calc(100vw - 32px));
+  background: #c0c0c0; color: #000;
+  font: 12px/1.35 Tahoma, Verdana, "Segoe UI", sans-serif;
+  border: 2px solid; border-color: #fff #000 #000 #fff;
+  box-shadow: inset -1px -1px 0 #808080, inset 1px 1px 0 #dfdfdf, 6px 6px 0 rgba(0,0,0,0.35);
+}
+.w98-title {
+  display: flex; justify-content: space-between; align-items: center;
+  margin: 2px; padding: 3px 4px 3px 6px;
+  background: linear-gradient(90deg, #000080, #1084d0); color: #fff; font-weight: 700;
+}
+.w98-title b {
+  width: 16px; height: 14px; display: grid; place-items: center; font-size: 11px; line-height: 1; color: #000; background: #c0c0c0;
+  border: 1px solid; border-color: #fff #000 #000 #fff;
+}
+.w98-body { display: grid; gap: 10px; padding: 12px 14px 12px; }
+.w98-anim { display: flex; align-items: center; justify-content: center; gap: 8px; height: 40px; }
+.w98-pc {
+  position: relative; width: 34px; height: 26px; border-radius: 2px;
+  background: linear-gradient(#5fb0d8, #2a6e9c); border: 3px solid #d8d4c8; box-shadow: 0 0 0 1px #000;
+}
+.w98-pc::after { content: ""; position: absolute; left: 6px; right: 6px; bottom: -11px; height: 6px; background: #d8d4c8; box-shadow: 0 0 0 1px #000; }
+.w98-dots { display: flex; gap: 5px; }
+.w98-dots i { width: 6px; height: 6px; background: #808080; animation: w98-dot 1.2s steps(1) infinite; }
+.w98-dots i:nth-child(2) { animation-delay: 0.2s; }
+.w98-dots i:nth-child(3) { animation-delay: 0.4s; }
+.w98-dots i:nth-child(4) { animation-delay: 0.6s; }
+.w98-dots i:nth-child(5) { animation-delay: 0.8s; }
+@keyframes w98-dot { 0%, 20% { background: #000080; } 21%, 100% { background: #808080; } }
+.w98-text { min-height: 2.7em; }
+.w98-btns { display: flex; justify-content: flex-end; }
+.w98-btn {
+  min-width: 75px; padding: 3px 10px; font: inherit; color: #000; background: #c0c0c0; cursor: pointer;
+  border: 2px solid; border-color: #fff #000 #000 #fff; box-shadow: inset -1px -1px 0 #808080, inset 1px 1px 0 #dfdfdf;
+}
+.w98-btn:active { border-color: #000 #fff #fff #000; box-shadow: inset 1px 1px 0 #808080; }
