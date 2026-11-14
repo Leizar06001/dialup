@@ -197,10 +197,13 @@ function updateNet(net) {
   badge.classList.toggle("local", !net);
   if (!net) { setText("link-badge", "⚠ BOUCLE LOCALE · SIMULATION"); badge.classList.remove("net-on", "net-wait"); updateNet.closed = false; return; }
   badge.classList.toggle("net-on", net.registered);
-  badge.classList.toggle("net-wait", !net.registered);
+  badge.classList.toggle("net-wait", !net.registered && !net.error);
+  badge.classList.toggle("net-err", !net.registered && !!net.error);
   // setText ne réécrit que si le texte change : remplacer le texte d'un bouton
   // à chaque état annule les clics en cours (WebKit perd le nœud pressé).
-  setText("link-badge", net.registered ? `☎ RÉSEAU · N° ${fmtNum(net.number)}` : "RÉSEAU · connexion…");
+  // refus du central (mauvais mot de passe…) : le dire, plutôt que
+  // « connexion… » pour toujours (l'appli ne retente pas)
+  setText("link-badge", net.registered ? `☎ RÉSEAU · N° ${fmtNum(net.number)}` : net.error ? "RÉSEAU · ✗ REFUSÉ" : "RÉSEAU · connexion…");
   setText("net-status", net.registered
     ? `✓ Connecté à ${net.server} — ton numéro : ${net.number}`
     : (net.error ? `✗ Refusé : ${net.error}` : `Connexion à ${net.server}…`));
