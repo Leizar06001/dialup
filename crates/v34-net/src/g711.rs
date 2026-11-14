@@ -126,6 +126,28 @@ mod tests {
         assert_eq!(alaw_to_linear(0xAA), 32256);
     }
 
+    /// V.90 : le modem numérique émet des échantillons f32 ; le transport
+    /// doit en tirer exactement l'octet G.711 voulu, et l'abonné retrouver
+    /// exactement la valeur du tableau 1/V.90.
+    #[test]
+    fn niveaux_v90_transportes_exactement() {
+        use v34_core::v90::codes::{codeword, linear, sample, Law};
+        for u in 0..128u8 {
+            for pos in [true, false] {
+                let x = f32_to_i16(sample(Law::A, u, pos));
+                assert_eq!(linear_to_alaw(x), codeword(Law::A, u, pos), "A Ucode {u}");
+                let y = alaw_to_linear(codeword(Law::A, u, pos)) as i32;
+                assert_eq!(y, if pos { linear(Law::A, u) } else { -linear(Law::A, u) });
+                let x = f32_to_i16(sample(Law::Mu, u, pos));
+                if !(u == 0 && !pos) {
+                    assert_eq!(linear_to_ulaw(x), codeword(Law::Mu, u, pos), "µ Ucode {u}");
+                }
+                let y = ulaw_to_linear(codeword(Law::Mu, u, pos)) as i32;
+                assert_eq!(y, if pos { linear(Law::Mu, u) } else { -linear(Law::Mu, u) });
+            }
+        }
+    }
+
     #[test]
     fn quantization_error_is_logarithmic() {
         for &x in &[100i16, 1000, 5000, 20000, -300, -12000, 32000] {
