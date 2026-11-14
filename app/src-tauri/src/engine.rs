@@ -341,6 +341,9 @@ pub struct Engine {
     visio: crate::visio::Visio,
     /// Appel en cours vers 3615 ORACLE (mode d'emploi affiché à CONNECT)
     oracle_call: bool,
+    /// Numéro déjà annoncé dans la messagerie : une reconnexion au central
+    /// (même compte) ne le répète pas
+    numero_annonce: Option<String>,
 }
 
 fn fmt_speed(x: f64) -> String {
@@ -404,6 +407,7 @@ impl Engine {
             ringback: false,
             visio: Default::default(),
             oracle_call: false,
+            numero_annonce: None,
         }
     }
 
@@ -558,6 +562,7 @@ impl Engine {
             EngineCmd::NetDirectory => self.link.net_refresh_directory(),
             EngineCmd::NetLocal => {
                 self.hangup();
+                self.numero_annonce = None;
                 self.link = Box::new(LocalLoop::new(&self.line));
                 self.status = self.link.local_status();
                 self.console("Retour en boucle locale", "info");
@@ -777,7 +782,12 @@ impl Engine {
         match ev {
             N::Registered { number } => {
                 self.console(&format!("Connecté au central — votre numéro : {number}"), "result");
-                self.chat("system", format!("Central : votre numéro est le {number}. Le FAI est au {ISP_NUMBER}."));
+                // Après une coupure, le central nous redonne le même numéro :
+                // la messagerie le sait déjà.
+                if self.numero_annonce.as_deref() != Some(number.as_str()) {
+                    self.chat("system", format!("Central : votre numéro est le {number}. Le FAI est au {ISP_NUMBER}."));
+                    self.numero_annonce = Some(number);
+                }
             }
             N::AuthFailed(r) => self.console(&format!("Central : connexion refusée ({r})"), "result"),
             N::ServerLost => self.console("Central injoignable — nouvelle tentative…", "info"),
@@ -1013,7 +1023,7 @@ impl Engine {
         use crate::bbs::{Frame, Item};
         for item in self.bbs_rx.push(bytes) {
             match item {
-                Item::Frame(Frame::Chat(t)) => self.chat("remote", t),
+                Item::Frame(Frame::Chat(t)) => self.chat("remote", crate::bbs::chat_recu(t, self.oracle_call)),
                 Item::Frame(Frame::FileOffer { id, size, name }) => {
                     self.chat("system", format!("Réception de « {name} » ({:.1} Ko)…", size as f64 / 1024.0));
                     self.incoming = Some(crate::bbs::Incoming { id, name, size, data: Vec::with_capacity(size.min(16 << 20) as usize), started: Instant::now() });
@@ -1415,6 +1425,9 @@ impl Engine {
     }
 
     fn chat(&self, from: &'static str, text: String) {
+        if std::env::var_os("V34_TRACE").is_some() {
+            eprintln!("[{:>6}] chat {from} « {} »", trace_ms(), text.trim_end_matches('\n').replace('\n', "⏎"));
+        }
         let _ = self.app.emit("v34:chat", ChatMsg { from, text });
     }
 
@@ -1435,8 +1448,15 @@ impl Engine {
     fn emit_state(&self) {
         let scope: Vec<f32> = self.scope.iter().copied().collect();
         let to_db = |r: f32| 20.0 * r.max(1e-5).log10();
+        let mut status = self.status.clone();
+        // LED AA, comme sur un vrai modem : au repos, allumée quand il
+        // décrochera tout seul (DIP 2 « RÉP. AUTO ») ; en appel, quand c'est
+        // lui qui a répondu.
+        if !in_call(status.phase) {
+            status.leds.aa = self.auto_answer;
+        }
         let state = UiState {
-            status: self.status.clone(),
+            status,
             remote_phase: self.remote_phase,
             call_state: self.call_state(),
             link: self.link.name(),
@@ -1501,7 +1521,7 @@ mod tests {
 }
 
 /// Millisecondes depuis le lancement, pour les traces V34_TRACE.
-fn trace_ms() -> u128 {
+pub(crate) fn trace_ms() -> u128 {
     static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     T0.get_or_init(std::time::Instant::now).elapsed().as_millis()
 }

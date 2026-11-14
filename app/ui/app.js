@@ -792,7 +792,7 @@ function frame() {
 /* ---------------------------------------------------------------- infobulles LEDs et phases */
 const TIPS = {
   hs: ["HS · High Speed", "Allumée quand la liaison dépasse 14 400 bit/s (V.32bis, V.34). Sur un vrai modem, c'était la LED des frimeurs."],
-  aa: ["AA · Auto Answer", "Le modem décrochera tout seul si on l'appelle (registre S0). Les appels du central décrochent automatiquement."],
+  aa: ["AA · Auto Answer", "Au repos : allumée quand le modem décrochera tout seul si on l'appelle (interrupteur DIP 2 « RÉP. AUTO », le registre S0 d'un vrai modem). En appel : allumée quand c'est lui qui a répondu."],
   cd: ["CD · Carrier Detect", "La porteuse du modem distant est détectée : la liaison de données est établie. Quand elle s'éteint : NO CARRIER."],
   oh: ["OH · Off Hook", "Le modem a décroché la ligne, comme quand on soulève le combiné. Elle reste allumée de la numérotation au raccrochage."],
   rd: ["RD · Receive Data", "Clignote quand des octets arrivent du modem distant (après correction d'erreurs LAPM)."],
@@ -1151,7 +1151,7 @@ function makeDemoBridge() {
     emit("v34:state", {
       status: {
         role: "Call", phase, tx_signal: sig, rx_signal: sig, constellation, bytes_tx: 0, bytes_rx: 0,
-        leds: { hs: online, aa: false, cd: online, oh: !!t0, rd: online && Math.random() > 0.6, sd: online && Math.random() > 0.7, tr: true, mr: true },
+        leds: { hs: online, aa: !t0 && cfg.auto, cd: online, oh: !!t0, rd: online && Math.random() > 0.6, sd: online && Math.random() > 0.7, tr: true, mr: true },
         params: {
           v8_modes: el > 6 ? ["V.34", "V.32bis"] : [], symbol_rate_tx: el > 10 ? 3429 : null, symbol_rate_rx: el > 10 ? 3429 : null,
           carrier_tx_hz: el > 10 ? 1959 : null, carrier_rx_hz: null, preemphasis_tx: null,

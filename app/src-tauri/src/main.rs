@@ -18,6 +18,8 @@ mod browser;
 mod engine;
 mod fft;
 mod link;
+#[cfg(target_os = "linux")]
+mod linux;
 mod tones;
 mod visio;
 
@@ -170,7 +172,15 @@ fn tenir_journal(app: &tauri::AppHandle) {
                 j.chat.pop_front();
             }
         }
-        let _ = h.emit_to(browser::MESSAGERIE, "messagerie:chat", msg);
+        let r = h.emit_to(browser::MESSAGERIE, "messagerie:chat", &msg);
+        if std::env::var_os("V34_TRACE").is_some() {
+            let ouverte = h.get_webview(browser::MESSAGERIE).is_some();
+            let seq = &msg["seq"];
+            match r {
+                Ok(()) => eprintln!("[{:>6}] chat n°{seq} → messagerie ({})", engine::trace_ms(), if ouverte { "fenêtre ouverte" } else { "fermée : gardé dans le journal" }),
+                Err(e) => eprintln!("[{:>6}] chat n°{seq} → messagerie : ÉCHEC {e}", engine::trace_ms()),
+            }
+        }
     });
     let h = app.clone();
     app.listen_any("v34:file", move |ev| {
@@ -270,8 +280,12 @@ struct AppInfo {
 }
 
 #[tauri::command]
-fn app_info(state: State<AppState>) -> AppInfo {
-    let autonet = std::env::var_os("V34_NOAUTONET").is_none() && std::env::var_os("V34_NET").is_none();
+fn app_info(webview: tauri::Webview, state: State<AppState>) -> AppInfo {
+    // Une seule fois : si la fenêtre du modem est rechargée (vue web
+    // relancée après un plantage), elle ne se reconnecte pas au central.
+    static DEJA: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let premier = webview.label() == "main" && !DEJA.swap(true, std::sync::atomic::Ordering::Relaxed);
+    let autonet = premier && std::env::var_os("V34_NOAUTONET").is_none() && std::env::var_os("V34_NET").is_none();
     AppInfo { version: env!("CARGO_PKG_VERSION"), audio_device: state.speaker.device_name(), autonet, visio: std::env::var("V34_VISIO").ok() }
 }
 
@@ -317,6 +331,10 @@ fn main() {
                 .spawn(move || Engine::new(handle, engine_speaker).run(rx))?;
             if let Some(win) = app.get_webview_window("main") {
                 fit_to_screen(&win);
+                // Linux : canevas sans la carte graphique, rechargement si
+                // le processus web plante (voir `linux::fiabiliser`)
+                #[cfg(target_os = "linux")]
+                let _ = win.with_webview(|pw| linux::fiabiliser(&pw.inner(), "main"));
             }
             if std::env::var("V34_AUTOBROWSER").is_ok() {
                 let h = app.handle().clone();

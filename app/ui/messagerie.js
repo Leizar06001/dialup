@@ -242,7 +242,9 @@ function visioStop() {
 function visioCamError(e) {
   const n = (e && e.name) || "";
   if (n === "NotAllowedError" || n === "SecurityError" || n === "PermissionDeniedError")
-    return "Caméra refusée. Sur Mac : Réglages Système › Confidentialité et sécurité › Caméra, coche V34 Modem, puis relance l'appli. En attendant : la MIRE.";
+    return /Mac OS X|Macintosh/.test(navigator.userAgent)
+      ? "Caméra refusée. Sur Mac : Réglages Système › Confidentialité et sécurité › Caméra, coche V34 Modem, puis relance l'appli. En attendant : la MIRE."
+      : "Caméra refusée par le système : autorise la caméra dans les réglages de confidentialité du bureau (KDE, GNOME…), puis réessaie. En attendant : la MIRE.";
   if (n === "NotFoundError" || n === "DevicesNotFoundError" || n === "OverconstrainedError")
     return "Pas de caméra sur ce PC. Monsieur Mire peut la remplacer : MIRE.";
   if (n === "NotReadableError" || n === "TrackStartError" || n === "AbortError")
@@ -458,7 +460,9 @@ function visioState(s) {
     else if (v.online && v.peer === "muet") [msg, warn] = ["Pas de réponse : l'appli d'en face ne connaît pas le visiophone (rien ne lui est envoyé).", true];
     else if (v.online && v.peer === "attente") msg = "Annonce envoyée ; en attente du visiophone d'en face…";
     else if (visio.src === "cam" && visio.enc && visio.enc.shapes === 0)
-      msg = "Image toute unie : caméra masquée, capot du Mac fermé, ou caméra encore endormie ?";
+      msg = /Mac OS X|Macintosh/.test(navigator.userAgent)
+        ? "Image toute unie : caméra masquée, capot du Mac fermé, ou caméra encore endormie ?"
+        : "Image toute unie : volet de la webcam fermé, caméra coupée par une touche du clavier, ou encore endormie ?";
     else if (visio.src !== "off" && visio.enc)
       msg = `${visio.src === "cam" ? "Caméra" : "Mire"} : ${visio.enc.shapes} formes, ${visio.enc.bytes} octets l'image (${fr1(visio.enc.ms)} ms de rêve)` + (v.online ? "" : " · aperçu, hors appel");
     else if (visio.src === "off") msg = "Caméra éteinte : rien n'est filmé. CAMÉRA pour te montrer, MIRE pour essayer sans.";

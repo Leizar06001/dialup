@@ -67,6 +67,9 @@ Les installateurs de la dernière version sont sur la page
 > - **Windows** : SmartScreen > **Informations complémentaires** >
 >   **Exécuter quand même**.
 > - **Linux** : `chmod +x V34-Modem_*.AppImage` avant de lancer l'AppImage.
+>   La première fois qu'on allume la CAMÉRA du visiophone, le bureau demande
+>   l'autorisation (portail « Caméra ») : répondre oui. Refusée par erreur,
+>   elle se rétablit dans les réglages de confidentialité du bureau.
 
 L'appli démarre en **boucle locale** (deux modems dans la même machine) :
 ni compte ni réseau nécessaires. En mode réseau, elle propose par défaut le

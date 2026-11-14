@@ -38,6 +38,19 @@ pub struct Incoming {
     pub started: Instant,
 }
 
+/// Texte d'une trame de chat reçue, pour la messagerie (qui assemble le
+/// texte distant jusqu'au retour à la ligne). Entre abonnés, chaque trame
+/// est un message entier : il finit sa ligne, sinon le message suivant s'y
+/// collerait (« Bonjourça marche ? »). 3615 ORACLE (`flux`), lui, écrit au
+/// fil de l'eau : des morceaux de lignes, chaque ligne précédée d'un retour.
+pub fn chat_recu(texte: String, flux: bool) -> String {
+    if flux || texte.ends_with('\n') {
+        texte
+    } else {
+        texte + "\n"
+    }
+}
+
 /// Nom de fichier sûr (pas de chemin, pas de caractères spéciaux).
 pub fn safe_name(name: &str) -> String {
     let base = Path::new(name).file_name().and_then(|s| s.to_str()).unwrap_or("fichier");
@@ -97,6 +110,20 @@ mod tests {
                 *ouverte = false;
             }
         }
+    }
+
+    /// Entre abonnés : chaque message distant sur sa ligne, même quand deux
+    /// arrivent de suite (le second se collait au premier).
+    #[test]
+    fn messages_entre_abonnes_sur_leur_ligne() {
+        let (mut lignes, mut ouverte) = (Vec::new(), false);
+        for (de, t) in [("remote", "Bonjour"), ("remote", "ça marche ?"), ("local", "oui"), ("remote", "super")] {
+            let t = if de == "remote" { chat_recu(t.into(), false) } else { t.into() };
+            messagerie(&mut lignes, &mut ouverte, de, &t);
+        }
+        assert_eq!(lignes, ["<distant> Bonjour", "<distant> ça marche ?", "<moi> oui", "<distant> super"]);
+        // l'oracle, lui, écrit par morceaux
+        assert_eq!(chat_recu("La voy".into(), true), "La voy");
     }
 
     /// 3615 ORACLE (code du central, hors ligne comme en boucle locale) parle

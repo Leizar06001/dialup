@@ -119,16 +119,22 @@ fn build(app: &AppHandle, proxy_port: u16, web_ok: bool) -> tauri::Result<()> {
         .min_inner_size(640.0, 480.0)
         .build()?;
     let size = win.inner_size()?.to_logical::<f64>(win.scale_factor()?);
-    win.add_child(
+    let chrome = win.add_child(
         WebviewBuilder::new(CHROME, WebviewUrl::App("navigateur.html".into())),
         LogicalPosition::new(0.0, 0.0),
         LogicalSize::new(size.width, CHROME_H),
     )?;
-    win.add_child(
-        WebviewBuilder::new(MESSAGERIE, WebviewUrl::App("messagerie.html".into())),
+    let messagerie = win.add_child(
+        camera(WebviewBuilder::new(MESSAGERIE, WebviewUrl::App("messagerie.html".into()))),
         LogicalPosition::new(0.0, CHROME_H),
         LogicalSize::new(size.width, (size.height - CHROME_H).max(100.0)),
     )?;
+    #[cfg(target_os = "linux")]
+    {
+        linux(&chrome, Some(CHROME_H));
+        linux(&messagerie, None);
+    }
+    let _ = (chrome, messagerie);
     if web_ok {
         add_page(app, &win, proxy_port, size)?;
     }
@@ -163,13 +169,58 @@ fn add_page(app: &AppHandle, win: &tauri::Window, proxy_port: u16, size: Logical
             let _ = a2.emit_to(CHROME, "nav:load", ev.clone());
             let _ = a2.emit_to(STATUS, "nav:load", ev);
         });
-    win.add_child(page, LogicalPosition::new(0.0, CHROME_H), LogicalSize::new(size.width, (size.height - CHROME_H - STATUS_H).max(100.0)))?;
-    win.add_child(
+    let page = win.add_child(page, LogicalPosition::new(0.0, CHROME_H), LogicalSize::new(size.width, (size.height - CHROME_H - STATUS_H).max(100.0)))?;
+    let status = win.add_child(
         WebviewBuilder::new(STATUS, WebviewUrl::App("nav-statut.html".into())),
         LogicalPosition::new(0.0, (size.height - STATUS_H).max(0.0)),
         LogicalSize::new(size.width, STATUS_H),
     )?;
+    #[cfg(target_os = "linux")]
+    {
+        linux(&page, None);
+        linux(&status, Some(STATUS_H));
+    }
+    let _ = (page, status);
     Ok(())
+}
+
+/// Visiophone : la messagerie (page locale, jamais la page web) peut ouvrir
+/// la caméra. Sous Linux, WebKitGTK refuse sinon toute demande (il n'a pas
+/// de fenêtre pour demander l'accord) ; ailleurs, rien ne change : le
+/// système demande lui-même.
+fn camera(b: WebviewBuilder<tauri::Wry>) -> WebviewBuilder<tauri::Wry> {
+    #[cfg(target_os = "linux")]
+    let b = b.on_permission_request(|_wv, kind| {
+        use tauri::webview::{PermissionKind, PermissionResponse};
+        if matches!(kind, PermissionKind::Camera) {
+            PermissionResponse::Allow
+        } else {
+            PermissionResponse::Default
+        }
+    });
+    b
+}
+
+/// Sous Linux : place de la vue dans la fenêtre (hauteur fixe, ou tout le
+/// reste : voir [`crate::linux`]), et, pour les pages locales, réglages
+/// qui évitent les plantages de WebKitGTK ; la messagerie a la caméra.
+#[cfg(target_os = "linux")]
+fn linux(wv: &tauri::Webview, hauteur: Option<f64>) {
+    let label = wv.label().to_string();
+    let _ = wv.with_webview(move |pw| {
+        let w = pw.inner();
+        crate::linux::caser(&w, hauteur);
+        let nom = match label.as_str() {
+            CHROME => CHROME,
+            STATUS => STATUS,
+            MESSAGERIE => MESSAGERIE,
+            _ => return, // la page web : aucun réglage de plus
+        };
+        crate::linux::fiabiliser(&w, nom);
+        if nom == MESSAGERIE {
+            crate::linux::activer_camera(&w);
+        }
+    });
 }
 
 /// Hauteur de la barre de titre à compenser. Sur macOS, la zone de contenu

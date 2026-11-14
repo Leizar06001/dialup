@@ -24,3 +24,11 @@ v34-net = { workspace = true }
 # Pour simuler le FAI en boucle locale (même code que sur le VPS)
 v34-server = { path = "../../crates/v34-server" }
 cpal = "0.15"
+
+# Linux : les vues web de Tauri sont des widgets WebKitGTK, rangés dans une
+# boîte GTK (mise en page du navigateur, caméra du visiophone). Mêmes
+# versions que celles qu'apporte déjà Tauri (rien de neuf dans Cargo.lock).
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
+libc = "0.2"
