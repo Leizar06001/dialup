@@ -19,6 +19,7 @@
 pub mod api;
 pub mod datamode;
 pub mod dsp;
+pub mod fax;
 pub mod info;
 pub mod lapm;
 pub mod line;

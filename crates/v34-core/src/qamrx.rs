@@ -153,6 +153,29 @@ impl QamRx {
         tau
     }
 
+    /// Qualité de la corrélation avec une séquence connue, normalisée entre
+    /// 0 et 1 (|Σ y·r*|² / (Σ|y|²·Σ|r|²), au meilleur des décalages essayés
+    /// par [`QamRx::fine_timing`]), sans rien changer : pour choisir entre
+    /// plusieurs hypothèses d'alignement, ou rejeter une fausse alerte.
+    pub fn correlation(&self, refs: &[(i64, Cpx)]) -> f32 {
+        let er: f32 = refs.iter().map(|(_, r)| r.norm_sqr()).sum();
+        let mut best = 0.0f32;
+        for step in -8..=8 {
+            let tau = step as f64 / 16.0;
+            let (mut acc, mut ey) = (Cpx::ZERO, 0.0f32);
+            for &(k, r) in refs {
+                if let Some(y) = self.d.at(k as f64 * self.sps + self.grid_offset + tau * self.sps) {
+                    acc += y * r.conj();
+                    ey += y.norm_sqr();
+                }
+            }
+            if ey > 0.0 && er > 0.0 {
+                best = best.max(acc.norm_sqr() / (ey * er));
+            }
+        }
+        best
+    }
+
     /// Réactive l'estimation de rythme en boucle ouverte (utile si un jour
     /// les horloges des deux modems diffèrent, ex. liaison acoustique).
     pub fn unfreeze_timing(&mut self) {
