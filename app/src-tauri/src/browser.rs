@@ -87,6 +87,8 @@ pub fn set_vue(app: &AppHandle, messagerie: bool) -> Result<Vue, String> {
     }
     let v = vue();
     let _ = app.emit_to(CHROME, "nav:vue", v.clone());
+    // La fenêtre du modem éteint le clignotement de la LED correspondante
+    let _ = app.emit("navigateur:vu", v.vue);
     Ok(v)
 }
 
@@ -109,7 +111,11 @@ pub fn open(app: &AppHandle, proxy_port: u16, messagerie: bool) -> Result<(), St
     }
     VUE_MESSAGERIE.store(messagerie, Ordering::Relaxed);
     WEB_OK.store(web_ok.is_ok(), Ordering::Relaxed);
-    build(app, proxy_port, web_ok.is_ok()).map_err(|e| e.to_string())
+    build(app, proxy_port, web_ok.is_ok()).map_err(|e| e.to_string())?;
+    // Le premier passage au premier plan arrive avant `on_window_event` :
+    // on prévient la fenêtre du modem ici.
+    let _ = app.emit("navigateur:vu", vue().vue);
+    Ok(())
 }
 
 fn build(app: &AppHandle, proxy_port: u16, web_ok: bool) -> tauri::Result<()> {
@@ -142,6 +148,11 @@ fn build(app: &AppHandle, proxy_port: u16, web_ok: bool) -> tauri::Result<()> {
     let (w2, a3) = (win.clone(), app.clone());
     win.on_window_event(move |ev| match ev {
         tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => layout(&w2),
+        // Au premier plan : ce qu'elle montre (web ou messagerie) a été vu,
+        // les LED de la fenêtre du modem arrêtent de clignoter
+        tauri::WindowEvent::Focused(true) => {
+            let _ = a3.emit("navigateur:vu", vue().vue);
+        }
         // Fenêtre fermée : la caméra du visiophone s'éteint avec elle
         tauri::WindowEvent::Destroyed => {
             if let Some(st) = a3.try_state::<crate::AppState>() {

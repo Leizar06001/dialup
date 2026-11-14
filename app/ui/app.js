@@ -84,7 +84,25 @@ $("dial-number").addEventListener("keydown", (e) => {
   if (e.key === "Enter") sendAt("ATDT" + e.target.value.trim());
 });
 $("btn-hangup").addEventListener("click", () => sendAt("ATH"));
-$("btn-browser").addEventListener("click", () => invoke("open_browser").catch((e) => crt("Navigateur : " + e, "info")));
+/* Bouton NAVIGATEUR : sa LED s'allume quand le tunnel Internet est prêt et
+   clignote tant qu'on n'a pas ouvert le navigateur depuis (il ne s'ouvre
+   jamais tout seul). */
+const navigateur = { nouveau: false, annonce: false };
+$("btn-browser").addEventListener("click", () => {
+  navigateur.nouveau = false;
+  invoke("open_browser").catch((e) => crt("Navigateur : " + e, "info"));
+});
+// La fenêtre du navigateur passe au premier plan (ou change de mode) : ce
+// qu'elle montre a été vu.
+bridge.listen("navigateur:vu", (vue) => {
+  if (vue === "web") navigateur.nouveau = false;
+  else messagerie.unread = messagerie.nouvelAppel = false;
+});
+function updateNavigateur(s) {
+  if (s.call_state === "idle") navigateur.annonce = navigateur.nouveau = false;
+  else if (s.proxy && !navigateur.annonce) navigateur.annonce = navigateur.nouveau = true;
+  led("led-nav", s.proxy && navigateur.nouveau ? "led green on blink" : s.proxy ? "led green on" : "led green");
+}
 $("btn-retrain").addEventListener("click", () => {
   crt("> [RETRAIN]", "cmd");
   invoke("modem_command", { cmd: { type: "Retrain" } });
@@ -118,11 +136,14 @@ bridge.listen("v34:event", ({ side, event }) => {
 /* ---------------------------------------------------------------- messagerie
    Le chat, les fichiers et le visiophone sont dans le mode MESSAGERIE du
    navigateur (messagerie.html). Ici : le bouton-poussoir qui l'ouvre, sa
-   LED (verte en ligne avec un abonné, rouge qui clignote quand un message
-   attend), et l'ouverture automatique quand un appel entre abonnés aboutit. */
-const messagerie = { unread: false, bbsOnline: false };
+   LED (verte en ligne avec un abonné, qui clignote tant qu'on n'est pas allé
+   voir l'appel qui vient d'aboutir ; rouge qui clignote quand un message
+   attend). Elle ne s'ouvre jamais d'elle-même : à chaque reconnexion, ça
+   finissait par agacer. */
+const messagerie = { unread: false, bbsOnline: false, nouvelAppel: false, annonce: false };
 function openMessagerie() {
   messagerie.unread = false;
+  messagerie.nouvelAppel = false;
   invoke("open_browser", { mode: "messagerie" }).catch((e) => crt("Messagerie : " + e, "info"));
 }
 $("btn-messagerie").addEventListener("click", openMessagerie);
@@ -130,14 +151,17 @@ bridge.listen("v34:chat", ({ from }) => {
   if (from === "remote" || from === "salon") messagerie.unread = true;
 });
 // La messagerie a été lue (sa fenêtre a le focus)
-bridge.listen("messagerie:vu", () => { messagerie.unread = false; });
+bridge.listen("messagerie:vu", () => { messagerie.unread = false; messagerie.nouvelAppel = false; });
 // Un numéro choisi dans l'annuaire s'affiche aussi dans le terminal
 bridge.listen("messagerie:compose", (num) => { $("dial-number").value = num; });
 function updateMessagerie(s) {
   const bbs = s.session !== "internet" && s.call_state === "online";
-  if (bbs && !messagerie.bbsOnline) openMessagerie(); // l'appel aboutit : place à la conversation
+  // L'appel aboutit : la LED clignote (une fois par appel : un réentraînement
+  // ne la relance pas), jusqu'à ce qu'on ouvre la messagerie.
+  if (s.call_state === "idle") messagerie.annonce = messagerie.nouvelAppel = false;
+  else if (bbs && !messagerie.annonce) messagerie.annonce = messagerie.nouvelAppel = true;
   messagerie.bbsOnline = bbs;
-  led("led-msg", messagerie.unread ? "led on blink" : bbs ? "led green on" : "led green");
+  led("led-msg", messagerie.unread ? "led on blink" : bbs && messagerie.nouvelAppel ? "led green on blink" : bbs ? "led green on" : "led green");
   const tab = document.querySelector('#bbs-tabs [data-view="chat"]');
   if (tab.classList.contains("unread") !== messagerie.unread) tab.classList.toggle("unread", messagerie.unread);
 }
@@ -477,8 +501,7 @@ function onState(s) {
   const dial = $("btn-dial");
   setText("btn-dial", s.incoming ? "DÉCROCHER" : "APPELER");
   dial.classList.toggle("ringing", !!s.incoming);
-  // Bouton NAVIGATEUR : sa LED s'allume quand le tunnel Internet est prêt
-  led("led-nav", s.proxy ? "led green on" : "led green");
+  updateNavigateur(s);
   updateMessagerie(s);
   renderDir(s.net);
 
@@ -814,8 +837,8 @@ const TIPS = {
   dipres: ["DIP 4 à 8 · Réservé", "Réservé usine — ne pas modifier. Réglés en usine et sans effet sur ce modèle ; le technicien qui savait à quoi ils servaient est parti avec le mode d'emploi."],
   debit: ["DÉBIT MAX", "Plafond du débit négocié, pour imiter un modem plus ancien ou brider la ligne. Le V.34 s'arrête à 33 600 bit/s ; au-dessus, seul le 56K (V.90) monte, par paliers de 2 667 bit/s, et il ne descend pas sous 28 000. Molette de la souris, ▲ ▼ ou flèches du clavier."],
   cast: ["COMMENTAIRES", "Le modem commente sa propre négociation comme un match à la télé : ANSam, sondage, débit symbole, CONNECT… Les phrases sont tirées au hasard dans des banques écrites à la main, avec les vraies valeurs mesurées. Aucune intelligence artificielle n'a été dérangée."],
-  messagerie: ["MESSAGERIE", "Ouvre la messagerie du navigateur : le chat (ou le salon du FAI), l'envoi de fichiers et le visiophone V.Hallucination, avec les contacts du central. Elle s'ouvre toute seule quand un appel entre abonnés aboutit. LED verte : en ligne avec un abonné ; rouge qui clignote : un message t'attend, comme sur un répondeur."],
-  nav: ["NAVIGATEUR", "Ouvre Tinyverse Navigator, sur le web 1998 ou moderne : tout son trafic passe par le modem. Appelle d'abord TINYVERSE, en tête de l'ANNUAIRE ; la LED s'allume quand Internet est prêt."],
+  messagerie: ["MESSAGERIE", "Ouvre la messagerie du navigateur : le chat (ou le salon du FAI), l'envoi de fichiers et le visiophone V.Hallucination, avec les contacts du central. Elle ne s'ouvre pas toute seule : quand un appel entre abonnés aboutit, sa LED verte clignote jusqu'à ce que tu l'ouvres, puis reste allumée tant que dure l'appel ; rouge qui clignote : un message t'attend, comme sur un répondeur."],
+  nav: ["NAVIGATEUR", "Ouvre Tinyverse Navigator, sur le web 1998 ou moderne : tout son trafic passe par le modem. Appelle d'abord TINYVERSE, en tête de l'ANNUAIRE ; la LED clignote quand Internet est prêt, jusqu'à ce que tu ouvres le navigateur, puis reste allumée."],
   chat: ["CHAT ↗", "Le chat et l'envoi de fichiers ont déménagé dans la MESSAGERIE du navigateur, avec le visiophone : cet onglet l'ouvre. Il clignote quand un message t'y attend."],
   karaoke: ["♪ KARAOKÉ", "Les paroles de la chanson du modem, en direct : à gauche ce que notre modem émet, à droite ce qu'on entend de l'autre bout. La boule rebondit sur la syllabe en cours. Au ralenti (TEMPS ×0,1), on arrive presque à chanter juste."],
 };
@@ -836,7 +859,7 @@ function tipLive(key) {
   }
   if (key === "messagerie" || key === "chat") {
     const v = state && state.visio;
-    const l = [messagerie.unread ? "● nouveau message" : messagerie.bbsOnline ? "● en ligne avec un abonné" : "○ pas d'appel entre abonnés"];
+    const l = [messagerie.unread ? "● nouveau message" : messagerie.bbsOnline && messagerie.nouvelAppel ? "● appel abouti : clique pour ouvrir !" : messagerie.bbsOnline ? "● en ligne avec un abonné" : "○ pas d'appel entre abonnés"];
     if (v && v.camera) l.push("visiophone : ta caméra tourne");
     return l.join("\n");
   }

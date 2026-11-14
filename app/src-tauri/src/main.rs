@@ -359,6 +359,13 @@ fn main() {
             }
             Ok(())
         })
+        // Fermer la fenêtre du modem quitte tout le programme : le navigateur
+        // et la messagerie ne restent pas seuls à l'écran.
+        .on_window_event(|win, ev| {
+            if win.label() == "main" && matches!(ev, tauri::WindowEvent::Destroyed) {
+                win.app_handle().exit(0);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             at_command,
             modem_command,

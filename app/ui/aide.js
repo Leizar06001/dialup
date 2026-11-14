@@ -37,7 +37,7 @@
         [["RING"], "Appel entrant (mode réseau) : avec la réponse automatique (DIP 2 sur ON), ça sonne deux fois puis le modem décroche tout seul (LED AA) ; sinon, ATA ou DÉCROCHER."],
         [["RETRAIN"], "En ligne : réentraînement complet, le modem refait le sondage de la ligne et l'apprentissage de l'égaliseur."],
         [["RENÉGO"], "En ligne : renégocie seulement le débit, plus vite. Utile après avoir changé la ligne."],
-        [["CONNECT 33600/V34"], "Liaison établie (débit reçu, puis émis) : place au chat, aux fichiers, au visiophone ou à Internet. Entre abonnés, la MESSAGERIE s'ouvre toute seule."],
+        [["CONNECT 33600/V34"], "Liaison établie (débit reçu, puis émis) : place au chat, aux fichiers, au visiophone ou à Internet. Entre abonnés, la LED du bouton MESSAGERIE clignote : clique dessus pour discuter."],
         [["BUSY"], "Occupé : tu entends d'abord la tonalité d'occupation (440 Hz, une demi-seconde sur deux). Ton correspondant est déjà en ligne, ou, pour le FAI et l'oracle, ton accès Internet n'est pas encore activé."],
         [["NO ANSWER"], "Ce numéro n'est attribué à personne : les trois notes montantes (950, 1400, 1800 Hz) des numéros non attribués précèdent le message. Aussi quand personne ne décroche."],
         [["NO CARRIER"], "Après une tonalité d'occupation rapide : réseau encombré (tous les modems du FAI sont pris). Sinon : la liaison s'est coupée."],
@@ -71,7 +71,7 @@
       id: "appel", titre: "Pendant l'appel : chat, fichiers, annuaire", court: "CHAT",
       intro: "L'annuaire est sous le modem ; le chat, les fichiers et le visiophone vivent dans la fenêtre du navigateur, mode MESSAGERIE.",
       items: [
-        [["MESSAGERIE"], "Le bouton-poussoir du bas, entre le terminal et l'annuaire (et le mode du même nom dans la barre du navigateur) : ouvre la messagerie. Elle s'ouvre toute seule quand un appel entre abonnés aboutit. LED verte : en ligne avec un abonné ; rouge qui clignote : un message t'attend, comme sur un répondeur."],
+        [["MESSAGERIE"], "Le bouton-poussoir du bas, entre le terminal et l'annuaire (et le mode du même nom dans la barre du navigateur) : ouvre la messagerie. Elle ne s'ouvre pas toute seule : quand un appel entre abonnés aboutit, sa LED verte clignote jusqu'à ce que tu l'ouvres, puis reste allumée tant que dure l'appel ; rouge qui clignote : un message t'attend, comme sur un répondeur."],
         [["Entrée"], "Dans la conversation ambre : envoie ton message, une fois CONNECT affiché. En boucle locale, l'écho te le renvoie. Les messages arrivés avant l'ouverture de la fenêtre y sont aussi."],
         [["Envoyer un fichier…"], "Envoie un fichier au correspondant (8 Mo max : c'est un modem, pas la fibre). Jauge, débit en Ko/s, acquittement à la fin."],
         [null, "Fichiers reçus : vérifiés (CRC) puis rangés dans **Téléchargements/V34 reçus**."],
@@ -101,7 +101,7 @@
       id: "internet", titre: "Internet par le FAI", court: "INTERNET",
       items: [
         [["TINYVERSE"], "Dans l'ANNUAIRE, ☎ APPELER : le FAI. Après CONNECT, « Tunnel Internet établi » : la ligne transporte maintenant tes connexions."],
-        [["NAVIGATEUR"], "Le bouton-poussoir du haut, entre le terminal et l'annuaire : ouvre Tinyverse Navigator. Sa LED verte s'allume quand Internet est prêt ; tout son trafic passe par le modem."],
+        [["NAVIGATEUR"], "Le bouton-poussoir du haut, entre le terminal et l'annuaire : ouvre Tinyverse Navigator. Sa LED verte clignote quand Internet est prêt, jusqu'à ce que tu l'ouvres (il ne s'ouvre jamais tout seul) ; tout son trafic passe par le modem."],
         [["WEB 1998", "MODERNE", "MESSAGERIE"], "Les trois modes du navigateur : les deux façons de voir le web, et la messagerie (chat, fichiers, visio), sans web."],
         [["Salon du FAI"], "Pendant la session, la conversation de la MESSAGERIE parle à tous les abonnés connectés au FAI. `/qui` : qui est là ; `/aide` : l'aide du salon."],
         [["WEB 1998"], "Le FAI va chercher la page et te la sert allégée : HTML simple, images GIF en 256 couleurs. Ça tient dans 33,6k."],
@@ -122,7 +122,7 @@
       intro: "Une intelligence artificielle qu'on ne joint qu'au modem, et qui est persuadée qu'on est en 1998.",
       items: [
         [["3615 ORACLE", "☎ APPELER"], "En bas de l'ANNUAIRE, dans les numéros spéciaux (et toujours là en boucle locale) : compose le **08 36 67 22 53**, « ORACLE » sur le clavier du téléphone. Le modem du central décroche, en V.34 ou en 56K."],
-        [["MESSAGERIE"], "S'ouvre à CONNECT sur l'écran d'accueil du service : la bannière, le tarif (2,23 F la minute, jamais facturés) et les questions qu'il te reste aujourd'hui."],
+        [["MESSAGERIE"], "À CONNECT, sa LED clignote : ouvre-la, l'écran d'accueil du service t'y attend : la bannière, le tarif (2,23 F la minute, jamais facturés) et les questions qu'il te reste aujourd'hui."],
         [["Entrée"], "Tape ta question dans la conversation ambre, puis Entrée (la touche ENVOI du Minitel). L'oracle consulte les astres (les points de suspension), puis répond en quelques phrases, à la vitesse d'un Minitel en 1200 bit/s. Le compteur en francs tourne après chaque réponse."],
         [null, "Il se souvient de vos derniers échanges jusqu'à ce que tu raccroches, et ne connaît que 1998 : le Minitel, le franc, Windows 98, la Coupe du monde. Au-delà, il ne voit que des brumes."],
         [["/aide", "/sommaire", "/fin"], "Le GUIDE, l'écran d'accueil, et raccrocher (RACCROCHER ou ATH marchent aussi). Sans question pendant cinq minutes, l'oracle raccroche de lui-même."],

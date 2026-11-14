@@ -1355,7 +1355,7 @@ impl Engine {
                         self.start_tunnel(*tx_rate);
                     }
                     if self.oracle_call && self.session == Session::Bbs {
-                        self.console("3615 ORACLE en ligne : pose ta question dans la MESSAGERIE (elle s'ouvre toute seule)", "info");
+                        self.console("3615 ORACLE en ligne : ouvre la MESSAGERIE (sa LED clignote) et pose ta question", "info");
                         self.chat("system", "3615 ORACLE en ligne : tape ta question en bas, puis Entrée (la touche ENVOI). /fin pour raccrocher.".into());
                     }
                 }
