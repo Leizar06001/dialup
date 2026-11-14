@@ -131,6 +131,10 @@ pub struct Fax {
     page: Vec<Vec<bool>>,
     /// Émetteur qui abandonne : la raison, dite après le DCN
     abandon: Option<&'static str>,
+    /// Nom de ce qui part en ce moment (karaoké, afficheur)
+    emis: &'static str,
+    /// Fanions V.21 vus récemment (échantillon du dernier)
+    v21_vu: usize,
 }
 
 impl Fax {
@@ -158,6 +162,8 @@ impl Fax {
             t4: None,
             page: Vec::new(),
             abandon: None,
+            emis: "silence",
+            v21_vu: 0,
         }
     }
 
@@ -179,6 +185,7 @@ impl Fax {
         }
         f.page_bits = bits;
         f.sortie = Sortie::Ton(Osc::new(1100.0));
+        f.emis = "CNG";
         f.evenement(FaxEvenement::Etape("CNG".into()));
         f
     }
@@ -277,8 +284,30 @@ impl Fax {
             e.trame(&t30::construire(*fcf, fif, i + 1 == trames.len()));
         }
         self.sortie = Sortie::V21(FskMod::new(V21Channel::High), e);
+        self.emis = trames.last().map_or("V.21", |(f, _)| t30::nom(*f));
         let noms: Vec<&str> = trames.iter().map(|(f, _)| t30::nom(*f)).collect();
         self.etape_ev(format!("→ {}", noms.join(" + ")));
+    }
+
+    /// Ce qui part sur la ligne : « CNG », « CED », le nom de la trame V.21
+    /// (« DIS », « DCS »…), « TCF », « PAGE », ou « silence ».
+    pub fn emission(&self) -> &'static str {
+        match self.sortie {
+            Sortie::Silence => "silence",
+            _ => self.emis,
+        }
+    }
+
+    /// Ce qui arrive : « TCF » ou « PAGE » (V.29), « V.21 » (trames),
+    /// ou rien.
+    pub fn reception(&self) -> &'static str {
+        if self.rx29.as_ref().is_some_and(|r| r.porteuse()) {
+            return if self.etat == Etat::RecoitTcf { "TCF" } else { "PAGE" };
+        }
+        if self.emet() || self.total.saturating_sub(self.v21_vu) > 200 * MS {
+            return "";
+        }
+        "V.21"
     }
 
     fn emet(&self) -> bool {
@@ -320,7 +349,12 @@ impl Fax {
     /// Ce qui arrive de la ligne, quand on n'émet pas.
     fn ecouter(&mut self, x: f32) {
         if let Some(b) = self.v21.push(x) {
-            if let Some(octets) = self.hdlc.bit(b) {
+            let avant = self.hdlc.fanions;
+            let trame = self.hdlc.bit(b);
+            if self.hdlc.fanions != avant {
+                self.v21_vu = self.total;
+            }
+            if let Some(octets) = trame {
                 if let Some(t) = t30::lire(&octets) {
                     self.etape_ev(format!("← {}", t30::nom(t.fcf)));
                     self.recues.push(t);
@@ -380,6 +414,7 @@ impl Fax {
                 let cycle = self.n % (3500 * MS);
                 if cycle == 0 {
                     self.sortie = Sortie::Ton(Osc::new(1100.0));
+                    self.emis = "CNG";
                 } else if cycle == 500 * MS {
                     self.sortie = Sortie::Silence;
                 }
@@ -410,6 +445,7 @@ impl Fax {
                     t.envoyer(std::iter::repeat_n(false, self.debit.bit_s() as usize * TCF_MS / 1000));
                     t.terminer();
                     self.sortie = Sortie::V29(Box::new(t));
+                    self.emis = "TCF";
                     self.etape_ev(format!("→ TCF ({} bit/s)", self.debit.bit_s()));
                     self.aller(Etat::Tcf);
                 }
@@ -453,6 +489,7 @@ impl Fax {
                     t.envoyer(self.page_bits.iter().copied());
                     t.terminer();
                     self.sortie = Sortie::V29(Box::new(t));
+                    self.emis = "PAGE";
                     self.etape_ev(format!("→ page ({} bit/s)", self.debit.bit_s()));
                     self.aller(Etat::Page);
                 }
@@ -526,6 +563,7 @@ impl Fax {
             Etat::SilenceInitial => {
                 if self.n >= 200 * MS {
                     self.sortie = Sortie::Ton(Osc::new(2100.0));
+                    self.emis = "CED";
                     self.etape_ev("CED");
                     self.aller(Etat::Ced);
                 }

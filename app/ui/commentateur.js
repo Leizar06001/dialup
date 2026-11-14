@@ -27,6 +27,118 @@ const Commentateur = (() => {
    * le nôtre ; {emet}/{recoit} : qui émet / reçoit le signal commenté.
    * Les majuscules initiales donnent la forme de début de phrase. */
   const P = {
+    // ---------------------------------------------------------------- télécopie
+    fax_depart: [
+      "Attention, ce n'est pas un appel comme les autres : {notre} a une feuille à la main. C'est un fax !",
+      "{Notre} glisse une page dans le chargeur. Mesdames et messieurs, une télécopie, en direct !",
+      "Pas de chat ce soir : on envoie un fax au {num}. Le papier est prêt.",
+    ],
+    fax_cng: [
+      "Piiip… piiip… Le CNG retentit : le télécopieur appelle, et il le fait savoir toutes les trois secondes et demie.",
+      "Le fameux CNG, 1100 hertz, une demi-seconde : la carte de visite du télécopieur qui appelle.",
+      "Piiip ! Le signal d'appel du fax. Quiconque a travaillé dans un bureau en 1998 vient de frissonner.",
+    ],
+    fax_detecte: [
+      "Coup de théâtre ! Ce n'est pas un modem qui appelle, c'est un télécopieur ! {Notre} range son V.34 et sort le papier thermique.",
+      "Il a entendu le CNG ! {Notre} comprend tout de suite : on lui faxe quelque chose. Changement de tactique !",
+      "1100 hertz bien purs : pas de doute, c'est un fax. {Notre} passe en mode télécopieur, comme les grands.",
+    ],
+    fax_dis_tx: [
+      "{Notre} se présente : DIS ! Je reçois les fax, en V.29 et V.27ter, en résolution fine. Un CV impeccable.",
+      "Le DIS part en V.21 : {notre} annonce tout ce qu'il sait faire. Et il sait faire beaucoup.",
+    ],
+    fax_dis_rx: [
+      "Réponse d'en face : DIS ! {Autre} sait recevoir, en V.29, en résolution fine. Ça se présente bien.",
+      "{Autre} décline ses talents : V.29, V.27ter, fine. On a affaire à un vrai télécopieur.",
+      "Le DIS arrive, avec le CSI : {autre} donne même son numéro. Politesse de télécopieur.",
+    ],
+    fax_dcs: [
+      "DCS : {notre} choisit {debit} bit/s, résolution fine. Ambitieux, et pourquoi pas ?",
+      "On part à {debit} bit/s ! Le DCS est envoyé, le TSI avec : {notre} décline son identité.",
+      "{debit} bit/s, c'est le choix de {notre}. Reste à voir si la ligne est d'accord.",
+    ],
+    fax_dcs_rx: [
+      "{Autre} commande {debit} bit/s en résolution fine. {Notre} s'y prépare.",
+      "DCS reçu : ce sera {debit} bit/s. Le récepteur V.29 chauffe.",
+    ],
+    fax_tcf: [
+      "Le TCF : une seconde et demie de zéros, pour vérifier que la ligne tient. Rien de plus ennuyeux, rien de plus important.",
+      "Kshhhhh… Le test de ligne. Une seconde et demie de zéros parfaits, c'est tout ce qu'on demande.",
+      "Le TCF est lancé : si trop de bits dérapent, on recommence moins vite.",
+    ],
+    fax_tcf_bon: [
+      "Le TCF est impeccable ! Des zéros à perte de vue. {Notre} donne son feu vert.",
+      "Rien à redire sur le TCF : la ligne tient la route.",
+    ],
+    fax_tcf_mauvais: [
+      "Aïe, le TCF est mauvais : trop de bits de travers. {Notre} va demander de ralentir.",
+      "Le test de ligne échoue ! Trop de parasites pour ce débit-là.",
+    ],
+    fax_cfr: [
+      "CFR ! Confirmation de réception : la ligne est validée, le papier peut avancer.",
+      "Feu vert : CFR ! On passe aux choses sérieuses.",
+      "C'est validé ! CFR, et la page va pouvoir partir.",
+    ],
+    fax_ftt: [
+      "FTT ! Échec à l'entraînement : la ligne n'a pas aimé. On va redescendre d'un cran.",
+      "FTT, le carton jaune du télécopieur : trop vite pour cette ligne. Il faut ralentir.",
+    ],
+    fax_repli: [
+      "Repli à {debit} bit/s : moins vite, mais plus sûr. Un classique des lignes fatiguées.",
+      "On redescend à {debit} bit/s, sans rougir : même les meilleurs fax le font.",
+      "{debit} bit/s, nouvel essai ! Le télécopieur ne lâche rien.",
+    ],
+    fax_page: [
+      "La page part ! Ligne après ligne, en Huffman modifié, les blancs et les noirs comptés un par un.",
+      "Et voici la page ! Kchhhhhhh… 1728 points par ligne, à la queue leu leu.",
+      "Ça y est, la feuille avance ! Chaque ligne est réduite à quelques mots de code : le génie de T.4.",
+    ],
+    fax_impression: [
+      "Le papier sort ! Ligne après ligne, la page s'imprime en direct sur le papier thermique.",
+      "Ça imprime ! On entend presque la tête thermique chauffer.",
+      "La page arrive et s'imprime sous nos yeux. Moment d'émotion.",
+    ],
+    fax_mi_page: [
+      "Mi-page ! {faites} lignes sur {total} sont passées, le reste suit.",
+      "On est à la moitié : {faites} lignes sur {total}. Le papier continue de sortir en face.",
+    ],
+    fax_page_recue: [
+      "Fin de page ! {lignes} lignes reçues, le massicot est prêt.",
+      "{lignes} lignes, la page est complète ! Plus qu'à le confirmer.",
+    ],
+    fax_eop: [
+      "EOP : fin de la page, fin du document. Le télécopieur attend son accusé de réception.",
+      "EOP ! C'était la dernière page. Maintenant, le suspense : est-elle bien arrivée ?",
+    ],
+    fax_mcf: [
+      "MCF ! Message confirmé : la page est arrivée en un seul morceau.",
+      "Et c'est le MCF ! La page est bien reçue. Le bureau peut respirer.",
+      "MCF, confirmation ! Pas de « vous pouvez me la renvoyer, elle est illisible ».",
+    ],
+    fax_dcn: [
+      "DCN : on se dit au revoir dans les formes. Quel savoir-vivre, ces télécopieurs.",
+      "DCN, et on raccroche. Pas une trame de trop.",
+    ],
+    fax_ok: [
+      "Et c'est transmis ! Une télécopie dans les règles de l'art, comme au bureau en 1998.",
+      "Fax envoyé ! Quelque part, une imprimante thermique vient de faire son travail.",
+      "Télécopie réussie ! Le rapport d'émission dirait « RÉSULTAT : OK ».",
+    ],
+    fax_recu_ok: [
+      "Une page vient de sortir du télécopieur ! Encore tiède. Elle est rangée dans V34 reçus.",
+      "Fax reçu ! Le papier thermique a fait son office, et la page est au chaud dans V34 reçus.",
+    ],
+    fax_echec: [
+      "La télécopie échoue : {raison}. Le papier reste dans le bac.",
+      "Raté pour le fax : {raison}. Il faudra recommencer, ou poster une lettre.",
+      "Rapport d'émission : ÉCHEC. {Raison}.",
+    ],
+    meuble_fax: [
+      "Le papier avance, millimètre par millimètre.",
+      "Une ligne, puis une autre. Le fax ne se presse pas, mais il ne s'arrête pas.",
+      "Pendant ce temps, à l'autre bout, la page sort doucement de la machine.",
+      "Kchhhhh… Le V.29 fait son travail en silence. Enfin, en bruit.",
+    ],
     succes: [
       "★ SUCCÈS DÉBLOQUÉ : « {titre} » ! La tribune est debout !",
       "Et c'est un succès ! « {titre} » rejoint l'armoire à trophées.",
@@ -614,13 +726,13 @@ const Commentateur = (() => {
     ],
   };
   /** Situations qui terminent l'appel (affichées en rouge). */
-  const FINS = new Set(["no_carrier", "abandon", "raccroche_eux", "raccroche_nous", "echec", "occupe", "pas_de_reponse", "pas_de_tonalite"]);
+  const FINS = new Set(["fax_echec", "no_carrier", "abandon", "raccroche_eux", "raccroche_nous", "echec", "occupe", "pas_de_reponse", "pas_de_tonalite"]);
   /** Signaux du 56k (V.90), commentés dans les deux sens. */
   const V90 = {
     INFO0d: "info0d", Ja: "ja", Sd: "sd", "S̄d": "sd", TRN1d: "sd", Jd: "jd", "J′d": "jd",
     DIL: "dil", Ri: "ri", "R̄i": "ri", TRN2d: "trn2d", CPt: "cp", CP: "cp", "CP′": "cp", Ed: "ed",
   };
-  const MEUBLES = { Phase1: "meuble_v8", Phase2: "meuble_p2", Phase3: "meuble_p3", Phase4: "meuble_p4", Retrain: "meuble_retrain" };
+  const MEUBLES = { Phase1: "meuble_v8", Phase2: "meuble_p2", Phase3: "meuble_p3", Phase4: "meuble_p4", Retrain: "meuble_retrain", Fax: "meuble_fax" };
 
   /* ------------------------------------------------------------ karaoké */
   /** Paroles par signal (expression sur le nom, variantes). */
@@ -635,6 +747,11 @@ const Commentateur = (() => {
     [/^(S|PP|TRN)/, ["Pschhhhhhhhhhhhh", "Fschhhhhhhhhhhhh", "Pshhhhhhh-hhhhhh"]],
     [/^(J|MP|E|Ri|R̄i|CP)/, ["Pschhh-tt pschhh-tt", "Tchhh-tt-tchhh-tt", "Pschhht-pschhht"]],
     [/^B1/, ["Chhhhhhhhhhhhhhhhh", "Kchhhhhhhhhhhhhhh"]],
+    // télécopie
+    [/^CNG$/, ["Piiiip………… piiiip…………", "Bip… … … … … bip… … …"]],
+    [/^CED$/, ["Biiiiiiiiiiiiiiiiiiii", "Uiiiiiiiiiiiiiiiiiiiii"]],
+    [/^(DIS|CSI|DCS|TSI|CFR|FTT|EOP|MPS|MCF|RTN|DCN|V\.21)$/, ["Tirlirlirlirlirli", "Brrrdldldldldldl", "Trrr-dlilidlidli"]],
+    [/^(TCF|PAGE)$/, ["Krrrrchhhhhhhhhhhh", "Kchhhh-krrrchhhhhh", "Chhhhhhhhh-krrrrrr"]],
   ];
   /** Syllabes DTMF par rangée du clavier. */
   const DTMF = { 1: "bip", 2: "bip", 3: "bip", 4: "bup", 5: "bup", 6: "bup", 7: "bep", 8: "bep", 9: "bep", "*": "bop", 0: "bop", "#": "bop" };
@@ -836,8 +953,9 @@ const Commentateur = (() => {
     }
 
     function surPhase(p) {
-      if (p === "Phase1" && (!appel || appel.clos)) nouvelAppel();
+      if ((p === "Phase1" || p === "Fax") && (!appel || appel.clos)) nouvelAppel();
       if (!appel) return;
+      if (p === "Fax") appel.fax = true;
       switch (p) {
         case "Phase1":
           if ((appel.sortant != null ? appel.sortant : role() === "Call") && premiere("sonne")) dire("sonne");
@@ -1007,6 +1125,11 @@ const Commentateur = (() => {
         appel.sortant = false;
         if ((m = /appel de (.+)\)$/.exec(texte))) appel.nom = m[1];
         if (premiere("ring")) dire("ring", {}, { prio: 1 });
+      } else if ((m = /^Télécopie vers (\d+)/.exec(texte))) {
+        if (!appel || appel.clos) nouvelAppel();
+        appel.fax = true;
+        const num = m[1].replace(/(\d{2})(?=\d)/g, "$1 ");
+        if (premiere("fax_depart")) dire("fax_depart", { num }, { prio: 1 });
       } else if (/^Ça sonne chez/.test(texte)) {
         if (premiere("sonne")) dire("sonne");
       } else if (/^NO CARRIER/.test(texte)) {
@@ -1017,6 +1140,61 @@ const Commentateur = (() => {
         fin("pas_de_reponse");
       } else if (/^NO DIALTONE/.test(texte)) {
         fin("pas_de_tonalite");
+      }
+    }
+
+    /* -------------------------------------------- télécopie (v34:fax) */
+    function surFax(m) {
+      if (!m || m.local === false) return; // en boucle locale, le correspondant simulé
+      if (!appel || appel.clos) nouvelAppel();
+      appel.fax = true;
+      let r;
+      if (m.type === "etape") {
+        const t = String(m.texte || "");
+        if (t === "CNG") {
+          if (premiere("fax_cng")) dire("fax_cng", {}, { prio: 1 });
+        } else if (/^CNG entendu/.test(t)) {
+          if (premiere("fax_detecte")) dire("fax_detecte", {}, { prio: 2 });
+        } else if (/^→ CSI \+ DIS/.test(t)) {
+          if (premiere("fax_dis_tx")) dire("fax_dis_tx", {}, { groupe: "t30" });
+        } else if (t === "← DIS") {
+          if (premiere("fax_dis_rx")) dire("fax_dis_rx", {}, { prio: 1, groupe: "t30" });
+        } else if ((r = /^DCS (\d+) bit\/s/.exec(t))) {
+          // émetteur : premier DCS, ou nouveau débit après un FTT
+          if (appel.ftt) { appel.ftt = false; dire("fax_repli", { debit: milliers(+r[1]) }, { prio: 1 }); }
+          else if (premiere("fax_dcs")) dire("fax_dcs", { debit: milliers(+r[1]) }, { groupe: "t30" });
+        } else if ((r = /^DCS reçu : (\d+)/.exec(t))) {
+          if (premiere("dcs_rx" + r[1])) dire("fax_dcs_rx", { debit: milliers(+r[1]) }, { groupe: "t30" });
+        } else if (/^→ TCF/.test(t)) {
+          if (premiere("fax_tcf")) dire("fax_tcf", {}, { groupe: "t30" });
+        } else if (/^TCF bon/.test(t)) {
+          dire("fax_tcf_bon", {}, { groupe: "t30" });
+        } else if (/^TCF mauvais/.test(t)) {
+          dire("fax_tcf_mauvais", {}, { prio: 1 });
+        } else if (t === "← CFR" || t === "→ CFR") {
+          if (premiere("fax_cfr")) dire("fax_cfr", {}, { prio: 1 });
+        } else if (t === "← FTT") {
+          appel.ftt = true;
+          dire("fax_ftt", {}, { prio: 1 });
+        } else if (/^→ page/.test(t)) {
+          if (premiere("fax_page")) dire("fax_page", {}, { prio: 1 });
+        } else if ((r = /^page reçue : (\d+)/.exec(t))) {
+          if (premiere("fax_page_recue")) dire("fax_page_recue", { lignes: milliers(+r[1]) });
+        } else if (t === "→ EOP" || t === "← EOP") {
+          if (premiere("fax_eop")) dire("fax_eop", {}, { groupe: "t30" });
+        } else if (t === "← MCF" || t === "→ MCF") {
+          if (premiere("fax_mcf")) dire("fax_mcf", {}, { prio: 1 });
+        } else if (t === "→ DCN" || t === "← DCN") {
+          if (premiere("fax_dcn")) dire("fax_dcn", {}, { libre: true });
+        }
+      } else if (m.type === "debut") {
+        if (premiere("fax_impression")) dire("fax_impression", {}, { prio: 1 });
+      } else if (m.type === "progression") {
+        if (m.total > 40 && m.faites * 2 >= m.total && premiere("fax_mi_page")) dire("fax_mi_page", { faites: m.faites, total: m.total }, { libre: true });
+      } else if (m.type === "fin") {
+        const raison = m.raison || "la ligne a lâché";
+        if (m.ok) fin(m.recu ? "fax_recu_ok" : "fax_ok");
+        else fin("fax_echec", { raison, Raison: majuscule(raison) });
       }
     }
 
@@ -1176,6 +1354,8 @@ const Commentateur = (() => {
       /** Un appel est en cours (le voyant EN DIRECT clignote). */
       enDirect: () => !!(appel && !appel.clos && !appel.fini),
       accueil: () => dire("accueil", {}, { prio: 2 }),
+      /** Télécopie : étapes, impression, fin (événement v34:fax). */
+      fax: surFax,
       /** Un succès vient d'être obtenu (événement v34:succes). */
       succes: (s) => dire("succes", { titre: s.titre }, { prio: 2 }),
       retour: () => dire("retour_antenne", {}, { prio: 2 }),
@@ -1258,6 +1438,7 @@ const Commentateur = (() => {
     bridge.listen("v34:event", ({ side, event }) => moteur.evenement(side, event));
     bridge.listen("v34:console", (c) => moteur.console(c.text || ""));
     bridge.listen("v34:succes", (s) => moteur.succes(s));
+    bridge.listen("v34:fax", (m) => moteur.fax(m));
     bridge.listen("v34:state", (s) => {
       moteur.etat(s);
       if (actif) rendreKaraoke();

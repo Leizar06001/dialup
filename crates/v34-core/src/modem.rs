@@ -343,14 +343,18 @@ impl Modem {
         f.process(rx, tx);
         self.n += rx.len() as u64;
         let evs = f.evenements();
-        let etape = f.etape();
+        let (emis, recu) = (f.emission(), f.reception());
         let fini = f.fini();
         let emet = tx.iter().any(|x| x.abs() > 1e-6);
         self.status.leds.sd = emet;
         self.status.leds.rd = !emet;
         self.status.leds.cd = true;
-        if self.status.tx_signal != etape {
-            self.status.tx_signal = etape.to_string();
+        // (karaoké, afficheur TX/RX : ce qui part et ce qui arrive vraiment)
+        if self.status.tx_signal != emis {
+            self.status.tx_signal = emis.to_string();
+        }
+        if self.status.rx_signal != recu {
+            self.status.rx_signal = recu.to_string();
         }
         for e in evs {
             if let crate::fax::session::FaxEvenement::Fin { ok, raison } = &e {
