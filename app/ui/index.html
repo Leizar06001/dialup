@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>V.34 Tinyverse Modem</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="aide.css">
 </head>
 <body>
   <header class="topbar">
@@ -28,6 +29,7 @@
       <button class="badge badge-btn" id="link-badge" title="Boucle locale ou connexion au central (dialup.tinyverse.fr)">BOUCLE LOCALE</button>
       <span class="badge" id="audio-badge" title="Sortie audio">HP —</span>
       <span class="clock" id="clock">00:00:00</span>
+      <button class="key aide-key" id="btn-aide" title="Aide : tout ce qu'on peut faire avec le modem (F1)" aria-haspopup="dialog"><b aria-hidden="true">?</b>AIDE</button>
     </div>
   </header>
 
@@ -296,5 +298,6 @@
   </div>
 
   <script src="app.js"></script>
+  <script src="aide.js"></script>
 </body>
 </html>
