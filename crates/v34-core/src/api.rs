@@ -137,6 +137,15 @@ pub struct ModemConfig {
     pub allow_3429: bool,
     /// Durée du silence initial de l'appelé (ms, ≥ 200)
     pub answer_silence_ms: u32,
+    /// 56k (V.90) : proposer le mode PCM pendant la négociation V.8. Côté
+    /// appelant, le modem joue le modem « analogique » ; côté répondant, le
+    /// modem « numérique », ce qui demande aussi `digital`.
+    pub v90: bool,
+    /// Le modem est raccordé en numérique au réseau (le FAI du central) : il
+    /// peut jouer le modem numérique du V.90.
+    pub digital: bool,
+    /// Débit descendant max en V.90 (bit/s, de 28 000 à 56 000)
+    pub max_rate_pcm: u32,
 }
 
 impl Default for ModemConfig {
@@ -147,6 +156,9 @@ impl Default for ModemConfig {
             allow_2800: true,
             allow_3429: true,
             answer_silence_ms: 400,
+            v90: true,
+            digital: false,
+            max_rate_pcm: 56000,
         }
     }
 }
