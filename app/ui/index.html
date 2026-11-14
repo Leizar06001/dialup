@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>V.34 Tinyverse Modem</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">V·34</span>
+      <span class="brand-name">TINYVERSE</span>
+      <span class="brand-model">MODÈLE TV-3400 · 33 600 bit/s · V.8 / V.34</span>
+    </div>
+    <div class="topbar-right">
+      <div class="speed" title="Échelle de temps : ralentir ou accélérer la ligne (le son suit, comme un disque)">
+        <span>TEMPS</span>
+        <div class="seg" id="speed-seg" role="group" aria-label="Échelle de temps">
+          <button data-speed="0.1">×0,1</button>
+          <button data-speed="0.25">×¼</button>
+          <button data-speed="0.5">×½</button>
+          <button data-speed="1" class="on">×1</button>
+          <button data-speed="2">×2</button>
+          <button data-speed="5">×5</button>
+        </div>
+      </div>
+      <button class="badge badge-btn" id="link-badge" title="Boucle locale ou connexion au central (dialup.tinyverse.fr)">BOUCLE LOCALE</button>
+      <span class="badge" id="audio-badge" title="Sortie audio">HP —</span>
+      <span class="clock" id="clock">00:00:00</span>
+    </div>
+  </header>
+
+  <main class="rack">
+    <!-- ======================== MODEM ======================== -->
+    <section class="panel modem" aria-label="Modem">
+      <div class="screw tl"></div><div class="screw tr"></div><div class="screw bl"></div><div class="screw br"></div>
+      <h2 class="panel-title">MODEM</h2>
+
+      <div class="front">
+        <div class="leds" id="leds">
+          <div class="led-cell" data-led="hs"><i class="led"></i><span>HS</span></div>
+          <div class="led-cell" data-led="aa"><i class="led"></i><span>AA</span></div>
+          <div class="led-cell" data-led="cd"><i class="led"></i><span>CD</span></div>
+          <div class="led-cell" data-led="oh"><i class="led"></i><span>OH</span></div>
+          <div class="led-cell" data-led="rd"><i class="led"></i><span>RD</span></div>
+          <div class="led-cell" data-led="sd"><i class="led"></i><span>SD</span></div>
+          <div class="led-cell" data-led="tr"><i class="led"></i><span>TR</span></div>
+          <div class="led-cell" data-led="mr"><i class="led green"></i><span>MR</span></div>
+        </div>
+
+        <div class="speaker">
+          <div class="grill" id="grill" title="Haut-parleur"></div>
+          <div class="spk-controls">
+            <div class="seg" id="spk-mode" role="group" aria-label="Mode HP (ATM)">
+              <button data-mode="0" title="ATM0 : HP coupé">OFF</button>
+              <button data-mode="1" title="ATM1 : HP jusqu'à la porteuse">AUTO</button>
+              <button data-mode="2" title="ATM2 : HP toujours">ON</button>
+            </div>
+            <label class="vol">
+              <span>VOL</span>
+              <input type="range" id="spk-vol" min="0" max="100" value="80" aria-label="Volume du haut-parleur">
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="phases" id="phases">
+        <div class="ph" data-phase="Phase1"><b>V.8</b><small>ANSam · CM/JM</small></div>
+        <div class="arrow">▸</div>
+        <div class="ph" data-phase="Phase2"><b>PH2</b><small>sondage · délai</small></div>
+        <div class="arrow">▸</div>
+        <div class="ph" data-phase="Phase3"><b>PH3</b><small>égaliseur</small></div>
+        <div class="arrow">▸</div>
+        <div class="ph" data-phase="Phase4"><b>PH4</b><small>MP · E · B1</small></div>
+        <div class="arrow">▸</div>
+        <div class="ph" data-phase="Data"><b>DATA</b><small>kshhhh…</small></div>
+        <div class="call-pill" id="call-pill">REPOS</div>
+      </div>
+
+      <div class="instruments">
+        <div class="vfd" id="vfd">
+          <div class="vfd-row big"><span>DÉBIT</span><b id="p-rate">-----</b></div>
+          <div class="vfd-row"><span>SYMBOLES</span><b id="p-baud">----</b></div>
+          <div class="vfd-row"><span>PORTEUSE</span><b id="p-carrier">----</b></div>
+          <div class="vfd-row"><span>DÉLAI A/R</span><b id="p-rtd">---</b></div>
+          <div class="vfd-row"><span>SNR</span><b id="p-snr">--</b></div>
+          <div class="vfd-row"><span>TRELLIS</span><b id="p-trellis">--</b></div>
+          <div class="vfd-row"><span>V.8</span><b id="p-modes">--</b></div>
+          <div class="vfd-sep"></div>
+          <div class="vfd-row sig"><span>TX ▸</span><b id="p-tx">—</b></div>
+          <div class="vfd-row sig"><span>RX ◂</span><b id="p-rx">—</b></div>
+          <div class="vfd-row"><span>DURÉE</span><b id="p-time">00:00</b></div>
+        </div>
+
+        <div class="scope-box screen-green">
+          <canvas id="scope"></canvas>
+          <div class="scope-tabs seg small" id="scope-mode">
+            <button data-mode="spectrum" class="on">SPECTRE</button>
+            <button data-mode="scope">OSCILLO</button>
+          </div>
+          <div class="meters">
+            <div class="meter"><span>TX</span><i id="m-tx"></i></div>
+            <div class="meter"><span>RX</span><i id="m-rx"></i></div>
+          </div>
+        </div>
+
+        <div class="const-box screen-green">
+          <canvas id="constellation"></canvas>
+          <span class="screen-label">CONSTELLATION</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================== LIGNE ======================== -->
+    <section class="panel line" aria-label="Simulation de ligne">
+      <div class="screw tl"></div><div class="screw tr"></div><div class="screw bl"></div><div class="screw br"></div>
+      <h2 class="panel-title">LIGNE TÉLÉPHONIQUE</h2>
+      <div class="presets" id="presets"></div>
+      <div class="sliders" id="sliders"></div>
+      <div class="resp-box screen-green">
+        <canvas id="response"></canvas>
+        <span class="screen-label">RÉPONSE EN FRÉQUENCE</span>
+      </div>
+    </section>
+
+    <!-- ======================== CONSOLE AT ======================== -->
+    <section class="panel console" aria-label="Console AT">
+      <div class="screw tl"></div><div class="screw tr"></div><div class="screw bl"></div><div class="screw br"></div>
+      <h2 class="panel-title">TERMINAL</h2>
+      <div class="dialbar">
+        <input id="dial-number" class="lcd-input" value="0142424242" spellcheck="false" aria-label="Numéro ou adresse à composer">
+        <button class="key primary" id="btn-dial" title="ATDT">APPELER</button>
+        <button class="key danger" id="btn-hangup" title="ATH">RACCROCHER</button>
+        <button class="key" id="btn-retrain" title="Réentraînement complet">RETRAIN</button>
+        <button class="key" id="btn-reneg" title="Renégociation de débit">RENÉGO</button>
+      </div>
+      <div class="netbar">
+        <button class="key isp" id="btn-isp" title="Appeler le fournisseur d'accès (0836656565) : Internet par le modem">☎ FAI</button>
+        <button class="key web" id="btn-browser" title="Ouvrir le navigateur : tout son trafic passe par le modem">
+          <i class="web-led" aria-hidden="true"></i>
+          <span class="web-txt">NAVIGATEUR<small id="web-sub">appelle d'abord le FAI</small></span>
+        </button>
+      </div>
+      <div class="crt screen-green" id="crt">
+        <div class="crt-out" id="crt-out"></div>
+        <form class="crt-in" id="crt-form" autocomplete="off">
+          <span class="prompt">&gt;</span>
+          <input id="crt-input" spellcheck="false" aria-label="Commande AT" placeholder="ATDT0142424242">
+        </form>
+      </div>
+    </section>
+
+    <!-- ======================== BBS ======================== -->
+    <section class="panel bbs" aria-label="Chat et fichiers">
+      <div class="screw tl"></div><div class="screw tr"></div><div class="screw bl"></div><div class="screw br"></div>
+      <h2 class="panel-title" id="bbs-title">CHAT · FICHIERS</h2>
+      <div class="panel-tabs seg small" id="bbs-tabs" role="tablist">
+        <button data-view="chat" class="on" role="tab">CHAT</button>
+        <button data-view="dir" role="tab">ANNUAIRE</button>
+      </div>
+      <div class="amber dir-view" id="dir" hidden>
+        <div class="dir-head"><span id="dir-title">ANNUAIRE DU CENTRAL</span><span id="dir-count"></span></div>
+        <div class="dir-list" id="dir-list"></div>
+      </div>
+      <div class="amber chat-view" id="amber">
+        <pre class="bbs-banner">╔════════════════════════════════════════╗
+║  T I N Y V E R S E   B B S   · 1996 ·  ║
+╚════════════════════════════════════════╝</pre>
+        <div class="bbs-out" id="bbs-out"></div>
+        <form class="bbs-in" id="bbs-form" autocomplete="off">
+          <span class="prompt">&lt;moi&gt;</span>
+          <input id="bbs-input" spellcheck="false" aria-label="Message" placeholder="tape ton message…">
+        </form>
+      </div>
+      <div class="filebar chat-view">
+        <label class="key" for="file-input">ENVOYER UN FICHIER…</label>
+        <input type="file" id="file-input" hidden>
+        <div class="progress"><i id="file-progress"></i><span id="file-label">aucun transfert</span></div>
+        <span class="file-rate" id="file-rate">0,0 Ko/s</span>
+      </div>
+    </section>
+
+    <!-- ======================== MONITEUR ======================== -->
+    <section class="panel monitor" aria-label="Moniteur de liaison">
+      <div class="screw tl"></div><div class="screw tr"></div><div class="screw bl"></div><div class="screw br"></div>
+      <h2 class="panel-title">MONITEUR DE LIAISON</h2>
+      <div class="mon screen-green">
+        <div class="mon-grid">
+          <div class="mon-sec" id="mon-net">
+            <h3>RÉSEAU <em id="mn-net-tag"></em></h3>
+            <p><span>ping</span><b id="mn-ping">—</b></p>
+            <p><span>gigue</span><b id="mn-jit">—</b></p>
+            <p><span>tampon</span><i class="mon-bar"><i id="mn-buf"></i></i><b id="mn-bufv">—</b></p>
+            <p><span>perdus·trous</span><b id="mn-loss">—</b></p>
+          </div>
+          <div class="mon-sec">
+            <h3>MODEM</h3>
+            <p><span>débit ↓</span><b id="mn-rx">—</b></p>
+            <p><span>débit ↑</span><b id="mn-tx">—</b></p>
+            <p><span>SNR</span><b id="mn-snr">—</b></p>
+            <p><span>recalages</span><b id="mn-rec">0</b></p>
+          </div>
+          <div class="mon-sec">
+            <h3>LAPM</h3>
+            <p><span>trames ↑/↓</span><b id="mn-frames">—</b></p>
+            <p><span>retransmises</span><b id="mn-retx">—</b></p>
+            <p><span>rejetées</span><b id="mn-fcs">—</b></p>
+            <p><span>en attente</span><b id="mn-queue">—</b></p>
+          </div>
+          <div class="mon-sec">
+            <h3>TUNNEL</h3>
+            <p><span>connexions</span><b id="mn-conn">—</b></p>
+            <p><span>ouvertes</span><b id="mn-opened">—</b></p>
+            <p><span>échecs</span><b id="mn-fail">—</b></p>
+            <p><span>réinit.</span><b id="mn-reset">—</b></p>
+          </div>
+        </div>
+        <div class="mon-spark">
+          <canvas id="mon-spark"></canvas>
+          <span class="screen-label">DÉBIT UTILE · 60 s</span>
+          <b class="mon-rate" id="mn-rate">↓ 0,0 · ↑ 0,0 Ko/s</b>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ======================== CONNEXION AU CENTRAL ======================== -->
+  <div class="modal" id="net-modal" hidden>
+    <div class="modal-box panel">
+      <div class="screw tl"></div><div class="screw tr"></div><div class="screw bl"></div><div class="screw br"></div>
+      <h2 class="panel-title">CONNEXION AU CENTRAL</h2>
+      <p class="modal-help">En mode réseau, ton modem passe par le central téléphonique de ton serveur : tu reçois un numéro, tu peux appeler les autres abonnés, et le FAI au <b>0836656565</b> pour aller sur Internet.</p>
+      <label>SERVEUR <input id="net-server" class="lcd-input" value="dialup.tinyverse.fr:3434" spellcheck="false"></label>
+      <label>ABONNÉ <input id="net-user" class="lcd-input" spellcheck="false" autocomplete="username"></label>
+      <label>MOT DE PASSE <input id="net-pass" class="lcd-input" type="password" autocomplete="current-password"></label>
+      <label class="chk"><input type="checkbox" id="net-remember"> mémoriser le mot de passe sur ce PC</label>
+      <div class="modal-actions">
+        <button class="key" id="net-local">BOUCLE LOCALE</button>
+        <button class="key primary" id="net-go">SE CONNECTER</button>
+        <button class="key" id="net-close">FERMER</button>
+      </div>
+      <p class="modal-status" id="net-status"></p>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

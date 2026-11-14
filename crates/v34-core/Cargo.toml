@@ -1,0 +1,9 @@
+[package]
+name = "v34-core"
+description = "Moteur de modem logiciel V.8 / V.34 (DSP + machine d'états)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }

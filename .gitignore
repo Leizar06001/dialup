@@ -1,0 +1,33 @@
+# Compilation (cargo, tauri build)
+/target/
+
+# Schémas générés par tauri-build à chaque compilation
+/app/src-tauri/gen/
+
+# Enregistrements audio (lourds ; v34-cli local --wav les régénère)
+*.wav
+
+# Recommandations UIT-T : redistribution non clairement permise.
+# Les télécharger soi-même : voir docs/specs/README.md
+/docs/specs/*.pdf
+/docs/specs/*.txt
+
+# Clone imbriqué du dépôt, propre à la machine du propriétaire
+/dialup/
+
+# Secrets et réglages locaux : ne jamais publier
+# (les modèles *.example, eux, sont publiés : deploy/portail/.env.example)
+.env
+.env.*
+*.env
+!*.example
+*.pem
+*.key
+*.p12
+
+# Systèmes et éditeurs
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

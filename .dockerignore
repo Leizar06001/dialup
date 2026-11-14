@@ -1,0 +1,8 @@
+target/
+.git/
+dialup/
+samples/
+docs/specs/*.pdf
+docs/specs/*.txt
+**/.DS_Store
+.env

@@ -1,0 +1,10 @@
+[package]
+name = "v34-cli"
+description = "Outil en ligne de commande : deux modems en local, enregistrement WAV"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+v34-core = { workspace = true }
+v34-net = { workspace = true }

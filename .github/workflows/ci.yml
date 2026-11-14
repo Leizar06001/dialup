@@ -1,0 +1,73 @@
+# Intégration continue : tests sous Linux à chaque push et pull request.
+#
+# - « tests » : moteur V.34, transport réseau, central et CLI (aucune
+#   bibliothèque système requise) ;
+# - « appli » : compile et teste l'appli Tauri, ce qui demande WebKitGTK et
+#   ALSA ; cela vérifie aussi, avant une publication, que l'appli compile
+#   toujours sous Linux.
+# Les tests marqués #[ignore] (temps réel, longs) restent ignorés.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]     # les étiquettes v* déclenchent release.yml, pas ce fichier
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Jamais de son pendant les tests
+  V34_MUTE: "1"
+
+jobs:
+  tests:
+    name: Tests (cœur, réseau, central, CLI)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: cargo test
+        run: cargo test --release --locked -p v34-core -p v34-net -p v34-server -p v34-cli
+
+  appli:
+    name: Appli Tauri (Linux)
+    runs-on: ubuntu-22.04      # même système que la publication Linux
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Paquets système
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libxdo-dev libssl-dev libasound2-dev
+      - name: Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: cargo test
+        run: cargo test --release --locked -p v34-app

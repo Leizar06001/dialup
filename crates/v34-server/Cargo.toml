@@ -1,0 +1,38 @@
+[package]
+name = "v34-server"
+description = "Central téléphonique V.34 sur IP et modem « FAI » (pour VPS)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "v34-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "v34-portail"
+path = "src/bin/v34-portail.rs"
+
+[dependencies]
+v34-core = { workspace = true }
+v34-net = { workspace = true }
+serde = { workspace = true }
+toml = "1"
+sha2 = "0.10"
+# Navigateur « web 1998 » (hôte virtuel http://web1998/) : client HTTP(S)
+# en rustls (pas d'OpenSSL), analyse HTML, conversion d'images en GIF.
+ureq = { version = "2.12", default-features = false, features = ["tls", "gzip"] }
+url = "2.5"
+scraper = { version = "0.29", default-features = false }
+encoding_rs = "0.8"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+gif = "0.14"
+color_quant = "1.1"
+# Site d'inscription (v34-portail) : petit serveur HTTP (derrière Caddy) et
+# envoi d'e-mails en SMTP chiffré (rustls/ring, pas d'OpenSSL).
+tiny_http = "0.12"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "hostname", "rustls-tls"] }
+serde_json = { workspace = true }

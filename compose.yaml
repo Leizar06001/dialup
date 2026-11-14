@@ -1,0 +1,31 @@
+# Site d'inscription du FAI (dialup.example.org), derrière Caddy.
+#   cp .env.example .env    # puis remplir
+#   docker compose up -d --build
+# Le central (v34-server) tourne à côté, en service systemd : voir deploy/README.md.
+services:
+  portail:
+    build:
+      context: .
+      dockerfile: deploy/portail/Dockerfile
+    image: v34-portail:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORTAIL_ECOUTE: 0.0.0.0:8034
+      V34_CONFIG: /etc/v34-server/config.toml
+      V34_COMPTES: /var/lib/v34-server/comptes.toml
+    # Même utilisateur que le service v34-server : il lit sa configuration
+    # et partage avec lui le fichier des comptes.
+    user: "${V34_UID:-987}:${V34_GID:-987}"
+    ports:
+      - "127.0.0.1:${PORTAIL_PORT:-8034}:8034"
+    volumes:
+      - /etc/v34-server:/etc/v34-server:ro
+      - /var/lib/v34-server:/var/lib/v34-server
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

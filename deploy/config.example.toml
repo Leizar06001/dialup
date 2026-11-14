@@ -1,0 +1,134 @@
+# Configuration de v34-server (central téléphonique V.34 + modem « FAI »)
+#
+# Emplacement par défaut : /etc/v34-server/config.toml
+# Ce fichier contient les empreintes des mots de passe : propriétaire root,
+# groupe v34, droits 640.
+#   sudo install -o root -g v34 -m 640 config.example.toml /etc/v34-server/config.toml
+# Vérification : v34-server verifier --config /etc/v34-server/config.toml
+#
+# Nom de domaine proposé : dialup.tinyverse.fr (enregistrement DNS A vers
+# l'adresse IP du VPS). Les clients se connectent à dialup.tinyverse.fr:3434.
+
+[serveur]
+# Adresse et port UDP d'écoute (signalisation ET audio sur le même port).
+ecoute = "0.0.0.0:3434"
+# Journalisation : error | warn | info | debug
+# (debug journalise aussi les destinations ouvertes par le tunnel FAI)
+journal = "info"
+# Comptes créés par le site d'inscription (conteneur v34-portail, voir
+# deploy/portail/) : ajoutés à cet annuaire et relus quand ils changent.
+# Les abonnés déclarés ici gardent la priorité ; ceux du site n'ont accès
+# au FAI que si l'administrateur l'accorde.
+#comptes = "/var/lib/v34-server/comptes.toml"
+
+[central]
+# Intervalle des keepalive annoncé aux clients (s) : maintient le NAT ouvert.
+keepalive_s = 15
+# Un abonné silencieux pendant ce temps est déconnecté (s, ≥ 2 × keepalive_s).
+expiration_s = 60
+# Un appel qui sonne dans le vide est abandonné au bout de… (s)
+sonnerie_max_s = 60
+# Appels simultanés au total, et abonnés connectés au maximum.
+appels_max = 32
+connectes_max = 1000
+# Limitation des tentatives : au-delà de `echecs_max` échecs
+# d'authentification depuis une même adresse IP sur `echecs_fenetre_s`
+# secondes, cette adresse est refusée (« trop de tentatives »).
+echecs_max = 5
+echecs_fenetre_s = 60
+# Simulateur de ligne appliqué PAR LE CENTRAL à l'audio relayé (bande
+# passante, bruit, atténuation, délai…). Vide = ligne numérique parfaite.
+# Noms : voir `v34-cli presets` (ex. "Urbaine", "Campagne", "Longue distance").
+# L'écho local (EchoPath) reste côté client (`v34-cli … --preset`).
+simulateur_ligne = ""
+
+# ── Annuaire des abonnés ──────────────────────────────────────────────
+# Le central ATTRIBUE le numéro : le client ne donne que son nom et prouve
+# qu'il connaît le mot de passe (défi-réponse, le mot de passe ne circule
+# jamais). Le fichier ne contient que l'empreinte (PBKDF2-HMAC-SHA256 +
+# clé stockée façon SCRAM) : on ne peut pas s'en servir pour se connecter.
+#
+# Ne pas écrire ces blocs à la main : utiliser
+#   sudo v34-server ajouter-abonne gaston 0142424242   (mot de passe demandé)
+#   sudo v34-server retirer-abonne gaston
+#   sudo v34-server liste-abonnes
+# Le fichier garde son propriétaire et ses droits ; un central en marche
+# recharge l'annuaire automatiquement (sous 2 s).
+#
+# [[abonnes]]
+# nom = "gaston"
+# numero = "0142424242"
+# mot_de_passe_hash = "scram-sha256$100000$<sel>$<clé stockée>"
+
+# ── Numéros spéciaux ─────────────────────────────────────────────────
+# Desservis par un modem logiciel du central. Services disponibles :
+#   fai  : fournisseur d'accès, tunnel TCP vers Internet (proxy SOCKS5 local
+#          côté client) ;
+#   echo : ligne de test, renvoie en écho tout ce qu'elle reçoit.
+# Sans aucun bloc, ces deux numéros-ci sont créés par défaut ; pour n'en
+# avoir aucun : numeros_speciaux = []
+[[numeros_speciaux]]
+numero = "0836656565"
+service = "fai"
+
+[[numeros_speciaux]]
+numero = "0800000000"
+service = "echo"
+
+[modems]
+# Appels simultanés vers les numéros spéciaux (chacun fait tourner un modem
+# V.34 en temps réel : un cœur suffit pour plusieurs appels).
+appels_max = 4
+# Sonnerie avant décroché (ms).
+delai_decroche_ms = 2000
+# Délai pour obtenir la porteuse (CONNECT), sinon on raccroche (s).
+delai_porteuse_s = 90
+# Débit maximal des modems du central (bit/s, 2400 à 33600).
+debit_max = 33600
+
+[fai]
+# Pas de « login: / password: » après CONNECT : l'abonné est déjà
+# authentifié par le central, et son mot de passe ne doit pas passer en
+# clair dans le signal du modem. Seule la bannière est affichée.
+banniere = "V34NET - fournisseur d'acces Internet par modem"
+# Flux TCP simultanés par appel.
+flux_max = 16
+# Ports de destination autorisés (liste vide = tout refuser).
+ports_autorises = [80, 443]
+# Autoriser les adresses privées/locales (127.0.0.0/8, 10/8, 192.168/16,
+# 169.254/16, ::1, fc00::/7…). À NE PAS activer sur un VPS : cela ouvrirait
+# aux abonnés les services locaux de la machine et le réseau de l'hébergeur.
+autoriser_prive = false
+# Réseaux interdits en plus (toujours appliqué). Mettez-y l'adresse
+# publique du VPS lui-même, pour qu'on ne puisse pas joindre ses services
+# (Caddy, SSH…) par le tunnel.
+reseaux_interdits = [
+    # "203.0.113.7/32",
+    # "2001:db8:1234::/48",
+]
+# Délai de connexion TCP sortante (s).
+delai_connexion_s = 10
+
+[web1998]
+# Navigateur « web 1998 » : dans le tunnel du FAI, l'hôte VIRTUEL
+# http://web1998/ (port 80) n'ouvre pas de connexion sur Internet : le
+# serveur le sert lui-même. Page d'accueil « Tinyverse 1998 », et versions
+# allégées des sites (HTML 3.2 sans scripts ni styles, images GIF de 256
+# couleurs) à l'adresse http://web1998/p?u=<adresse>. Les pages et images
+# récupérées passent par le même filtre que le tunnel (http/https, ports 80
+# et 443, pas de réseau local, reseaux_interdits) ; fai.autoriser_prive ne
+# s'y applique jamais. actif = false : « web1998 » redevient un nom inconnu.
+actif = true
+# Taille maximale d'une page HTML téléchargée (Ko) ; au-delà, elle est tronquée.
+page_max_ko = 3072
+# Taille maximale d'une image téléchargée (Ko) ; au-delà, elle est refusée.
+image_max_ko = 5120
+# Largeur maximale des images converties (pixels, 16 à 1024).
+largeur_image_max = 320
+# Poids visé pour une image convertie (Ko) : à 3 Ko/s, 15 Ko ≈ 5 secondes.
+image_cible_ko = 15
+# Délai maximal d'une récupération, redirections comprises (s, 1 à 120).
+delai_s = 15
+# Cache mémoire des pages et images allégées, partagé par tous les abonnés
+# (Mo, 0 = pas de cache). Une entrée y reste au plus 10 minutes.
+cache_mo = 32

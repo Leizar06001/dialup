@@ -1,0 +1,243 @@
+# Publication de l'appli V34 Modem (Tauri v2) pour macOS, Windows et Linux.
+#
+# - Pousser une étiquette vX.Y.Z (git tag v0.2.0 && git push origin v0.2.0)
+#   compile les installateurs et publie la version GitHub correspondante.
+#   La version de l'appli est prise dans l'étiquette (injectée dans
+#   tauri.conf.json au moment de la compilation).
+# - Lancement manuel (onglet Actions > Publication > Run workflow) :
+#     * sur une branche : compile seulement ; les installateurs sont
+#       téléchargeables dans les « artifacts » de l'exécution ;
+#     * sur une étiquette vX.Y.Z : recompile et (re)publie cette version
+#       (les fichiers existants sont remplacés).
+#
+# Noms des fichiers publiés (stables : le site les cherche par suffixe dans
+# l'API releases/latest) :
+#   V34-Modem_X.Y.Z_macos_aarch64.dmg        macOS Apple Silicon
+#   V34-Modem_X.Y.Z_macos_x64.dmg            macOS Intel
+#   V34-Modem_X.Y.Z_windows_x64-setup.exe    Windows, installateur NSIS
+#   V34-Modem_X.Y.Z_windows_x64.msi          Windows, installateur MSI
+#   V34-Modem_X.Y.Z_linux_amd64.AppImage     Linux, toutes distributions
+#   V34-Modem_X.Y.Z_linux_amd64.deb          Debian / Ubuntu
+#   SHA256SUMS.txt                           sommes de contrôle
+#
+# Pas de signature de code (pas de certificat) : sous macOS l'appli est
+# signée « ad hoc » (bundle.macOS.signingIdentity = "-"), ce qui n'exige
+# aucun certificat mais ne satisfait pas Gatekeeper ; voir le README.
+
+name: Publication
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# Par défaut, lecture seule ; seul le job de publication peut écrire.
+permissions:
+  contents: read
+
+concurrency:
+  group: publication-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  # Version épinglée de la CLI Tauri (paquet npm précompilé, plus rapide
+  # que cargo install). À garder dans la même version 2.x que le crate tauri.
+  TAURI_CLI: "@tauri-apps/cli@2.12.4"
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publier: ${{ steps.v.outputs.publier }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: v
+        name: Version à compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+            version="${tag#v}"
+            # MSI (WiX) n'accepte que des numéros : X.Y.Z, X et Y ≤ 255
+            if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Étiquette « $tag » refusée : il faut vX.Y.Z (chiffres seulement, ex. v0.2.0)."
+              exit 1
+            fi
+            publier=true
+          else
+            version=$(python3 -c 'import json; print(json.load(open("app/src-tauri/tauri.conf.json"))["version"])')
+            publier=false
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publier=$publier" >> "$GITHUB_OUTPUT"
+          echo "Version $version — publication : $publier" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: ${{ matrix.nom }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nom: macOS Apple Silicon
+            os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+          - nom: macOS Intel
+            os: macos-latest          # compilation croisée depuis un Mac ARM
+            target: x86_64-apple-darwin
+            bundles: app,dmg
+          - nom: Windows x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis,msi
+          - nom: Linux x64
+            os: ubuntu-22.04          # glibc 2.35 : tourne aussi sur Ubuntu 22.04 / Debian 12
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Paquets système (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config file patchelf \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libxdo-dev libssl-dev libasound2-dev
+
+      - name: Rust stable
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --target "${{ matrix.target }}"
+          rustup default stable
+          rustc --version
+
+      - name: Compilation et installateurs
+        shell: bash
+        working-directory: app/src-tauri
+        run: |
+          set -euo pipefail
+          printf '{"version":"%s"}\n' "$VERSION" > "$RUNNER_TEMP/version.json"
+          # Deux essais : hdiutil (création du .dmg) échoue parfois de façon
+          # passagère sur les machines de GitHub ; le 2e essai ne recompile rien.
+          for essai in 1 2; do
+            if npx --yes "$TAURI_CLI" build --ci \
+                 --target "${{ matrix.target }}" \
+                 --bundles "${{ matrix.bundles }}" \
+                 --config "$RUNNER_TEMP/version.json" \
+                 -- --locked; then
+              exit 0
+            fi
+            echo "::warning::Essai $essai échoué"
+          done
+          exit 1
+
+      - name: Noms stables des installateurs
+        shell: bash
+        run: |
+          set -euo pipefail
+          b="target/${{ matrix.target }}/release/bundle"
+          n="V34-Modem_${VERSION}"
+          mkdir -p dist
+          case "${{ matrix.target }}" in
+            aarch64-apple-darwin)
+              cp "$b"/dmg/*.dmg "dist/${n}_macos_aarch64.dmg" ;;
+            x86_64-apple-darwin)
+              cp "$b"/dmg/*.dmg "dist/${n}_macos_x64.dmg" ;;
+            x86_64-pc-windows-msvc)
+              cp "$b"/nsis/*-setup.exe "dist/${n}_windows_x64-setup.exe"
+              cp "$b"/msi/*.msi "dist/${n}_windows_x64.msi" ;;
+            x86_64-unknown-linux-gnu)
+              cp "$b"/appimage/*.AppImage "dist/${n}_linux_amd64.AppImage"
+              cp "$b"/deb/*.deb "dist/${n}_linux_amd64.deb" ;;
+          esac
+          ls -l dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installateurs-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publication:
+    name: Publication GitHub
+    # Seulement si TOUTES les plateformes ont réussi : le site ne doit
+    # jamais voir une version « latest » à laquelle il manque un fichier.
+    needs: [version, build]
+    if: needs.version.outputs.publier == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: installateurs-*
+          path: dist
+          merge-multiple: true
+
+      - name: Sommes de contrôle
+        working-directory: dist
+        run: |
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Notes de version
+        run: |
+          cat > notes.md <<EOF
+          ## Téléchargement
+
+          | Système | Fichier |
+          |---|---|
+          | macOS Apple Silicon (M1 et suivants) | \`V34-Modem_${VERSION}_macos_aarch64.dmg\` |
+          | macOS Intel | \`V34-Modem_${VERSION}_macos_x64.dmg\` |
+          | Windows 10/11 (64 bits) | \`V34-Modem_${VERSION}_windows_x64-setup.exe\` (ou \`.msi\`) |
+          | Linux, toutes distributions | \`V34-Modem_${VERSION}_linux_amd64.AppImage\` |
+          | Debian / Ubuntu | \`V34-Modem_${VERSION}_linux_amd64.deb\` |
+
+          ## Appli non signée
+
+          L'appli n'est pas signée par un certificat de développeur :
+
+          - **macOS** : au premier lancement, clic droit sur l'appli > **Ouvrir**
+            (macOS 15 et suivants : Réglages système > Confidentialité et
+            sécurité > **Ouvrir quand même**). Si macOS dit que l'appli est
+            « endommagée » : \`xattr -dr com.apple.quarantine "/Applications/V34 Modem.app"\`
+          - **Windows** : SmartScreen > **Informations complémentaires** > **Exécuter quand même**.
+          - **Linux (AppImage)** : \`chmod +x V34-Modem_*.AppImage\` puis lancer le fichier.
+
+          Sommes de contrôle : \`SHA256SUMS.txt\`.
+          EOF
+          cat notes.md
+
+      - name: Publication de la version
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "La version $TAG existe : remplacement des fichiers."
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --title "V34 Modem $TAG" \
+              --notes-file notes.md \
+              --verify-tag
+          fi

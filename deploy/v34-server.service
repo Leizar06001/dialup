@@ -1,0 +1,57 @@
+# Service systemd du central téléphonique V.34 (v34-server).
+# Installation : voir deploy/README.md ou deploy/install.sh
+[Unit]
+Description=Central téléphonique V.34 sur IP et modem FAI (v34-server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=v34
+Group=v34
+ExecStart=/usr/local/bin/v34-server --config /etc/v34-server/config.toml
+Restart=on-failure
+RestartSec=2
+
+# ── Durcissement ──────────────────────────────────────────────────────
+# Aucun privilège : port 3434 > 1024, pas de capacité nécessaire.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Système de fichiers en lecture seule (la config est seulement lue ; elle
+# est relue à chaud quand l'administrateur la modifie).
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+# Réseau : IPv4/IPv6 (central + connexions sortantes du FAI), AF_UNIX et
+# AF_NETLINK pour la résolution DNS de la libc.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+# appel système refusé = erreur EPERM plutôt que processus tué
+SystemCallErrorNumber=EPERM
+UMask=0077
+# /var/lib/v34-server : comptes créés par le site d'inscription (v34-portail),
+# lus par le central (voir [serveur] comptes dans la configuration).
+StateDirectory=v34-server
+StateDirectoryMode=0750
+# Chaque appel FAI ouvre des connexions TCP : de la marge.
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

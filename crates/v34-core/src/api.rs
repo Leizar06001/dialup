@@ -1,0 +1,170 @@
+//! Types publics partagés entre le moteur, l'appli et le réseau.
+//!
+//! Convention audio : 8000 Hz, mono, f32, pleine échelle = ±1.0.
+//! Le niveau nominal d'émission (V.2 : -9/-10 dBm0) est fixé à NOMINAL_RMS.
+
+use serde::{Deserialize, Serialize};
+
+/// Fréquence d'échantillonnage du « réseau téléphonique » (G.711).
+pub const SAMPLE_RATE: u32 = 8000;
+/// Valeur efficace du signal émis au niveau nominal (≈ -12 dBFS).
+pub const NOMINAL_RMS: f32 = 0.25;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Role {
+    /// Modem appelant (ATD)
+    Call,
+    /// Modem appelé (ATA)
+    Answer,
+}
+
+/// Grandes étapes de la connexion, pour l'affichage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Phase {
+    Idle,
+    /// V.8 : ANSam, CM/JM/CJ
+    Phase1,
+    /// Sondage / mesure du délai : INFO0, tons A/B, L1/L2, INFO1
+    Phase2,
+    /// Entraînement égaliseur : S, PP, TRN, J
+    Phase3,
+    /// Entraînement final : TRN, MP, E, B1
+    Phase4,
+    /// Mode données
+    Data,
+    /// Réentraînement ou renégociation de débit en cours
+    Retrain,
+    /// Raccrochage
+    Cleardown,
+    /// Échec de la négociation
+    Failed,
+}
+
+/// Les LEDs d'un modem externe des années 90.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Leds {
+    /// High Speed : connecté à ≥ 14400 bit/s
+    pub hs: bool,
+    /// Auto Answer : répondra automatiquement
+    pub aa: bool,
+    /// Carrier Detect : porteuse distante détectée (mode données)
+    pub cd: bool,
+    /// Off Hook : décroché
+    pub oh: bool,
+    /// Receive Data : octets reçus récemment
+    pub rd: bool,
+    /// Send Data : octets envoyés récemment
+    pub sd: bool,
+    /// Terminal Ready
+    pub tr: bool,
+    /// Modem Ready
+    pub mr: bool,
+}
+
+/// Paramètres de liaison négociés / mesurés. `None` = pas encore connu.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct LinkParams {
+    /// Modes communs annoncés dans JM (ex. "V.34", "V.32bis")
+    pub v8_modes: Vec<String>,
+    pub symbol_rate_tx: Option<u32>,
+    pub symbol_rate_rx: Option<u32>,
+    pub carrier_tx_hz: Option<f32>,
+    pub carrier_rx_hz: Option<f32>,
+    pub preemphasis_tx: Option<u8>,
+    pub data_rate_tx: Option<u32>,
+    pub data_rate_rx: Option<u32>,
+    /// Délai aller-retour mesuré en phase 2 (ms)
+    pub rtd_ms: Option<f32>,
+    /// SNR mesuré par le sondage L1/L2 ou en données (dB)
+    pub snr_db: Option<f32>,
+    /// Débit max projeté par symbole (index 0=2400 … 5=3429), bit/s
+    pub projected_rates: Vec<(u32, u32)>,
+    pub trellis_states: Option<u16>,
+    /// Réponse en fréquence mesurée par L1/L2 : (Hz, dB)
+    pub line_response: Vec<(f32, f32)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum LogLevel {
+    Info,
+    Detail,
+    Warn,
+}
+
+/// Événements produits par le moteur (à vider avec `Modem::drain_events`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data")]
+pub enum ModemEvent {
+    PhaseChanged(Phase),
+    /// Nom du signal actuellement émis (ex. "ANSam", "CM", "INFO0c", "L1", "TRN")
+    TxSignal(String),
+    /// Nom du dernier signal reconnu en réception
+    RxSignal(String),
+    Log { level: LogLevel, msg: String },
+    ParamsUpdated(LinkParams),
+    Connected { tx_rate: u32, rx_rate: u32 },
+    Disconnected { reason: String },
+    /// Octets reçus de l'autre modem (mode données)
+    Data(Vec<u8>),
+}
+
+/// Commandes envoyées au moteur.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data")]
+pub enum ModemCommand {
+    /// Décrocher et démarrer en appelant (après numérotation)
+    Dial,
+    /// Décrocher et démarrer en appelé
+    Answer,
+    /// Raccrocher (cleardown propre si en données, sinon immédiat)
+    Hangup,
+    /// Octets à envoyer en mode données
+    Send(Vec<u8>),
+    /// Forcer un réentraînement complet
+    Retrain,
+    /// Forcer une renégociation de débit
+    Renegotiate,
+}
+
+/// Configuration du modem.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ModemConfig {
+    /// Débit max autorisé (bit/s), ≤ 33600
+    pub max_rate: u32,
+    /// Vitesses de symbole optionnelles supportées
+    pub allow_2743: bool,
+    pub allow_2800: bool,
+    pub allow_3429: bool,
+    /// Durée du silence initial de l'appelé (ms, ≥ 200)
+    pub answer_silence_ms: u32,
+}
+
+impl Default for ModemConfig {
+    fn default() -> Self {
+        Self {
+            max_rate: 33600,
+            allow_2743: true,
+            allow_2800: true,
+            allow_3429: true,
+            answer_silence_ms: 400,
+        }
+    }
+}
+
+/// Instantané de l'état, à interroger à ~30 Hz par l'interface.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ModemStatus {
+    pub role: Role,
+    pub phase: Phase,
+    pub leds: Leds,
+    pub tx_signal: String,
+    pub rx_signal: String,
+    pub params: LinkParams,
+    /// Derniers points de constellation reçus (après égaliseur), normalisés
+    pub constellation: Vec<(f32, f32)>,
+    /// Octets envoyés / reçus depuis la connexion
+    pub bytes_tx: u64,
+    pub bytes_rx: u64,
+    /// Statistiques de la couche de correction d'erreurs (si une liaison existe)
+    pub link: Option<crate::lapm::LapmStats>,
+}
