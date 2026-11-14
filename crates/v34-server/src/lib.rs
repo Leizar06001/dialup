@@ -8,7 +8,8 @@
 //! - des **numéros spéciaux** desservis par des modems du central
 //!   ([`services`]) : le « FAI », qui donne accès à Internet par un tunnel
 //!   TCP multiplexé dans le flux du modem ([`tunnel`], filtré par
-//!   [`filter`]), et une ligne de test en écho ;
+//!   [`filter`]), une ligne de test en écho, et **3615 ORACLE**
+//!   ([`oracle`]), une IA persuadée qu'on est en 1998 ;
 //! - dans ce tunnel, l'**hôte virtuel `http://web1998/`** ([`web1998`]) :
 //!   le serveur sert lui-même des versions allégées « 1998 » des pages web
 //!   (HTML 3.2, images GIF 256 couleurs, ou « V.Hallucination » : redessinées
@@ -24,6 +25,7 @@ pub mod central;
 pub mod comptes;
 pub mod config;
 pub mod filter;
+pub mod oracle;
 pub mod portail;
 pub mod salon;
 pub mod services;

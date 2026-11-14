@@ -14,6 +14,8 @@ use crate::filter::Cidr;
 use crate::log::Level;
 
 pub const DEFAULT_PATH: &str = "/etc/v34-server/config.toml";
+/// 08 36 « ORACLE » sur le clavier du téléphone (6 7 2 2 5 3)
+pub const ORACLE_NUMERO: &str = "0836672253";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -28,6 +30,8 @@ pub struct Config {
     pub fai: Fai,
     /// Hôte virtuel « web 1998 » servi dans le tunnel du FAI
     pub web1998: Web1998,
+    /// 3615 ORACLE : l'IA qui se croit en 1998
+    pub oracle: Oracle,
 }
 
 impl Default for Config {
@@ -39,10 +43,12 @@ impl Default for Config {
             numeros_speciaux: vec![
                 NumeroSpecial { numero: "0836154286".into(), service: Service::Fai },
                 NumeroSpecial { numero: "0800000000".into(), service: Service::Echo },
+                NumeroSpecial { numero: ORACLE_NUMERO.into(), service: Service::Oracle },
             ],
             modems: Modems::default(),
             fai: Fai::default(),
             web1998: Web1998::default(),
+            oracle: Oracle::default(),
         }
     }
 }
@@ -144,6 +150,8 @@ pub enum Service {
     Fai,
     /// Ligne de test : renvoie en écho les octets reçus
     Echo,
+    /// 3615 ORACLE : une IA qui se croit en 1998, en trames de chat
+    Oracle,
 }
 
 impl Service {
@@ -151,6 +159,7 @@ impl Service {
         match self {
             Service::Fai => "fai",
             Service::Echo => "echo",
+            Service::Oracle => "oracle",
         }
     }
 }
@@ -248,6 +257,90 @@ impl Default for Web1998 {
             delai_s: 15,
             cache_mo: 32,
         }
+    }
+}
+
+/// 3615 ORACLE (voir [`crate::oracle`]) : une IA jointe par OpenRouter
+/// (API compatible OpenAI), persuadée qu'on est en 1998. Sans clé, ou en
+/// cas de panne, l'oracle répond avec ses cartes (réponses toutes faites).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Oracle {
+    /// Modèle demandé à OpenRouter
+    pub modele: String,
+    /// Point d'accès « chat completions » (https ; http seulement vers la
+    /// machine elle-même, pour les essais)
+    pub url: String,
+    /// Fichier contenant la clé d'API (jamais dans ce fichier-ci, jamais
+    /// journalisée) ; relu à chaque appel. Absent ou vide : hors ligne.
+    pub fichier_cle: String,
+    /// Qui peut appeler : « fai » (abonnés ayant l'accès Internet) ou « tous »
+    pub acces: String,
+    /// Questions posées à l'IA par abonné et par jour (UTC)
+    pub questions_par_jour: u32,
+    /// Questions posées à l'IA par jour, tous abonnés confondus
+    pub questions_par_jour_total: u32,
+    /// Longueur maximale d'une réponse (jetons)
+    pub jetons_max: u32,
+    /// Délai maximal d'une réponse de l'IA (s)
+    pub delai_s: u64,
+    /// Cadence d'affichage des réponses (bit/s, 10 bits par caractère
+    /// comme sur un Minitel)
+    pub debit_affichage: u32,
+    /// Sans question pendant ce temps, l'oracle raccroche (s)
+    pub inactivite_s: u64,
+}
+
+impl Default for Oracle {
+    fn default() -> Self {
+        Self {
+            modele: "deepseek/deepseek-v4.1-flash".into(),
+            url: "https://openrouter.ai/api/v1/chat/completions".into(),
+            fichier_cle: "/etc/v34-server/openrouter.key".into(),
+            acces: "fai".into(),
+            questions_par_jour: 30,
+            questions_par_jour_total: 1000,
+            jetons_max: 200,
+            delai_s: 20,
+            debit_affichage: 1200,
+            inactivite_s: 300,
+        }
+    }
+}
+
+impl Oracle {
+    /// Vérifie la section ; `Ok(vrai)` si tous les abonnés peuvent appeler.
+    pub fn validate(&self) -> Result<bool, String> {
+        let tous = match self.acces.trim() {
+            "fai" => false,
+            "tous" => true,
+            a => return Err(format!("oracle.acces invalide « {a} » (fai ou tous)")),
+        };
+        let m = self.modele.trim();
+        if m.is_empty() || m.len() > 200 || m.chars().any(|c| c.is_control() || c.is_whitespace()) {
+            return Err("oracle.modele invalide".into());
+        }
+        let u = url::Url::parse(self.url.trim()).map_err(|_| format!("oracle.url invalide : {}", self.url))?;
+        let local = matches!(u.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"));
+        if !(u.scheme() == "https" || (u.scheme() == "http" && local)) {
+            return Err("oracle.url : https obligatoire (la clé d'API y passe), http seulement vers 127.0.0.1".into());
+        }
+        if self.questions_par_jour == 0 || self.questions_par_jour_total == 0 {
+            return Err("oracle : questions_par_jour et questions_par_jour_total doivent être > 0".into());
+        }
+        if !(16..=4000).contains(&self.jetons_max) {
+            return Err("oracle.jetons_max doit être entre 16 et 4000".into());
+        }
+        if !(1..=120).contains(&self.delai_s) {
+            return Err("oracle.delai_s doit être entre 1 et 120".into());
+        }
+        if !(50..=56000).contains(&self.debit_affichage) {
+            return Err("oracle.debit_affichage doit être entre 50 et 56000 bit/s".into());
+        }
+        if !(30..=3600).contains(&self.inactivite_s) {
+            return Err("oracle.inactivite_s doit être entre 30 et 3600".into());
+        }
+        Ok(tous)
     }
 }
 
@@ -381,6 +474,7 @@ impl Config {
         if w.image_cible_ko == 0 || !(1..=120).contains(&w.delai_s) || w.cache_mo > 4096 {
             return Err("web1998 : image_cible_ko > 0, delai_s entre 1 et 120, cache_mo ≤ 4096".into());
         }
+        self.oracle.validate()?;
         if self.fai.autoriser_prive {
             warnings.push("fai.autoriser_prive = true : le réseau local du VPS est accessible par le tunnel !".into());
         }
@@ -467,6 +561,8 @@ mod tests {
         let c = Config::from_toml(EXEMPLE).expect("deploy/config.example.toml doit être valide");
         assert_eq!(c.service_for("0836154286"), Some(Service::Fai));
         assert_eq!(c.service_for("0800000000"), Some(Service::Echo));
+        assert_eq!(c.service_for(ORACLE_NUMERO), Some(Service::Oracle));
+        assert_eq!(c.oracle, Oracle::default(), "l'exemple reprend les valeurs par défaut");
         assert_eq!(c.listen_addr().unwrap().port(), 3434);
         assert!(!c.fai.autoriser_prive);
         assert_eq!(c.web1998, Web1998::default(), "l'exemple reprend les valeurs par défaut");
@@ -488,6 +584,37 @@ mod tests {
     }
 
     #[test]
+    fn section_oracle() {
+        let c = Config::from_toml("").unwrap();
+        assert_eq!(c.oracle.modele, "deepseek/deepseek-v4.1-flash");
+        assert_eq!(c.oracle.fichier_cle, "/etc/v34-server/openrouter.key");
+        assert_eq!((c.oracle.questions_par_jour, c.oracle.questions_par_jour_total, c.oracle.jetons_max), (30, 1000, 200));
+        assert_eq!(c.oracle.validate(), Ok(false), "accès réservé aux abonnés du FAI par défaut");
+        let c = Config::from_toml("[oracle]\nacces = \"tous\"\ndebit_affichage = 300").unwrap();
+        assert_eq!(c.oracle.validate(), Ok(true));
+        assert_eq!(c.oracle.debit_affichage, 300);
+        assert_eq!(c.oracle.delai_s, 20, "les autres clés gardent leur valeur par défaut");
+        for faux in [
+            "acces = \"personne\"",
+            "url = \"http://openrouter.ai/api/v1/chat/completions\"",
+            "url = \"pas une adresse\"",
+            "modele = \"\"",
+            "questions_par_jour = 0",
+            "questions_par_jour_total = 0",
+            "jetons_max = 5",
+            "delai_s = 0",
+            "debit_affichage = 10",
+            "inactivite_s = 1",
+            // la clé n'a rien à faire dans config.toml
+            "cle = \"sk-or-v1-0123\"",
+        ] {
+            assert!(Config::from_toml(&format!("[oracle]\n{faux}")).is_err(), "{faux} doit être refusé");
+        }
+        // http seulement vers la machine elle-même (essais)
+        assert!(Config::from_toml("[oracle]\nurl = \"http://127.0.0.1:8080/v1/chat/completions\"").is_ok());
+    }
+
+    #[test]
     fn valeurs_par_defaut_et_annuaire() {
         let c = Config::from_toml(&format!(
             "[[abonnes]]\nnom = \"gaston\"\nnumero = \"0142424242\"\nmot_de_passe_hash = \"{}\"\n",
@@ -495,7 +622,7 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(c.fai.ports_autorises, vec![80, 443]);
-        assert_eq!(c.services().len(), 2, "FAI + ligne de test par défaut");
+        assert_eq!(c.services().len(), 3, "FAI + ligne de test + oracle par défaut");
         let a = c.annuaire().unwrap();
         assert_eq!(a.get("gaston").map(|(n, _)| n.as_str()), Some("0142424242"));
         assert!(a.get("inconnu").is_none());

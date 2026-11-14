@@ -6,7 +6,9 @@
 //! Une fois CONNECT obtenu, le flux d'octets du modem est raccordé par un
 //! [`ModemPipe`] au service :
 //! - [`Service::Fai`] : bout serveur du tunnel ([`crate::tunnel`]) ;
-//! - [`Service::Echo`] : ligne de test, renvoie tout ce qu'elle reçoit.
+//! - [`Service::Echo`] : ligne de test, renvoie tout ce qu'elle reçoit ;
+//! - [`Service::Oracle`] : 3615 ORACLE ([`crate::oracle`]), questions et
+//!   réponses en trames de chat, comme un abonné.
 //!
 //! Pour ajouter un service (BBS…) : une variante de [`Service`] dans la
 //! configuration et un thread qui consomme/produit des octets ici.
@@ -24,6 +26,7 @@ use v34_net::tunnel::ModemPipe;
 use v34_net::{Codec, Packet, FRAME_SAMPLES};
 
 use crate::config::Service;
+use crate::oracle::{self, Oracle};
 use crate::tunnel::{self, TunnelPolicy};
 use crate::{debug, info, warn};
 
@@ -62,6 +65,7 @@ pub struct ModemCall {
     pub carrier_timeout: Duration,
     pub line: Option<LineParams>,
     pub policy: Arc<TunnelPolicy>,
+    pub oracle: Arc<Oracle>,
 }
 
 pub fn spawn(call: ModemCall, rx: Receiver<ModemInput>, notify: Sender<ModemNotice>) -> std::io::Result<JoinHandle<()>> {
@@ -165,12 +169,14 @@ fn run(call: ModemCall, rx: Receiver<ModemInput>) -> (HangupReason, String) {
                     connected = true;
                     let (p, tin, tout) = ModemPipe::new(tx_rate);
                     let policy = call.policy.clone();
+                    let orc = call.oracle.clone();
                     let l = label.clone();
                     let user = call.caller.clone();
                     let service = call.service;
                     match std::thread::Builder::new().name(format!("svc-{:08x}", call.call_id)).spawn(move || match service {
                         Service::Fai => tunnel::run(policy, l, &user, tin, tout),
                         Service::Echo => echo(tin, tout),
+                        Service::Oracle => oracle::session(orc, &l, &user, tin, tout),
                     }) {
                         Ok(h) => {
                             tunnel = Some(h);

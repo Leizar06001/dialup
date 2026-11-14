@@ -6,8 +6,9 @@ s'appellent ; le central relaie l'audio (G.711 sur UDP). Il héberge aussi des
 **numéros spéciaux** desservis par des modems logiciels : le **FAI**
 (`0836154286`), qui donne accès à Internet par modem (en V.34, ou en **56K
 V.90** : raccordé en numérique au central, son modem joue le côté numérique,
-jusqu'à 56 000 bit/s vers l'abonné), et une **ligne de test** en écho
-(`0800000000`).
+jusqu'à 56 000 bit/s vers l'abonné), une **ligne de test** en écho
+(`0800000000`), et **3615 ORACLE** (`0836672253`), une IA qui se croit en
+1998 (voir § 8 bis).
 
 ```text
  PC A (v34-cli / appli)                VPS dialup.tinyverse.fr                PC B
@@ -218,6 +219,9 @@ La configuration existante n'est jamais remplacée : une nouveauté de
   annoncé).
 - **56K** : `[modems] v90` et `debit_max_56k` (par défaut : 56K proposé,
   56 000 bit/s au plus) ; rien à ajouter pour garder ces valeurs.
+- **3615 ORACLE** : ajouter le bloc `[[numeros_speciaux]]` `0836672253` /
+  `oracle` (la section `[oracle]` est facultative : valeurs par défaut) et
+  poser la clé d'API (voir § 8 bis).
 
 ## 6. Journaux
 
@@ -236,6 +240,7 @@ en `debug`, les destinations ouvertes par le tunnel FAI sont journalisées.
 v34-cli register --user alice                      # attend les appels (mot de passe demandé)
 v34-cli dial --user gaston 0612345678             # appelle alice
 v34-cli dial --user gaston 0800000000             # ligne de test : écho des octets
+v34-cli dial --user gaston --chat "Qui va gagner la Coupe ?|/fin" 0836672253   # 3615 ORACLE
 v34-cli dial --user gaston 0836154286             # FAI : affiche « proxy SOCKS5 sur 127.0.0.1:1080 »
 curl --socks5-hostname 127.0.0.1:1080 https://example.com/
 ```
@@ -297,6 +302,36 @@ curl --socks5-hostname 127.0.0.1:1080 'http://web1998/p?u=https://fr.wikipedia.o
 - **Pour l'appli** (FAI simulé en local) : rien à faire, l'hôte virtuel est
   compris dans `v34_server::tunnel::run` avec `TunnelPolicy::default()` (ou
   `from_config`/`from_configs`) ; API documentée dans `v34_server::web1998`.
+
+## 8 bis. 3615 ORACLE
+
+Au `0836672253` (« ORACLE » sur le clavier), le modem du central décroche
+(V.34 ou 56K), puis parle comme un abonné : questions et réponses en
+messages de chat (`v34_net::bbs`), affichés dans la MESSAGERIE de l'appli,
+à la cadence d'un Minitel. Les réponses viennent d'OpenRouter
+(`deepseek/deepseek-v4.1-flash` par défaut, sans « réflexion », 200 jetons
+au plus, coupées proprement à 500 caractères) ; sans clé, au-delà du plafond
+du jour, en cas de panne ou de délai dépassé, l'oracle tire les cartes
+(réponses toutes faites) et le dit.
+
+La clé n'est jamais dans `config.toml` : elle est lue dans
+`/etc/v34-server/openrouter.key` (une ligne), relue à chaque appel :
+
+```sh
+read -rs CLE && printf '%s\n' "$CLE" | sudo install -m 640 -o root -g v34 /dev/stdin /etc/v34-server/openrouter.key; unset CLE
+sudo v34-server verifier        # « 3615 ORACLE : clé d'API lisible… »
+```
+
+Réglages dans `[oracle]` (voir l'exemple) : accès (`fai` par défaut :
+seulement les abonnés qui ont l'accès Internet ; ou `tous`), 30 questions
+par abonné et 1000 au total par jour (UTC, compteurs en mémoire), délai,
+cadence d'affichage, inactivité. La consigne de l'IA est identique pour tous
+(rien de variable) et chaque appel renvoie ses échanges tels quels : le
+fournisseur sert ce préfixe depuis son cache, facturé dix fois moins ; la
+réponse à une même première question est aussi gardée 6 heures en mémoire.
+Vie privée : les questions partent chez OpenRouter et le fournisseur du
+modèle ; le central ne journalise que des compteurs (jetons consommés en
+`debug`) et oublie la conversation au raccroché.
 
 ## 9. Sécurité
 

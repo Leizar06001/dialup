@@ -102,6 +102,13 @@ fn check(path: &std::path::Path) -> Result<(), String> {
         cfg.abonnes.len(),
         specials(&cfg)
     );
+    if cfg.services().iter().any(|(_, k)| k == "oracle") {
+        // (le central tourne sous l'utilisateur v34 : la clé doit lui être lisible)
+        match v34_server::oracle::lire_cle(&cfg.oracle.fichier_cle) {
+            Ok(_) => println!("3615 ORACLE : clé d'API lisible dans {}, modèle {}", cfg.oracle.fichier_cle, cfg.oracle.modele),
+            Err(e) => println!("3615 ORACLE : pas de clé d'API ({e}) ; les cartes répondront"),
+        }
+    }
     Ok(())
 }
 

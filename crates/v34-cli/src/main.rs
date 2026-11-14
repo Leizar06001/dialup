@@ -50,6 +50,9 @@ Via le central téléphonique (v34-server, défaut dialup.tinyverse.fr:3434) :
         --isp NUM), lance aussi un proxy local SOCKS5 / HTTP CONNECT
         (--socks ADRESSE, défaut 127.0.0.1:1080) une fois connecté.
         0800000000 : ligne de test (écho des octets).
+        --chat \"question 1|question 2\" : parle comme l'appli (messages de
+        chat), un message après chaque silence de 3 s, puis raccroche ;
+        affiche ce qui revient (ex. 0836672253, 3615 ORACLE).
         Sans --password, le mot de passe est lu dans V34_PASSWORD ou
         demandé au clavier (il n'apparaît alors pas dans `ps`).
 
@@ -466,6 +469,53 @@ struct CentralCall {
     tunnel: Option<TunnelClient>,
 }
 
+/// `--chat` : parle comme l'appli (trames de chat de `v34_net::bbs`), un
+/// message après chaque silence de la ligne, puis raccroche.
+struct ChatScript {
+    questions: std::collections::VecDeque<String>,
+    dec: v34_net::bbs::Decoder,
+    last_rx: Instant,
+    done: bool,
+}
+
+impl ChatScript {
+    const SILENCE: Duration = Duration::from_secs(3);
+
+    /// Affiche ce qui arrive, au fil de l'eau (comme la messagerie).
+    fn receive(&mut self, bytes: &[u8]) {
+        use std::io::Write;
+        use v34_net::bbs::{Frame, Item};
+        self.last_rx = Instant::now();
+        for it in self.dec.push(bytes) {
+            match it {
+                Item::Frame(Frame::Chat(t)) => print!("{t}"),
+                Item::Raw(r) => print!("{}", String::from_utf8_lossy(&r)),
+                _ => {}
+            }
+        }
+        let _ = std::io::stdout().flush();
+    }
+
+    /// Prochain ordre au modem : un message après un silence, puis raccrocher.
+    fn next(&mut self) -> Option<ModemCommand> {
+        if self.done || self.last_rx.elapsed() < Self::SILENCE {
+            return None;
+        }
+        self.last_rx = Instant::now();
+        match self.questions.pop_front() {
+            Some(q) => {
+                println!("\n<moi> {q}");
+                Some(ModemCommand::Send(v34_net::bbs::encode(&v34_net::bbs::Frame::Chat(q))))
+            }
+            None => {
+                self.done = true;
+                println!("\n(fin du script : ATH)");
+                Some(ModemCommand::Hangup)
+            }
+        }
+    }
+}
+
 fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
     let cfg = central_config(args)?;
     let preset = args.preset()?;
@@ -534,6 +584,13 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
     // reviennent en écho) et fait le bilan toutes les 10 s
     let charge: usize = args.num("charge", 0usize)?;
     let (mut sent, mut got, mut got_win, mut win_t, mut connect_t) = (0usize, 0usize, 0usize, 0u64, None::<u64>);
+    // --chat "q1|q2" : messages de chat comme l'appli, un après chaque silence
+    let mut chat: Option<ChatScript> = args.get("chat").map(|s| ChatScript {
+        questions: s.split('|').map(str::trim).filter(|q| !q.is_empty()).map(str::to_string).collect(),
+        dec: v34_net::bbs::Decoder::default(),
+        last_rx: Instant::now(),
+        done: false,
+    });
     let mut call: Option<CentralCall> = None;
     let mut ring_at: Option<Instant> = None;
     let start = Instant::now();
@@ -617,9 +674,17 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
                             p.on_modem_data(d);
                         }
                     }
+                    ModemEvent::Data(d) if chat.is_some() => {
+                        if let Some(s) = chat.as_mut() {
+                            s.receive(&d);
+                        }
+                    }
                     ModemEvent::Connected { tx_rate, .. } => {
                         print_event(t, role, &ev);
                         c.connected = true;
+                        if let Some(s) = chat.as_mut() {
+                            s.last_rx = Instant::now(); // le silence se compte après CONNECT
+                        }
                         if let Some(listener) = proxy.take() {
                             let (pipe, tin, tout) = ModemPipe::new(tx_rate);
                             let tun = TunnelClient::spawn(listener, isp_login.clone(), tin, tout).map_err(|e| format!("tunnel : {e}"))?;
@@ -638,6 +703,11 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
             if let Some(p) = c.pipe.as_mut() {
                 if let Some(bytes) = p.take_for_modem() {
                     c.modem.command(ModemCommand::Send(bytes));
+                }
+            }
+            if let Some(s) = chat.as_mut().filter(|_| c.connected && c.pipe.is_none()) {
+                if let Some(cmd) = s.next() {
+                    c.modem.command(cmd);
                 }
             }
             if charge > 0 && c.connected && c.pipe.is_none() {

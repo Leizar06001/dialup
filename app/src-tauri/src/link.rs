@@ -25,11 +25,17 @@ pub enum RemoteService {
     Echo,
     /// Joue le FAI : tunnel vers Internet depuis ce PC (code du serveur)
     Isp,
+    /// Joue 3615 ORACLE, hors ligne : les cartes répondent (code du serveur)
+    Oracle,
 }
 
-/// FAI simulé : le code du tunnel du serveur, branché sur le modem distant.
-struct IspSim {
+/// Service simulé (FAI ou oracle) : le code du serveur, branché sur le
+/// modem distant.
+struct ServiceSim {
     pipe: v34_net::tunnel::ModemPipe,
+    /// Raccrocher quand le service s'arrête (l'oracle, comme au central)
+    hangup_when_done: bool,
+    finished_at: Option<std::time::Instant>,
 }
 
 pub trait Link: Send {
@@ -370,7 +376,19 @@ pub struct LocalLoop {
     /// Le distant renvoie ce qu'il reçoit (boucle de test façon V.54).
     pub remote_echo_data: bool,
     service: RemoteService,
-    isp: Option<IspSim>,
+    sim: Option<ServiceSim>,
+}
+
+/// 3615 ORACLE simulé : le code du central, sans clé d'API (les cartes
+/// répondent), branché sur les deux bouts d'un `ModemPipe`.
+pub fn oracle_hors_ligne(from_modem: std::sync::mpsc::Receiver<Vec<u8>>, to_modem: std::sync::mpsc::SyncSender<Vec<u8>>) -> std::io::Result<()> {
+    let cfg = v34_server::config::Oracle { fichier_cle: String::new(), ..Default::default() };
+    let oracle = v34_server::oracle::Oracle::new(&cfg).map_err(std::io::Error::other)?;
+    let oracle = std::sync::Arc::new(oracle);
+    std::thread::Builder::new()
+        .name("oracle-simule".into())
+        .spawn(move || v34_server::oracle::session(oracle, "ORACLE (boucle locale)", "visiteur", from_modem, to_modem))?;
+    Ok(())
 }
 
 impl LocalLoop {
@@ -388,7 +406,7 @@ impl LocalLoop {
             scratch: Vec::new(),
             remote_echo_data: true,
             service: RemoteService::Echo,
-            isp: None,
+            sim: None,
         }
     }
 }
@@ -414,7 +432,7 @@ impl Link for LocalLoop {
         self.remote = Modem::new(remote_role, cfg.clone());
         self.last_tx_local.fill(0.0);
         self.last_tx_remote.fill(0.0);
-        self.isp = None;
+        self.sim = None;
     }
 
     fn command_local(&mut self, cmd: ModemCommand) {
@@ -441,9 +459,18 @@ impl Link for LocalLoop {
         self.echo_remote.process(&self.last_tx_remote, &mut rx_remote);
 
         self.local.process(rx, tx);
-        if let Some(isp) = self.isp.as_mut() {
-            if let Some(bytes) = isp.pipe.take_for_modem() {
+        if let Some(sim) = self.sim.as_mut() {
+            if let Some(bytes) = sim.pipe.take_for_modem() {
                 self.remote.command(ModemCommand::Send(bytes));
+            }
+            // L'oracle a fini (/fin, quota, inactivité) : comme au central,
+            // son modem raccroche une fois les derniers octets partis.
+            if sim.hangup_when_done && sim.pipe.tunnel_finished() {
+                let t = *sim.finished_at.get_or_insert_with(std::time::Instant::now);
+                if t.elapsed() > std::time::Duration::from_millis(1500) {
+                    sim.hangup_when_done = false;
+                    self.remote.command(ModemCommand::Hangup);
+                }
             }
         }
         self.remote.process(&rx_remote, &mut self.last_tx_remote);
@@ -464,7 +491,7 @@ impl Link for LocalLoop {
             self.local.drain_events().into_iter().map(|e| (Side::Local, e)).collect();
         for ev in self.remote.drain_events() {
             match &ev {
-                ModemEvent::Connected { tx_rate, .. } if self.service == RemoteService::Isp && self.isp.is_none() => {
+                ModemEvent::Connected { tx_rate, .. } if self.service == RemoteService::Isp && self.sim.is_none() => {
                     // Le distant devient FAI : même code que le serveur du VPS
                     let (pipe, from_modem, to_modem) = v34_net::tunnel::ModemPipe::new(*tx_rate);
                     let fai = v34_server::config::Fai { banniere: "V34NET (FAI simulé en boucle locale) - bonne navigation !".into(), ..Default::default() };
@@ -473,17 +500,24 @@ impl Link for LocalLoop {
                         let _ = std::thread::Builder::new().name("fai-simule".into()).spawn(move || {
                             v34_server::tunnel::run(policy, "boucle locale".into(), "local", from_modem, to_modem)
                         });
-                        self.isp = Some(IspSim { pipe });
+                        self.sim = Some(ServiceSim { pipe, hangup_when_done: false, finished_at: None });
+                    }
+                }
+                ModemEvent::Connected { tx_rate, .. } if self.service == RemoteService::Oracle && self.sim.is_none() => {
+                    // Le distant devient 3615 ORACLE (hors ligne : les cartes répondent)
+                    let (pipe, from_modem, to_modem) = v34_net::tunnel::ModemPipe::new(*tx_rate);
+                    if oracle_hors_ligne(from_modem, to_modem).is_ok() {
+                        self.sim = Some(ServiceSim { pipe, hangup_when_done: true, finished_at: None });
                     }
                 }
                 ModemEvent::Data(bytes) => {
-                    if let Some(isp) = self.isp.as_mut() {
-                        isp.pipe.on_modem_data(bytes.clone());
+                    if let Some(sim) = self.sim.as_mut() {
+                        sim.pipe.on_modem_data(bytes.clone());
                     } else if self.remote_echo_data {
                         self.remote.command(ModemCommand::Send(bytes.clone()));
                     }
                 }
-                ModemEvent::Disconnected { .. } => self.isp = None,
+                ModemEvent::Disconnected { .. } => self.sim = None,
                 _ => {}
             }
             out.push((Side::Remote, ev));
@@ -493,10 +527,11 @@ impl Link for LocalLoop {
 
     fn set_remote_service(&mut self, svc: RemoteService) {
         self.service = svc;
-        self.isp = None;
-        if svc == RemoteService::Isp && self.remote.role() == Role::Answer {
-            // Le FAI simulé est raccordé en numérique, comme celui du
-            // central : il propose le 56k (V.90) si notre modem le demande.
+        self.sim = None;
+        if matches!(svc, RemoteService::Isp | RemoteService::Oracle) && self.remote.role() == Role::Answer {
+            // Le FAI et l'oracle simulés sont raccordés en numérique, comme
+            // ceux du central : ils proposent le 56k (V.90) si notre modem le
+            // demande.
             let cfg = ModemConfig { digital: true, ..ModemConfig::default() };
             self.remote = Modem::new(Role::Answer, cfg);
         }

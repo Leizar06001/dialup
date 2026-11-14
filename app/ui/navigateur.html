@@ -194,7 +194,8 @@
       else if (s.call_state === "dialing" || s.call_state === "ringing") call = "Numérotation…";
       else if (s.call_state === "connecting") call = "Les modems négocient…";
       else if (s.call_state === "online" && !bbs) call = "En ligne avec le FAI : la conversation, c'est son salon";
-      else if (s.call_state === "online") call = `En ligne d'abonné à abonné${r ? " · " + r.toLocaleString("fr-FR") + " bit/s" : ""}${s.net ? "" : " · boucle locale : l'écho te répond"}`;
+      else if (s.call_state === "online" && s.oracle) call = `En ligne avec 3615 ORACLE${r ? " · " + r.toLocaleString("fr-FR") + " bit/s" : ""} · 2,23 F la minute (pour de rire)${s.net ? "" : " · boucle locale : les cartes répondent"}`;
+      else if (s.call_state === "online") call =`En ligne d'abonné à abonné${r ? " · " + r.toLocaleString("fr-FR") + " bit/s" : ""}${s.net ? "" : " · boucle locale : l'écho te répond"}`;
       else call = "Pas d'appel : choisis un abonné dans les contacts (ou l'annuaire du modem)";
       if ($("call-text").textContent !== call) $("call-text").textContent = call;
       $("dot2").classList.toggle("on", s.call_state === "online");

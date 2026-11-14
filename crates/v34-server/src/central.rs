@@ -36,6 +36,7 @@ use v34_net::signal::{
 
 use crate::comptes::Comptes;
 use crate::config::{Annuaire, Config, Service};
+use crate::oracle::Oracle;
 use crate::services::{self, ModemCall, ModemInput, ModemNotice};
 use crate::tunnel::TunnelPolicy;
 use crate::{debug, error, info, warn};
@@ -114,6 +115,8 @@ pub struct Server {
     cfg: Arc<Config>,
     annuaire: Annuaire,
     policy: Arc<TunnelPolicy>,
+    /// 3615 ORACLE : quotas, cache et client HTTP partagés par ses appels
+    oracle: Arc<Oracle>,
     server_key: [u8; 32],
     regs: HashMap<u32, Reg>,
     by_name: HashMap<String, u32>,
@@ -174,14 +177,22 @@ impl Server {
         let addr = cfg.listen_addr().map_err(invalid)?;
         let annuaire = cfg.annuaire().map_err(invalid)?;
         let policy = TunnelPolicy::from_configs(&cfg.fai, &cfg.web1998).map_err(invalid)?;
+        let oracle = Oracle::new(&cfg.oracle).map_err(invalid)?;
         let sock = UdpSocket::bind(addr)?;
         sock.set_read_timeout(Some(Duration::from_millis(10)))?;
+        if let Some((num, _)) = cfg.services().into_iter().find(|(_, k)| k == "oracle") {
+            match oracle.cle() {
+                Ok(_) => info!("3615 ORACLE au {num} : modèle {}, clé d'API présente", cfg.oracle.modele),
+                Err(e) => info!("3615 ORACLE au {num} : pas de clé d'API ({e}), les cartes répondront"),
+            }
+        }
         let (notice_tx, notice_rx) = mpsc::channel();
         Ok(Server {
             sock,
             cfg: Arc::new(cfg),
             annuaire,
             policy: Arc::new(policy),
+            oracle: Arc::new(oracle),
             server_key: random_bytes(),
             regs: HashMap::new(),
             by_name: HashMap::new(),
@@ -574,10 +585,15 @@ impl Server {
         }
         let now = Instant::now();
         if let Some(service) = self.cfg.service_for(&number) {
-            if service == Service::Fai && !self.annuaire.fai_autorise(&reg.name) {
+            let refus = match service {
+                Service::Fai => !self.annuaire.fai_autorise(&reg.name),
+                Service::Oracle => !self.oracle.autorise(&self.annuaire, &reg.name),
+                Service::Echo => false,
+            };
+            if refus {
                 // Appel aussitôt terminé : « accès non autorisé ». Les anciens
                 // clients y voient un échec ordinaire.
-                info!("{caller} → {number} (fai) : accès Internet non activé pour ce compte");
+                info!("{caller} → {number} ({}) : accès Internet non activé pour ce compte", service.name());
                 let id = self.new_call_id();
                 self.send_reliable(session, Msg::Ringing { call_id: id });
                 return self.send_reliable(session, Msg::Hangup { call_id: id, reason: HangupReason::Forbidden });
@@ -680,6 +696,7 @@ impl Server {
             carrier_timeout: Duration::from_secs(self.cfg.modems.delai_porteuse_s.max(10)),
             line: self.cfg.line_params().ok().flatten(),
             policy: self.policy.clone(),
+            oracle: self.oracle.clone(),
         };
         match services::spawn(modem_call, rx, self.notice_tx.clone()) {
             Ok(h) => {
@@ -891,11 +908,17 @@ impl Server {
         for s in stale {
             self.remove_registration(s, "retiré ou renuméroté dans l'annuaire");
         }
-        // Accès Internet retiré pendant un appel au FAI : on raccroche.
+        // Accès Internet retiré pendant un appel au FAI (ou à l'oracle, s'il
+        // lui est réservé) : on raccroche.
+        let oracle_fai = self.oracle.reserve_au_fai();
         let revoked: Vec<u32> = self
             .calls
             .iter()
-            .filter(|(_, c)| matches!(c.callee, Callee::Modem { service: Service::Fai, .. }))
+            .filter(|(_, c)| match c.callee {
+                Callee::Modem { service: Service::Fai, .. } => true,
+                Callee::Modem { service: Service::Oracle, .. } => oracle_fai,
+                _ => false,
+            })
             .filter(|(_, c)| self.regs.get(&c.caller).is_some_and(|r| !annuaire.fai_autorise(&r.name)))
             .map(|(&id, _)| id)
             .collect();

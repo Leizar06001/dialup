@@ -67,8 +67,9 @@ simulateur_ligne = ""
 # Desservis par un modem logiciel du central. Services disponibles :
 #   fai  : fournisseur d'accès, tunnel TCP vers Internet (proxy SOCKS5 local
 #          côté client) ;
-#   echo : ligne de test, renvoie en écho tout ce qu'elle reçoit.
-# Sans aucun bloc, ces deux numéros-ci sont créés par défaut ; pour n'en
+#   echo : ligne de test, renvoie en écho tout ce qu'elle reçoit ;
+#   oracle : 3615 ORACLE, une IA persuadée qu'on est en 1998 (voir [oracle]).
+# Sans aucun bloc, ces trois numéros-ci sont créés par défaut ; pour n'en
 # avoir aucun : numeros_speciaux = []
 # Le FAI était au 0836656565 avant la version 0.1.2 : pour les applis
 # 0.1.1 et plus anciennes (touche ☎ FAI), on peut le garder en second bloc
@@ -81,6 +82,11 @@ service = "fai"
 [[numeros_speciaux]]
 numero = "0800000000"
 service = "echo"
+
+# 08 36 « ORACLE » sur le clavier du téléphone.
+[[numeros_speciaux]]
+numero = "0836672253"
+service = "oracle"
 
 [modems]
 # Appels simultanés vers les numéros spéciaux (chacun fait tourner un modem
@@ -144,3 +150,40 @@ delai_s = 15
 # Cache mémoire des pages et images allégées, partagé par tous les abonnés
 # (Mo, 0 = pas de cache). Une entrée y reste au plus 10 minutes.
 cache_mo = 32
+
+[oracle]
+# 3615 ORACLE (numéro spécial « oracle » ci-dessus) : le modem du central
+# décroche, puis l'oracle parle comme un abonné, en messages de chat. Les
+# questions partent chez OpenRouter (et chez le fournisseur du modèle) ;
+# elles ne sont ni journalisées ni gardées après l'appel (seuls des
+# compteurs le sont, et les jetons consommés en mode debug).
+#
+# La clé d'API n'est JAMAIS dans ce fichier : elle est lue dans
+# `fichier_cle` (une seule ligne), relue à chaque appel. Sans clé, l'oracle
+# répond quand même, avec ses cartes (réponses toutes faites), et le dit.
+#   read -rs CLE && printf '%s\n' "$CLE" | sudo install -m 640 -o root -g v34 /dev/stdin /etc/v34-server/openrouter.key; unset CLE
+fichier_cle = "/etc/v34-server/openrouter.key"
+# Modèle et point d'accès (API « chat completions » compatible OpenAI ;
+# https obligatoire, http seulement vers 127.0.0.1 pour les essais).
+modele = "deepseek/deepseek-v4.1-flash"
+url = "https://openrouter.ai/api/v1/chat/completions"
+# Qui peut appeler : "fai" (abonnés qui ont l'accès Internet ; les autres
+# entendent « occupé », comme au FAI) ou "tous".
+acces = "fai"
+# Questions posées à l'IA par abonné et par jour (UTC), et au total pour
+# tous les abonnés. Au-delà : l'abonné est éconduit poliment ; le plafond
+# global atteint, les cartes répondent à la place de l'IA. Les réponses des
+# cartes et celles du petit cache (même première question, 6 heures) ne
+# comptent pas.
+questions_par_jour = 30
+questions_par_jour_total = 1000
+# Longueur maximale d'une réponse (jetons) ; elle est de toute façon
+# coupée proprement à 500 caractères.
+jetons_max = 200
+# Délai maximal d'une réponse de l'IA (s, 1 à 120) ; au-delà, les cartes.
+delai_s = 20
+# Cadence d'affichage des réponses (bit/s, 10 bits par caractère) :
+# 1200 = un Minitel, on voit l'oracle « taper ».
+debit_affichage = 1200
+# Sans question pendant ce temps, l'oracle raccroche et libère le modem (s).
+inactivite_s = 300

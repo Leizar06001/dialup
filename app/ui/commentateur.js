@@ -56,6 +56,16 @@ const Commentateur = (() => {
       "Bonsoir ! Ce soir, {notre} affronte le FAI. Numérotation du {num}…",
       "On compose le {num} : ce soir, c'est Internet ou rien !",
     ],
+    numerotation_oracle: [
+      "Le {num} ! {Notre} appelle 3615 ORACLE. À 2,23 F la minute, on a intérêt à poser les bonnes questions.",
+      "Numérotation du {num} : direction l'Oracle, qui croit dur comme fer qu'on est en 1998. Ne le contrariez pas.",
+      "{Notre} compose le {num}… On consulte l'Oracle ! Le compteur du kiosque se frotte déjà les mains.",
+    ],
+    oracle_en_ligne: [
+      "L'Oracle est en ligne ! Posez votre question dans la messagerie… et ne lui parlez pas de l'an 2000, il est inquiet.",
+      "Connecté à l'Oracle. Pour lui, la France vient de gagner la Coupe du monde : laissez-le savourer.",
+      "On est chez l'Oracle ! Il voit l'avenir, mais seulement jusqu'au 31 décembre 1998. Après, c'est le brouillard.",
+    ],
     sonne: [
       "Ça sonne chez {autre}… décrochera, décrochera pas ?",
       "Tuuut… Tuuut… {Autre} se fait désirer.",
@@ -668,7 +678,13 @@ const Commentateur = (() => {
     { le: "l'adversaire", du: "de l'adversaire", au: "à l'adversaire" },
     { le: "le correspondant", du: "du correspondant", au: "au correspondant" },
   ];
+  const ORACLE = [
+    { le: "l'Oracle", du: "de l'Oracle", au: "à l'Oracle" },
+    { le: "le modem de l'Oracle", du: "du modem de l'Oracle", au: "au modem de l'Oracle" },
+    { le: "le 3615 ORACLE", du: "du 3615 ORACLE", au: "au 3615 ORACLE" },
+  ];
   const ISP_NUMBER = "0836154286";
+  const ORACLE_NUMBER = "0836672253";
 
   /* ------------------------------------------------------------ moteur */
   /**
@@ -691,7 +707,7 @@ const Commentateur = (() => {
         manche: new Set(),     // … ou depuis le dernier (ré)entraînement
         fini: false, clos: false, inactifDepuis: 0,
         connecte: false, connecteA: 0, rx: 0,
-        numero: "", fai: false, nom: null, sortant: null,
+        numero: "", fai: false, oracle: false, nom: null, sortant: null,
         distantTx: null,       // signal émis par l'autre (boucle locale)
         repriseA: -1e9, meubleA: 0,
         attenteSnr: 0, params: null, retx: null, retxA: -1e9, tunnel: false,
@@ -722,7 +738,7 @@ const Commentateur = (() => {
     function vars(extra) {
       const a = appel && appel.nom && !fai()
         ? { le: appel.nom, du: (/^[aeiouyhéèêàâîôû]/i.test(appel.nom) ? "d'" : "de ") + appel.nom, au: "à " + appel.nom }
-        : choix(fai() ? FAI : AUTRES);
+        : choix(fai() ? FAI : appel && appel.oracle ? ORACLE : AUTRES);
       const n = choix(NOTRE);
       const v = { autre: a.le, Autre: majuscule(a.le), du_autre: a.du, au_autre: a.au, notre: n.le, Notre: majuscule(n.le), du_notre: n.du, ...extra };
       if (extra.why) v.Why = majuscule(extra.why);
@@ -963,6 +979,7 @@ const Commentateur = (() => {
       const cle = rx > 33600 ? "connect_56k" : rx >= 31200 ? "connect_top" : rx >= 19200 ? "connect_bien" : "connect_bof";
       const asym = rx <= 33600 && tx !== rx ? ` Et ${milliers(tx)} en émission.` : "";
       dire(cle, v, { prio: 2, suffixe: asym });
+      if (appel.oracle) dire("oracle_en_ligne", {}, { prio: 1 });
     }
 
     /* -------------------------------------------- console (codes Hayes) */
@@ -974,10 +991,11 @@ const Commentateur = (() => {
         appel.sortant = true;
         const net = etat && etat.net;
         appel.fai = appel.numero === ISP_NUMBER || !!(net && net.isp_number && net.isp_number === appel.numero);
+        appel.oracle = !appel.fai && (appel.numero === ORACLE_NUMBER || !!(net && (net.services || []).some(([n, k]) => n === appel.numero && k === "oracle")));
         const ent = net && (net.directory || []).find((x) => x.number === appel.numero);
         if (ent && ent.name) appel.nom = ent.name;
         const num = /^\d{10}$/.test(appel.numero) ? appel.numero.replace(/(\d{2})(?=\d)/g, "$1 ") : m[1];
-        dire(appel.fai ? "numerotation_fai" : "numerotation", { num }, { prio: 1 });
+        dire(appel.fai ? "numerotation_fai" : appel.oracle ? "numerotation_oracle" : "numerotation", { num }, { prio: 1 });
       } else if (/^Appel entrant simulé/.test(texte) || /^RING\b/.test(texte)) {
         if (!appel || appel.fini || appel.clos) nouvelAppel();
         appel.sortant = false;

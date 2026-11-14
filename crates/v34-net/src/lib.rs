@@ -19,6 +19,7 @@
 //! pour l'accès Internet par le modem « FAI », voir [`tunnel`].
 
 pub mod auth;
+pub mod bbs;
 pub mod central;
 pub mod crypto;
 pub mod g711;

@@ -17,6 +17,7 @@ const B: (&str, &str, &str) = ("bob", "mot-de-passe-bob", "0612345678");
 const C: (&str, &str, &str) = ("charlie", "mot-de-passe-charlie", "0700000000");
 const ISP: &str = "0836154286";
 const ECHO: &str = "0800000000";
+const ORACLE: &str = "0836672253";
 
 fn start_server() -> ServerHandle {
     set_level(Level::Error);
@@ -216,6 +217,7 @@ fn special_number_answers(number: &str) {
     let CentralEvent::Registered { services, .. } = ev else { unreachable!() };
     assert!(services.contains(&(ISP.to_string(), "fai".to_string())), "FAI annoncé : {services:?}");
     assert!(services.contains(&(ECHO.to_string(), "echo".to_string())), "ligne de test annoncée");
+    assert!(services.contains(&(ORACLE.to_string(), "oracle".to_string())), "3615 ORACLE annoncé");
     assert_eq!(c.isp_number(), Some(ISP));
 
     c.dial(number).unwrap();
@@ -266,6 +268,11 @@ fn le_fai_decroche_et_emet_de_l_audio() {
 #[test]
 fn la_ligne_de_test_decroche_et_emet_de_l_audio() {
     special_number_answers(ECHO);
+}
+
+#[test]
+fn l_oracle_decroche_et_emet_de_l_audio() {
+    special_number_answers(ORACLE);
 }
 
 /// Fait tourner les clients jusqu'à ce que `pred` soit vrai (ou 5 s).
@@ -332,15 +339,26 @@ fn acces_fai_des_comptes_du_site() {
         _ => unreachable!(),
     }
     assert_eq!(server.stats().modem_calls, 0);
+    // 3615 ORACLE aussi (par défaut, il est réservé aux abonnés du FAI).
+    g.dial(ORACLE).unwrap();
+    match wait_for(&mut g, &mut [], "refus de l'oracle", |e| matches!(e, CentralEvent::HungUp { .. })) {
+        CentralEvent::HungUp { reason, .. } => assert_eq!(reason, HangupReason::Forbidden),
+        _ => unreachable!(),
+    }
+    assert_eq!(server.stats().modem_calls, 0);
     // La ligne de test reste accessible à tous.
     g.dial(ECHO).unwrap();
     wait_for(&mut g, &mut [], "écho décroche", |e| matches!(e, CentralEvent::Answered { .. }));
     g.hangup().unwrap();
     std::thread::sleep(Duration::from_millis(300));
 
-    // Accès accordé : pris en compte à chaud.
+    // Accès accordé : pris en compte à chaud, pour le FAI comme pour l'oracle.
     comptes.regler_fai("gaston", true).unwrap();
     std::thread::sleep(Duration::from_millis(200));
+    g.dial(ORACLE).unwrap();
+    wait_for(&mut g, &mut [], "l'oracle décroche", |e| matches!(e, CentralEvent::Answered { .. }));
+    g.hangup().unwrap();
+    std::thread::sleep(Duration::from_millis(300));
     g.dial(ISP).unwrap();
     wait_for(&mut g, &mut [], "le FAI décroche", |e| matches!(e, CentralEvent::Answered { .. }));
     // Accès retiré pendant l'appel : le central raccroche.

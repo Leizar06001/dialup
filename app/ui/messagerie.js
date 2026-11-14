@@ -43,22 +43,28 @@ function bbsLine(cls, who, text) {
   return div;
 }
 bbsLine("sys", "", "*** Bienvenue ! Appelle un abonné (contacts ci-contre, annuaire ou terminal du modem), puis discute ici une fois connecté.");
-bbsLine("sys", "", "*** En boucle locale, le modem distant te renvoie tes messages (écho)… et tes images.");
+bbsLine("sys", "", "*** En boucle locale, le modem distant te renvoie tes messages (écho)… et tes images. Au 08 36 67 22 53, c'est 3615 ORACLE qui répond.");
 
 function onChat({ from, text }) {
-  if (from === "local") { bbsLine("me", "<moi>", text); return; }
-  if (from === "system") { bbsLine("sys", "", "*** " + text); return; }
+  // Une ligne à nous (ou du système) clôt la ligne distante en cours : la
+  // suite du distant repart en dessous, sur une nouvelle ligne.
+  if (from === "local") { remoteLine = null; bbsLine("me", "<moi>", text); return; }
+  if (from === "system") { remoteLine = null; bbsLine("sys", "", "*** " + text); return; }
   if (from === "salon") {
     // « <nom> texte » : message d'un autre abonné du salon du FAI
     const m = /^<([^>]{1,40})> ?(.*)$/.exec(text);
     if (m) bbsLine("them", `<${m[1]}>`, m[2]); else bbsLine("them", "", text);
     return;
   }
-  // Flux distant : on assemble jusqu'au retour à la ligne
+  // Flux distant : on assemble jusqu'au retour à la ligne (3615 ORACLE
+  // écrit ainsi ses réponses au fil de l'eau, chaque ligne précédée d'un
+  // retour à la ligne). La ligne n'est créée qu'au premier caractère.
   const parts = text.split("\n");
   parts.forEach((part, i) => {
-    if (!remoteLine) remoteLine = bbsLine("them", "<distant>", "");
-    remoteLine.lastChild.textContent += part;
+    if (part) {
+      if (!remoteLine) remoteLine = bbsLine("them", "<distant>", "");
+      remoteLine.lastChild.textContent += part;
+    }
     if (i < parts.length - 1) remoteLine = null;
   });
   bbsOut.scrollTop = bbsOut.scrollHeight;
@@ -137,6 +143,9 @@ $("dir-list").addEventListener("click", (e) => {
   invoke("at_command", { line: "ATDT" + b.dataset.num }).catch((err) => bbsLine("sys", "", "*** " + err));
 });
 let dirKey = null, dirAsked = false;
+/** Noms des numéros spéciaux annoncés par le central (service → nom) */
+const DIR_NAMES = { fai: "Fournisseur d'accès (Internet)", echo: "Ligne de test (écho)", oracle: "3615 ORACLE · voyance 1998" };
+const ORACLE_NUMBER = "0836672253";
 function renderDir(net) {
   // Ne reconstruire la liste que si elle change (sinon les clics se perdent).
   const key = JSON.stringify(net ? [net.registered, net.number, net.directory, net.services, net.server, net.isp_number] : null);
@@ -153,7 +162,9 @@ function renderDir(net) {
   if (!net || !net.registered) {
     setText("dir-title", "Contacts");
     setText("dir-count", "");
-    list.innerHTML = fai + `<div class="dir-note">${net ? "Connexion au central en cours…" :
+    // En boucle locale, le modem simulé joue aussi l'oracle (hors ligne : les cartes)
+    const oracle = net ? "" : `<div class="dir-row online"><i class="dot"></i><span class="who">${DIR_NAMES.oracle} <small>· simulé</small></span><span class="num">${fmtNum(ORACLE_NUMBER)}</span><button data-num="${ORACLE_NUMBER}">☎ Appeler</button></div>`;
+    list.innerHTML = fai + oracle + `<div class="dir-note">${net ? "Connexion au central en cours…" :
       "Tu es en <b>boucle locale</b> : pas de central, donc pas d'autres abonnés. Tous les numéros répondent ici (modem simulé) : compose-les dans le terminal du modem.<br><br>Le badge <b>BOUCLE LOCALE</b> de la fenêtre du modem te connecte à ton central."}</div>`;
     return;
   }
@@ -176,9 +187,8 @@ function renderDir(net) {
   const svc = svcAll.filter(([, kind]) => kind !== "fai");
   if (svc.length) {
     html += `<div class="dir-sep">Numéros spéciaux</div>`;
-    const names = { fai: "Fournisseur d'accès (Internet)", echo: "Ligne de test (écho)" };
     for (const [num, kind] of svc) {
-      html += `<div class="dir-row online"><i class="dot"></i><span class="who">${esc(names[kind] || kind)}</span><span class="num">${fmtNum(num)}</span><button data-num="${esc(num)}">☎ Appeler</button></div>`;
+      html += `<div class="dir-row online"><i class="dot"></i><span class="who">${esc(DIR_NAMES[kind] || kind)}</span><span class="num">${fmtNum(num)}</span><button data-num="${esc(num)}">☎ Appeler</button></div>`;
     }
   }
   list.innerHTML = html;

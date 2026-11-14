@@ -34,6 +34,11 @@ Autour du modem, tout un petit monde « années 90 » :
   formes, ~250 octets l'image, 2 à 3 images par seconde).
 - **Un salon de discussion** où se retrouvent tous les abonnés connectés au
   FAI, façon IRC ou 3615.
+- **3615 ORACLE** : au `0836672253`, une intelligence artificielle qu'on ne
+  joint qu'au modem, persuadée qu'on est en 1998 (le Minitel, le franc, la
+  Coupe du monde…) ; au-delà, elle ne voit que des brumes. On lui parle dans
+  la messagerie, elle répond à la vitesse d'un Minitel, 2,23 F la minute
+  (pour de rire).
 
 ## Télécharger l'appli
 
@@ -72,8 +77,8 @@ d'abonné.
 
 ```
 crates/v34-core     moteur V.8 / V.34 / V.90 : DSP, machine d'états, LAPM, simulateur de ligne
-crates/v34-net      audio sur IP (G.711/UDP, gigue), signalisation du central, tunnel
-crates/v34-server   central téléphonique, modem du FAI, web 1998, salon, site d'inscription (pour un VPS)
+crates/v34-net      audio sur IP (G.711/UDP, gigue), signalisation du central, tunnel, trames BBS (chat)
+crates/v34-server   central téléphonique, modem du FAI, web 1998, salon, 3615 ORACLE, site d'inscription (pour un VPS)
 crates/v34-cli      ligne de commande : deux modems en local, WAV, appels via le central
 app/                l'appli Tauri v2 (backend Rust dans src-tauri, interface statique dans ui)
 deploy/             installation du central sur un VPS (systemd) et du site d'inscription (Docker)

@@ -557,9 +557,13 @@ fn pages_legales_presentes_et_liees_partout() {
         assert!(c.contains(attendu), "conditions : {attendu} absent");
     }
     let v = texte(&get(p, "/confidentialite"));
-    for attendu in ["empreinte", "48 heures", "jusqu'à sa suppression", "durée de rétention", "débogage", "CNIL", "v34abo", "strictement nécessaires", "GitHub", "serveur d'envoi d'e-mails", "effacement"] {
+    for attendu in ["empreinte", "48 heures", "jusqu'à sa suppression", "durée de rétention", "débogage", "CNIL", "v34abo", "strictement nécessaires", "GitHub", "serveur d'envoi d'e-mails", "effacement", "3615 ORACLE", "OpenRouter", "DeepSeek", "le temps de l'appel"] {
         assert!(v.contains(attendu), "confidentialité : {attendu} absent");
     }
+    // 3615 ORACLE dans le tableau des services et dans l'aide
+    assert!(texte(&get(p, "/")).contains("3615 ORACLE"));
+    let a = texte(&get(p, "/aide"));
+    assert!(a.contains("<h3>3615 ORACLE</h3>") && a.contains("08 36 67 22 53") && a.contains("/fin"));
 
     // Webring : redirection au hasard vers un membre.
     let r = get(p, "/webring/hasard");

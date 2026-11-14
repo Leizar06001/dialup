@@ -27,6 +27,9 @@ const SCOPE_LEN: usize = 256;
 /// Numéro du FAI (comme sur le serveur du VPS) : en l'appelant, le flux du
 /// modem transporte un tunnel vers Internet au lieu du chat BBS.
 pub const ISP_NUMBER: &str = "0836154286";
+/// 3615 ORACLE (08 36 « ORACLE ») : un correspondant ordinaire pour le
+/// modem (chat BBS) ; en boucle locale, le distant simulé joue l'oracle.
+pub const ORACLE_NUMBER: &str = v34_server::config::ORACLE_NUMERO;
 /// Port du proxy local (SOCKS5 + HTTP CONNECT) que le navigateur utilise.
 pub const PROXY_PORT: u16 = 1080;
 
@@ -236,6 +239,8 @@ pub struct UiState {
     pub incoming: Option<String>,
     /// Visiophone : correspondant, cadence, débits
     pub visio: crate::visio::VisioUi,
+    /// L'appel en cours est pour 3615 ORACLE
+    pub oracle: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -334,6 +339,8 @@ pub struct Engine {
     /// Réseau : on joue le retour d'appel tant que l'autre n'a pas décroché
     ringback: bool,
     visio: crate::visio::Visio,
+    /// Appel en cours vers 3615 ORACLE (mode d'emploi affiché à CONNECT)
+    oracle_call: bool,
 }
 
 fn fmt_speed(x: f64) -> String {
@@ -396,6 +403,7 @@ impl Engine {
             counters: Counters::default(),
             ringback: false,
             visio: Default::default(),
+            oracle_call: false,
         }
     }
 
@@ -779,6 +787,7 @@ impl Engine {
                 }
                 self.link.new_call(Role::Answer, &self.cfg);
                 self.session = Session::Bbs;
+                self.oracle_call = false;
                 self.stop_tunnel();
                 self.reset_call_flags();
                 if self.auto_answer {
@@ -1095,7 +1104,15 @@ impl Engine {
         let digits: String = number.chars().filter(|c| c.is_ascii_digit()).collect();
         let isp = self.link.net_info().and_then(|i| i.isp_number).unwrap_or_else(|| ISP_NUMBER.to_string());
         self.session = if digits == isp || digits == ISP_NUMBER { Session::Internet } else { Session::Bbs };
-        self.link.set_remote_service(if self.session == Session::Internet { crate::link::RemoteService::Isp } else { crate::link::RemoteService::Echo });
+        // 3615 ORACLE : un correspondant comme un autre (chat BBS) ; en
+        // boucle locale, le distant simulé le joue (hors ligne).
+        let services = self.link.net_info().map(|i| i.services).unwrap_or_default();
+        self.oracle_call = digits == ORACLE_NUMBER || services.iter().any(|(n, k)| *n == digits && k == "oracle");
+        self.link.set_remote_service(match self.session {
+            Session::Internet => crate::link::RemoteService::Isp,
+            Session::Bbs if self.oracle_call => crate::link::RemoteService::Oracle,
+            Session::Bbs => crate::link::RemoteService::Echo,
+        });
         self.stop_tunnel();
         if self.link.is_network() {
             if !self.link.net_info().map(|i| i.registered).unwrap_or(false) {
@@ -1129,6 +1146,10 @@ impl Engine {
             return false;
         }
         self.link.new_call(Role::Answer, &self.cfg);
+        if std::mem::take(&mut self.oracle_call) {
+            // l'appel simulé vient d'un abonné, pas de l'oracle
+            self.link.set_remote_service(crate::link::RemoteService::Echo);
+        }
         self.script = ToneScript::incoming();
         self.script_kind = ScriptKind::Ringing;
         self.reset_call_flags();
@@ -1323,6 +1344,10 @@ impl Engine {
                     if self.session == Session::Internet && self.tunnel.is_none() {
                         self.start_tunnel(*tx_rate);
                     }
+                    if self.oracle_call && self.session == Session::Bbs {
+                        self.console("3615 ORACLE en ligne : pose ta question dans la MESSAGERIE (elle s'ouvre toute seule)", "info");
+                        self.chat("system", "3615 ORACLE en ligne : tape ta question en bas, puis Entrée (la touche ENVOI). /fin pour raccrocher.".into());
+                    }
                 }
                 ModemEvent::Disconnected { .. } | ModemEvent::PhaseChanged(Phase::Failed) => {
                     self.stop_tunnel();
@@ -1438,6 +1463,7 @@ impl Engine {
             ppp: self.ppp.map(|t0| ppp_stage(t0.elapsed()).map_or("Connecté", |i| PPP_STEPS[i].1)),
             audio_device: self.speaker.device_name(),
             visio: self.visio.ui(&self.visio_ctx(), Instant::now()),
+            oracle: self.oracle_call && self.session == Session::Bbs,
         };
         let _ = self.app.emit("v34:state", state);
     }

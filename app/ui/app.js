@@ -1026,6 +1026,9 @@ $("dir-list").addEventListener("click", (e) => {
   if (b) dialFromDir(b.dataset.num);
 });
 let dirKey = null;
+/** Noms des numéros spéciaux annoncés par le central (service → nom) */
+const DIR_NAMES = { fai: "Fournisseur d'accès (Internet)", echo: "Ligne de test (écho)", oracle: "3615 ORACLE · voyance 1998" };
+const ORACLE_NUMBER = "0836672253";
 function renderDir(net) {
   // Ne reconstruire la liste que si elle change (sinon les clics se perdent).
   const key = JSON.stringify(net ? [net.registered, net.number, net.directory, net.services, net.server, net.isp_number] : null);
@@ -1041,8 +1044,10 @@ function renderDir(net) {
   if (!net || !net.registered) {
     setText("dir-title", "ANNUAIRE");
     setText("dir-count", "");
-    list.innerHTML = fai + `<div class="dir-note">${net ? "Connexion au central en cours…" :
-      "Tu es en <b>boucle locale</b> : pas de central, donc pas d'annuaire. Tous les numéros répondent ici (modem simulé), le 08 36 15 42 86 compris.<br><br>Clique sur le badge en haut à droite pour te connecter à ton central."}</div>`;
+    // En boucle locale, le modem simulé joue aussi l'oracle (hors ligne : les cartes)
+    const oracle = net ? "" : `<div class="dir-row online"><i class="dot"></i><span class="who">${DIR_NAMES.oracle} <small>· simulé</small></span><span class="num">${fmtNum(ORACLE_NUMBER)}</span><button class="key" data-num="${ORACLE_NUMBER}">☎ APPELER</button></div>`;
+    list.innerHTML = fai + oracle + `<div class="dir-note">${net ? "Connexion au central en cours…" :
+      "Tu es en <b>boucle locale</b> : pas de central, donc pas d'annuaire. Tous les numéros répondent ici (modem simulé), le 08 36 15 42 86 et le 08 36 67 22 53 compris.<br><br>Clique sur le badge en haut à droite pour te connecter à ton central."}</div>`;
     return;
   }
   setText("dir-title", `ANNUAIRE · ${net.server.replace(/:\d+$/, "")}`);
@@ -1064,9 +1069,8 @@ function renderDir(net) {
   const svc = svcAll.filter(([, kind]) => kind !== "fai"); // le FAI est déjà en tête
   if (svc.length) {
     html += `<div class="dir-sep">── NUMÉROS SPÉCIAUX ──</div>`;
-    const names = { fai: "Fournisseur d'accès (Internet)", echo: "Ligne de test (écho)" };
     for (const [num, kind] of svc) {
-      html += `<div class="dir-row online"><i class="dot"></i><span class="who">${esc(names[kind] || kind)}</span><span class="num">${fmtNum(num)}</span><button class="key" data-num="${esc(num)}">☎ APPELER</button></div>`;
+      html += `<div class="dir-row online"><i class="dot"></i><span class="who">${esc(DIR_NAMES[kind] || kind)}</span><span class="num">${fmtNum(num)}</span><button class="key" data-num="${esc(num)}">☎ APPELER</button></div>`;
     }
   }
   list.innerHTML = html;

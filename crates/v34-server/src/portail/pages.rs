@@ -136,7 +136,7 @@ pub fn gabarit(nom_fai: &str, titre: &str, visites: u64, contenu: &str) -> Strin
 <div class="page">
 <div class="tete"><h1>{debut} <span>{fin}</span></h1><p>Votre accès à l'autoroute de l'information… jusqu'à 56 000 bit/s</p></div>
 <div class="menu"><a href="/">Accueil</a><a href="/inscription">Inscription</a><a href="/compte">Mon compte</a><a href="/telechargement">Logiciel</a><a href="/etat">État du réseau</a><a href="/livre">Livre d'or</a><a href="/aide">Aide</a></div>
-<div class="defile"><span>*** NOUVEAU : le 56K (V.90) est arrivé ! Jusqu'à 56 000 bit/s en réception au 08 36 15 42 86 *** NOUVEAU : le visiophone V.Hallucination entre abonnés *** Inscription GRATUITE, sans frais de mise en service *** Le salon de discussion du FAI est ouvert 24 h/24 *** Mode « web 1998 » : Internet comme avant, en plus léger *** Choisissez votre numéro de téléphone ! ***</span></div>
+<div class="defile"><span>*** NOUVEAU : le 56K (V.90) est arrivé ! Jusqu'à 56 000 bit/s en réception au 08 36 15 42 86 *** NOUVEAU : 3615 ORACLE, l'avenir en direct au 08 36 67 22 53 *** NOUVEAU : le visiophone V.Hallucination entre abonnés *** Inscription GRATUITE, sans frais de mise en service *** Le salon de discussion du FAI est ouvert 24 h/24 *** Mode « web 1998 » : Internet comme avant, en plus léger *** Choisissez votre numéro de téléphone ! ***</span></div>
 <div class="corps">
 {contenu}
 </div>
@@ -229,6 +229,7 @@ vous appelez les autres abonnés pour discuter, échanger des fichiers et vous v
 <tr><td>🌐 Accès Internet</td><td>Appelez TINYVERSE, en tête de l'annuaire du logiciel : le modem du FAI décroche et vous donne accès au Web, en mode <i>moderne</i> ou <i>web 1998</i> (pages allégées, images en 256 couleurs ou « V.Hallucination »). Sur validation de l'opérateur.</td></tr>
 <tr><td>🚀 56K (V.90) <span class="nouveau">NOUVEAU !</span></td><td>Le modem du FAI est raccordé en numérique : jusqu'à 56 000 bit/s en réception sur une ligne parfaite, environ 40 000 sur une ligne urbaine (l'envoi reste en V.34). Avec la vraie poignée de main de 1999, ses sifflements et son bourdonnement.</td></tr>
 <tr><td>🗨 Salon du FAI</td><td>Tous les abonnés connectés au FAI discutent ensemble.</td></tr>
+<tr><td>🔮 3615 ORACLE <span class="nouveau">NOUVEAU !</span></td><td>Au 08 36 67 22 53 : une intelligence artificielle persuadée qu'on est en 1998. Posez-lui vos questions dans la messagerie, elle répond à la vitesse d'un Minitel. Au-delà de 1998, elle ne voit que des brumes. 2,23 F la minute (pour de rire : c'est gratuit). Avec l'accès Internet, une trentaine de questions par jour.</td></tr>
 <tr><td>📞 Ligne de test</td><td>Le 08 00 00 00 00 vous renvoie tout ce que vous lui envoyez.</td></tr>
 </table>
 <h2>Tarifs</h2>
@@ -459,11 +460,19 @@ Tout ce que vous voyez passer est réellement modulé et démodulé, et le modem
 et on se voit au <b>visiophone V.Hallucination</b> : votre webcam, ou la mire, redessinée en une quarantaine de formes géométriques (environ 250 octets l'image), 2 à 3 images par seconde.
 La caméra reste éteinte tant que vous n'avez pas choisi CAMÉRA. Pendant une session avec le FAI, la messagerie devient le salon de discussion de tous les abonnés connectés au FAI.</p>
 <p>Pour qu'un abonné puisse vous appeler, laissez le logiciel connecté au central : avec l'interrupteur <b>DIP 2 « RÉP. AUTO »</b> sur ON, le modem décroche tout seul après deux sonneries.</p>
+<h3>3615 ORACLE</h3>
+<p>Une intelligence artificielle qu'on ne joint qu'au modem, et qui est persuadée qu'on est en 1998 : le Minitel, le franc, Windows 98, la Coupe du monde…
+Ce qui vient après, elle ne fait que l'entrevoir, comme une voyante dans le brouillard.</p>
+<ol><li>En bas de l'<b>ANNUAIRE</b>, dans les numéros spéciaux : <b>3615 ORACLE</b> ☎ APPELER (le <b>08 36 67 22 53</b>, « ORACLE » sur le clavier du téléphone).</li>
+<li>Après CONNECT, la <b>MESSAGERIE</b> s'ouvre sur l'écran d'accueil du service. Tapez votre question en bas, puis Entrée (la touche ENVOI du Minitel) : l'oracle répond en quelques phrases, à la vitesse d'un Minitel, et se souvient de la conversation jusqu'à ce que vous raccrochiez.</li>
+<li><code>/aide</code> affiche le GUIDE, <code>/fin</code> raccroche. Le compteur affiche 2,23 F la minute, mais rien n'est jamais facturé.</li></ol>
+<p>Réservé aux abonnés qui ont l'accès Internet, une trentaine de questions par jour. Si l'IA est injoignable, l'oracle tire les cartes à la place, et le dit.
+Vos questions sont transmises à OpenRouter et au fournisseur du modèle pour fabriquer la réponse (voir la <a href="/confidentialite">politique de confidentialité</a>) : n'y mettez rien de personnel.</p>
 <h3>Je n'arrive pas à me connecter</h3>
 <ul><li>Vérifiez le nom d'abonné (sensible aux majuscules) et le mot de passe. Changé sur ce site ? Changez-le aussi dans le logiciel s'il était mémorisé.</li>
 <li>Le central utilise le port <b>UDP 3434</b> : certains réseaux d'entreprise le bloquent.</li></ul>
 <h3>Ça sonne occupé</h3>
-<p>Au 08 36 15 42 86 : votre accès Internet n'est pas encore activé par l'opérateur, ou tous les modems du FAI sont occupés.
+<p>Au 08 36 15 42 86 ou au 08 36 67 22 53 : votre accès Internet n'est pas encore activé par l'opérateur, ou tous les modems du central sont occupés.
 Chez un abonné : il est déjà en ligne. Et trois notes montantes, c'est que le numéro n'est attribué à personne, ou que son abonné n'est pas connecté.</p>
 <h3 id="heberger">Héberger votre propre central</h3>
 <p>Le central, le FAI et ce site sont des logiciels libres (licence MIT).{src}
