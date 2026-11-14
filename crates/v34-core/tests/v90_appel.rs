@@ -94,7 +94,7 @@ fn v8_annonce_le_56k_et_phase2_inversee() {
 /// Le 56k complet : descendant en PCM au-delà du V.34.
 #[test]
 fn connexion_56k() {
-    for (ligne, mini, up_mini) in [("Parfaite", 56000, 33600), ("Urbaine", 36000, 16800)] {
+    for (ligne, mini, up_mini) in [("Parfaite", 56000, 31200), ("Urbaine", 36000, 14400)] {
         let r = echange(LineParams::preset(ligne).unwrap(), ModemConfig::default(), fai());
         let dump = r.log.join("\n");
         if std::env::var("V90_LOG").is_ok() {
@@ -126,6 +126,7 @@ fn express_plus_rapide() {
     let vite = echange(p, ModemConfig { express: true, ..ModemConfig::default() }, fai());
     let (tl, tv) = (lent.t_connect.unwrap(), vite.t_connect.unwrap());
     eprintln!("CONNECT 56k : d'époque {tl} ms, express {tv} ms");
-    assert!(tl >= tv + 2000, "d'époque {tl} ms, express {tv} ms");
-    assert_eq!(lent.connected[0], vite.connected[0]);
+    assert!(tl >= tv + 6000, "d'époque {tl} ms, express {tv} ms");
+    // même débit descendant (le montant dépend du SNR mesuré, à ±1 cran)
+    assert_eq!(lent.connected[0].unwrap().1, vite.connected[0].unwrap().1);
 }

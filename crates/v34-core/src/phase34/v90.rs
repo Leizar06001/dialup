@@ -32,7 +32,7 @@ const STALL_MS: u64 = 9000;
 /// - d'époque : 64 segments (un Ucode sur deux), plus longs pour les petits
 ///   niveaux (le bruit y pèse le plus), un symbole de référence sur quatre
 ///   comme les modems de 1999 qui guettaient bits volés et atténuateurs
-///   numériques — 0,8 s par passage, écouté trois fois.
+///   numériques — 1,1 s par passage, écouté trois fois.
 pub(crate) fn our_dil(express: bool) -> DilDescriptor {
     let sp = (0..13).map(|i| (0b1_0110_0101_1101_u32 >> i) & 1 == 1).collect();
     if express {
@@ -41,7 +41,7 @@ pub(crate) fn our_dil(express: bool) -> DilDescriptor {
     DilDescriptor {
         sp,
         tp: vec![true, true, true, false],
-        h: [23, 23, 15, 15, 11, 11, 11, 11],
+        h: [31, 31, 23, 23, 15, 15, 15, 15],
         refs: [104; 8],
         train: (1..128).step_by(2).map(|u| u as u8).collect(),
     }
@@ -50,8 +50,11 @@ pub(crate) fn our_dil(express: bool) -> DilDescriptor {
 /// Pauses du modem analogique en mode d'époque (ms) : réflexion après Jd
 /// (§9.3.2.7 : jusqu'à 5 s permises), SCR pendant le calcul des niveaux
 /// (§9.4.2.2 : jusqu'à 4 s).
-const THINK_AFTER_JD_MS: u64 = 1000;
-const SCR_BEFORE_CP_MS: f64 = 2000.0;
+const THINK_AFTER_JD_MS: u64 = 1500;
+const SCR_BEFORE_CP_MS: f64 = 3500.0;
+/// TRN de phase 3 de l'abonné en mode d'époque (≥ 512T ; la norme permet
+/// jusqu'à 4 s de MD + TRN) : long souffle, et l'annuleur d'écho en profite.
+const TRN3_EPOQUE: usize = 4096;
 
 /// Débit montant : le plus grand activé des deux côtés, sous `limit`.
 fn up_rate(mask: u16, limit: u32) -> u32 {
@@ -199,7 +202,8 @@ impl P34 {
         burst.extend(seq_s(128, false));
         burst.extend(seq_s(16, true));
         burst.extend(seq_pp().iter().map(|x| *x * std::f32::consts::SQRT_2));
-        self.send_burst(burst, TxSt::Trn { left: TRN3_LEN }, "S S̄ PP");
+        let trn = if express { TRN3_LEN } else { TRN3_EPOQUE };
+        self.send_burst(burst, TxSt::Trn { left: trn }, "S S̄ PP");
         self.goto(Step::A3Send);
     }
 
