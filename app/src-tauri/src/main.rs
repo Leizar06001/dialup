@@ -161,6 +161,18 @@ fn send_file(state: State<AppState>, name: String, data: Vec<u8>) -> Result<(), 
     state.send(EngineCmd::SendFile(name, data))
 }
 
+/// Panneau CONFIG : interrupteur DIP 1 (56K V.90) et molette DÉBIT MAX
+/// (bit/s). Pris en compte au prochain appel ; renvoie la configuration
+/// obtenue, que le panneau affiche.
+#[tauri::command]
+fn set_modem_config(state: State<AppState>, v90: bool, max_rate: u32) -> Result<v34_core::ModemConfig, String> {
+    if !(2400..=56000).contains(&max_rate) {
+        return Err(format!("débit max hors limites : {max_rate} bit/s (2 400 à 56 000)"));
+    }
+    let cfg = engine::modem_config(v90, max_rate);
+    state.send(EngineCmd::SetConfig(cfg.clone()))?;
+    Ok(cfg)
+}
 
 #[derive(Serialize)]
 struct AppInfo {
@@ -246,6 +258,7 @@ fn main() {
             send_chat,
             send_file,
             set_speed,
+            set_modem_config,
             open_browser,
             net_connect,
             net_local,

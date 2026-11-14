@@ -679,3 +679,137 @@ body.mode-local .topbar {
 #tip p { margin: 0 0 6px; }
 #tip i { display: block; font: 15px/1.25 var(--screen-font); font-style: normal; color: var(--amber); white-space: pre-line; border-top: 1px dashed rgba(103,247,228,0.25); padding-top: 4px; }
 #tip i:empty { display: none; }
+
+/* ------------------------------------------------------------------ configuration : face arrière
+   Bouton CONFIG sur la façade ; la fenêtre montre le dos du modem : bloc
+   d'interrupteurs DIP rouge et molette à tambour pour le débit max. */
+.key.cfg-key { flex-direction: column; gap: 4px; padding: 5px 8px 4px; font-size: 9px; letter-spacing: 1.5px; }
+.cfg-icon {
+  display: flex; gap: 2px; padding: 2px 3px; border-radius: 1px;
+  background: linear-gradient(#e0463a, #9c1a12);
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.45);
+}
+.cfg-icon i { width: 3px; height: 8px; background: linear-gradient(#f6f1e8 0 45%, #2c0705 45%); }
+.cfg-icon i:nth-child(even) { background: linear-gradient(#2c0705 55%, #f6f1e8 55%); }
+
+.cfg-box { width: min(600px, 94vw); outline: none; }
+.cfg-plate {
+  display: flex; align-items: center; justify-content: space-around; gap: 28px;
+  padding: 18px 20px 14px;
+  border-radius: 6px;
+  background:
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.015) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, #1a1816, #121110);
+  border: 1px solid #000;
+  box-shadow: inset 0 2px 8px rgba(0,0,0,0.85), 0 1px 0 rgba(255,255,255,0.06);
+}
+
+/* Bloc DIP : 8 glissières blanches, ON en haut */
+.dip-unit { display: flex; flex-direction: column; gap: 7px; }
+.dip {
+  position: relative;
+  display: grid; grid-template-columns: repeat(8, 26px); column-gap: 6px;
+  padding: 20px 10px 6px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #e04a3d 0%, #c62a1f 16%, #b0221a 70%, #86150e 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), inset 0 -2px 0 rgba(0,0,0,0.3), 0 0 0 1px #3a0805, 0 4px 8px rgba(0,0,0,0.6);
+}
+.dip-on { position: absolute; left: 11px; top: 5px; font: 700 10px/1 var(--label-font); letter-spacing: 1.5px; color: #fff3ea; }
+.dip-on b { font-size: 8px; vertical-align: 1px; }
+.dip-col {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  margin: 0; padding: 0; border: 0; background: none; font: inherit; color: inherit;
+}
+button.dip-col { cursor: pointer; outline: none; }
+.dip-slot {
+  position: relative; width: 18px; height: 40px; border-radius: 2px;
+  background: linear-gradient(90deg, #1a0302, #2e0806 50%, #1a0302);
+  box-shadow: inset 0 2px 3px rgba(0,0,0,0.9), 0 1px 0 rgba(255,255,255,0.2);
+}
+.dip-knob {
+  position: absolute; left: 2px; right: 2px; top: 20px; height: 18px; /* OFF : en bas */
+  border-radius: 1px;
+  background: linear-gradient(180deg, #ffffff, #ece7dd 55%, #c9c2b5);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.7), inset 0 -1px 0 rgba(0,0,0,0.15);
+  transition: top 70ms ease-out;
+}
+.dip-col.on .dip-knob { top: 2px; }
+.dip-n { font: 700 11px/1 var(--label-font); color: #fff3ea; }
+button.dip-col:hover .dip-knob { box-shadow: 0 1px 2px rgba(0,0,0,0.7), 0 0 6px rgba(255,255,255,0.45); }
+button.dip-col:focus-visible .dip-slot { outline: 2px solid var(--vfd); outline-offset: 2px; }
+/* Interrupteurs réservés : glissières ternies, sous un ruban d'usine */
+.dip-col.res { cursor: not-allowed; }
+.dip-col.res .dip-knob { background: linear-gradient(180deg, #bfb8ab, #a39a8b 55%, #857c6e); box-shadow: 0 1px 1px rgba(0,0,0,0.6); }
+.dip-col.res .dip-n { opacity: 0.55; }
+.dip-tape {
+  position: absolute; top: 34px; height: 20px; left: 39px; right: 6px;
+  display: grid; place-items: center;
+  font: 700 9px/1 var(--label-font); letter-spacing: 2px; color: #6e140c;
+  background: linear-gradient(rgba(244,233,196,0.7), rgba(222,206,160,0.7));
+  box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+  transform: rotate(-1.5deg);
+  pointer-events: none;
+}
+/* Sérigraphie sous le bloc */
+.dip-legend {
+  display: grid; grid-template-columns: 26px 1fr; column-gap: 6px; padding: 0 10px;
+  font: 700 10px/1.15 var(--label-font); letter-spacing: 1px; text-align: center;
+}
+.dip-l1 { color: #f1e6d3; }
+.dip-lres { position: relative; padding-top: 9px; color: var(--engrave-dim); letter-spacing: 3px; }
+.dip-lres::before { content: ""; position: absolute; left: 4px; right: 4px; top: 0; height: 5px; border: 1px solid currentColor; border-top: 0; }
+
+/* Molette à tambour : DÉBIT MAX */
+.rate {
+  display: grid; grid-template-columns: auto auto;
+  grid-template-areas: "t t" "u ." "w n" "d .";
+  align-items: center; column-gap: 8px; row-gap: 5px;
+}
+.rate-title { grid-area: t; justify-self: center; margin-bottom: 2px; font: 700 11px/1 var(--label-font); letter-spacing: 3px; color: var(--engrave); }
+.rate-unit { grid-area: n; font: 700 11px/1 var(--label-font); letter-spacing: 2px; color: var(--engrave); }
+#rate-up { grid-area: u; }
+#rate-down { grid-area: d; }
+.wheel-btn {
+  width: 100%; height: 17px; padding: 0;
+  border-radius: 3px; border: 1px solid #0b0a09;
+  font-size: 9px; line-height: 1; color: var(--key-text);
+  background: linear-gradient(#ece4d6, var(--key) 45%, var(--key-lo));
+  box-shadow: 0 2px 0 #4e463c, 0 3px 4px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.7);
+  cursor: pointer;
+}
+.wheel-btn:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 0 0 #4e463c, inset 0 1px 0 rgba(255,255,255,0.5); }
+.wheel-btn:disabled { opacity: 0.4; cursor: default; }
+.wheel {
+  grid-area: w; position: relative; width: 116px; height: 78px; overflow: hidden;
+  border-radius: 4px; border: 2px solid #050404;
+  background: linear-gradient(180deg, #050505, #1b1b1a 30%, #282826 50%, #1b1b1a 70%, #050505);
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.9), 0 1px 0 rgba(255,255,255,0.06);
+  cursor: ns-resize; outline: none;
+}
+.wheel:focus-visible { box-shadow: 0 0 0 2px var(--vfd), inset 0 0 10px rgba(0,0,0,0.9); }
+/* Fenêtre de lecture (filets rouges) et ombre du cylindre */
+.wheel::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 25px; height: 26px; z-index: 1; pointer-events: none;
+  border-top: 1px solid rgba(255,59,47,0.55); border-bottom: 1px solid rgba(255,59,47,0.55);
+}
+.wheel::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(180deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.3) 30%, transparent 40%, transparent 60%, rgba(0,0,0,0.3) 70%, rgba(0,0,0,0.9) 100%);
+}
+.wheel-drum { display: grid; grid-template-rows: repeat(3, 26px); justify-items: center; align-items: center; }
+.wheel-drum b, .wheel-drum span { font-family: var(--label-font); font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: 1px; white-space: nowrap; }
+.wheel-drum b { font-size: 24px; color: #f4eee2; }
+.wheel-drum span { font-size: 18px; color: #a39c90; transform: scaleY(0.72); cursor: pointer; }
+.wheel-drum.roll-dn { animation: drum-dn 120ms ease-out; }
+.wheel-drum.roll-up { animation: drum-up 120ms ease-out; }
+@keyframes drum-dn { from { transform: translateY(-26px); } }
+@keyframes drum-up { from { transform: translateY(26px); } }
+
+/* Ce que fera le modem au prochain appel */
+.cfg-eff {
+  margin: 2px 0 0; min-height: 1.6em; padding: 4px 10px;
+  border-radius: 4px; border: 2px solid #0a0908;
+  background: var(--vfd-bg); box-shadow: inset 0 0 10px rgba(0,0,0,0.9);
+  font-family: var(--screen-font); font-size: 18px; color: var(--vfd); text-shadow: 0 0 5px rgba(103,247,228,0.5);
+}
+.cfg-note { margin: 0; font-family: var(--screen-font); font-size: 17px; color: var(--amber); text-shadow: 0 0 5px rgba(255,179,71,0.5); }

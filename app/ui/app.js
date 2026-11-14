@@ -259,6 +259,98 @@ function updateNet(net) {
   if (net.registered && !updateNet.closed) { updateNet.closed = true; setTimeout(() => { netModal.hidden = true; }, 1200); }
 }
 
+/* ---------------------------------------------------------------- configuration (face arrière)
+   Interrupteur DIP 1 (56K V.90) et molette DÉBIT MAX, mémorisés sur ce PC
+   et envoyés au moteur au lancement puis à chaque changement. */
+/** Crans de la molette (bit/s) : paliers du V.90, puis ceux du V.34. */
+const RATES = [56000, 53333, 50667, 48000, 45333, 42667, 40000, 37333, 33600, 31200, 28800, 26400,
+  24000, 21600, 19200, 16800, 14400, 12000, 9600, 7200, 4800, 2400];
+const cfg = {
+  v90: store.get("cfg-v90") !== "0",
+  rate: RATES.includes(+store.get("cfg-debit")) ? +store.get("cfg-debit") : RATES[0],
+  eff: null, // configuration obtenue, renvoyée par le moteur
+  seq: 0,
+};
+const cfgModal = $("cfg-modal");
+function cfgSend() {
+  store.set("cfg-v90", cfg.v90 ? "1" : "0");
+  store.set("cfg-debit", String(cfg.rate));
+  const seq = ++cfg.seq;
+  invoke("set_modem_config", { v90: cfg.v90, maxRate: cfg.rate })
+    .then((c) => { if (seq === cfg.seq && c) { cfg.eff = c; cfgRender(); } })
+    .catch((e) => crt("Configuration : " + e, "ev warn"));
+}
+/** Ce que le modem fera au prochain appel (d'après la réponse du moteur). */
+function cfgSummary() {
+  const c = cfg.eff;
+  if (!c) return "";
+  if (c.v90) return `▸ 56K V.90 : jusqu'à ${kbit(c.max_rate_pcm)} en réception · V.34 : ${kbit(c.max_rate)}`;
+  return `▸ V.34 seul : jusqu'à ${kbit(c.max_rate)}` + (cfg.v90 ? ` · 56K impossible sous ${frInt(28000)}` : "");
+}
+function cfgRender() {
+  const sw = $("dip1");
+  sw.classList.toggle("on", cfg.v90);
+  sw.setAttribute("aria-checked", String(cfg.v90));
+  const i = RATES.indexOf(cfg.rate);
+  // Sur le tambour, une vraie espace fine : l'espace insécable étroite y est invisible.
+  const fin = (v) => frInt(v).replace(/\s/g, "\u2009");
+  setText("rate-prev", i > 0 ? fin(RATES[i - 1]) : "");
+  setText("rate-cur", fin(cfg.rate));
+  setText("rate-next", i < RATES.length - 1 ? fin(RATES[i + 1]) : "");
+  const wheel = $("rate-wheel");
+  wheel.setAttribute("aria-valuenow", String(cfg.rate));
+  wheel.setAttribute("aria-valuetext", kbit(cfg.rate));
+  $("rate-up").disabled = i === 0;
+  $("rate-down").disabled = i === RATES.length - 1;
+  setText("cfg-eff", cfgSummary());
+  tipRefresh();
+}
+/** Tourne la molette de `d` crans (positif : débit supérieur). */
+function cfgStep(d) {
+  const i = RATES.indexOf(cfg.rate), j = Math.max(0, Math.min(RATES.length - 1, i - d));
+  if (j === i) return;
+  cfg.rate = RATES[j];
+  // Le tambour roule : la nouvelle valeur arrive du dessus (débit supérieur) ou du dessous.
+  const drum = $("rate-drum");
+  drum.classList.remove("roll-dn", "roll-up");
+  void drum.offsetWidth;
+  drum.classList.add(d > 0 ? "roll-dn" : "roll-up");
+  cfgRender();
+  cfgSend();
+}
+$("dip1").addEventListener("click", () => { cfg.v90 = !cfg.v90; cfgRender(); cfgSend(); });
+$("rate-up").addEventListener("click", () => cfgStep(1));
+$("rate-down").addEventListener("click", () => cfgStep(-1));
+$("rate-prev").addEventListener("click", () => cfgStep(1));
+$("rate-next").addEventListener("click", () => cfgStep(-1));
+let wheelAcc = 0;
+$("rate-wheel").addEventListener("wheel", (e) => {
+  // Un cran tous les 40 px : un geste du pavé tactile ne fait pas défiler toute la molette.
+  e.preventDefault();
+  wheelAcc += e.deltaMode ? e.deltaY * 40 : e.deltaY;
+  const n = Math.trunc(wheelAcc / 40);
+  if (n) { wheelAcc -= n * 40; cfgStep(-n); }
+}, { passive: false });
+$("rate-wheel").addEventListener("keydown", (e) => {
+  const steps = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1, PageUp: 4, PageDown: -4, Home: RATES.length, End: -RATES.length };
+  if (!(e.key in steps)) return;
+  e.preventDefault();
+  cfgStep(steps[e.key]);
+});
+function cfgClose() {
+  cfgModal.hidden = true;
+  tipHide();
+  $("crt-input").focus();
+}
+// Le focus va à la fenêtre : Entrée et Échap marchent tout de suite, Tab mène aux réglages.
+$("btn-config").addEventListener("click", () => { cfgModal.hidden = false; $("cfg-box").focus(); });
+$("cfg-ok").addEventListener("click", cfgClose);
+cfgModal.addEventListener("click", (e) => { if (e.target === cfgModal) cfgClose(); });
+// Comme la fenêtre du central : Entrée valide, Échap ferme (les réglages sont déjà appliqués).
+cfgModal.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); cfgClose(); }
+});
+
 /* ---------------------------------------------------------------- échelle de temps */
 document.querySelectorAll("#speed-seg button").forEach((b) =>
   b.addEventListener("click", () => invoke("set_speed", { speed: +b.dataset.speed })));
@@ -420,11 +512,10 @@ function onState(s) {
 
   updateNet(s.net);
   updateMonitor(s);
-  if (tipKey) {
-    // Infobulle ouverte : seule la ligne « en direct » change.
-    const live = tip.querySelector("i"), v = tipLive(tipKey);
-    if (live && live.textContent !== v) live.textContent = v;
-  }
+  tipRefresh();
+  // Panneau CONFIG : pendant un appel, les réglages attendent le suivant.
+  const cfgNote = $("cfg-note"), quiet = s.call_state === "idle";
+  if (cfgNote.hidden !== quiet) cfgNote.hidden = quiet;
   renderDir(s.net);
   if (s.speed != null) {
     document.querySelectorAll("#speed-seg button").forEach((b) =>
@@ -677,6 +768,10 @@ const TIPS = {
   Phase3: ["Phase 3 · Égaliseur", "S et S̄ servent de repère, PP cale finement le rythme et la phase, puis TRN, un signal pseudo-aléatoire connu des deux côtés : l'égaliseur apprend à compenser les déformations de la ligne, l'annuleur d'écho aussi. J annonce la constellation (le « shhhh »)."],
   Phase4: ["Phase 4 · Débit final", "TRN sur la vraie constellation, puis MP (débit de données, précodage, mise en forme), E (accord) et B1 : la première trame de données brouillée."],
   Data: ["Données", "Les octets sont codés en treillis à 16 états, répartis sur une constellation jusqu'à 960 points (shell mapping) et protégés par LAPM : trames avec contrôle d'erreur et retransmission. Le modem surveille la qualité et renégocie si la ligne se dégrade (le « kshhhh »)."],
+  cfg: ["CONFIG · Face arrière", "Les interrupteurs DIP du dos du modem : 56K V.90 et débit maximum. Ils sont lus au décroché : un changement vaut pour l'appel suivant."],
+  dip1: ["DIP 1 · 56K V.90", "ON : le modem propose le V.90 pendant la négociation V.8 et peut recevoir jusqu'à 56 000 bit/s d'un FAI raccordé en numérique (l'émission reste en V.34). OFF : V.34 seul, 33 600 bit/s au mieux."],
+  dipres: ["DIP 2 à 8 · Réservé", "Réservé usine — ne pas modifier. Réglés en usine et sans effet sur ce modèle ; le technicien qui savait à quoi ils servaient est parti avec le mode d'emploi."],
+  debit: ["DÉBIT MAX", "Plafond du débit négocié, pour imiter un modem plus ancien ou brider la ligne. Le V.34 s'arrête à 33 600 bit/s ; au-dessus, seul le 56K (V.90) monte, par paliers de 2 667 bit/s, et il ne descend pas sous 28 000. Molette de la souris, ▲ ▼ ou flèches du clavier."],
 };
 const tip = document.createElement("div");
 tip.id = "tip";
@@ -686,6 +781,13 @@ let tipKey = null, tipEl = null;
 const kbit = (v) => (v ? `${frInt(v)} bit/s` : "—");
 /** Ligne « en direct » de l'infobulle, d'après le dernier état. */
 function tipLive(key) {
+  // Panneau CONFIG : la ligne en direct suit les réglages, pas l'état du modem.
+  if (key === "cfg" || key === "debit") return cfgSummary();
+  if (key === "dipres") return "○ OFF, scellé";
+  if (key === "dip1") {
+    if (!cfg.v90) return "○ OFF — V.34 seul";
+    return cfg.eff && !cfg.eff.v90 ? `● ON, mais débit max sous ${kbit(28000)} : 56K coupé` : "● ON — 56K proposé au prochain appel";
+  }
   const st = state && state.status;
   if (!st) return "";
   const p = st.params || {};
@@ -725,6 +827,13 @@ function tipRender() {
   l.textContent = tipLive(tipKey);
   tip.append(h, t, l);
 }
+/** Infobulle ouverte : seule la ligne « en direct » change. */
+function tipRefresh() {
+  if (!tipKey) return;
+  const live = tip.querySelector("i"), v = tipLive(tipKey);
+  if (live && live.textContent !== v) live.textContent = v;
+}
+function tipHide() { tipKey = null; tipEl = null; tip.hidden = true; }
 function tipPlace(e) {
   const r = tip.getBoundingClientRect();
   let x = e.clientX + 14, y = e.clientY + 18;
@@ -733,12 +842,12 @@ function tipPlace(e) {
   tip.style.left = x + "px";
   tip.style.top = y + "px";
 }
-document.querySelectorAll(".led-cell, .ph").forEach((el) => {
-  const key = el.dataset.led || el.dataset.phase;
+document.querySelectorAll(".led-cell, .ph, [data-tip]").forEach((el) => {
+  const key = el.dataset.led || el.dataset.phase || el.dataset.tip;
   if (!TIPS[key]) return;
   el.addEventListener("mouseenter", (e) => { tipKey = key; tipEl = el; tipRender(); tip.hidden = false; tipPlace(e); });
   el.addEventListener("mousemove", tipPlace);
-  el.addEventListener("mouseleave", () => { tipKey = null; tipEl = null; tip.hidden = true; });
+  el.addEventListener("mouseleave", tipHide);
 });
 
 /* ---------------------------------------------------------------- numéros */
@@ -905,6 +1014,9 @@ function renderDir(net) {
 
 /* ---------------------------------------------------------------- démarrage */
 buildSliders();
+// Réglages du panneau CONFIG d'abord : avant toute connexion ou numérotation.
+cfgRender();
+cfgSend();
 loadPresets().catch((e) => crt("Préréglages indisponibles : " + e, "ev warn"));
 invoke("app_info").then((info) => {
   crt(`V34 TINYVERSE v${info.version} — ${DEMO ? "MODE DÉMO (hors Tauri)" : "prêt"}`, "info");
@@ -997,6 +1109,10 @@ function makeDemoBridge() {
       if (cmd === "send_chat") { emit("v34:chat", { from: "local", text: args.text }); setTimeout(() => emit("v34:chat", { from: "remote", text: args.text + "\n" }), 300); }
       if (cmd === "send_file") return Promise.reject("Transfert de fichiers indisponible en mode démo (navigateur).");
       if (cmd === "app_info") return Promise.resolve({ version: "0.1.0", audio_device: null });
+      if (cmd === "set_modem_config") {
+        const r = args.maxRate;
+        return Promise.resolve({ v90: args.v90 && r >= 28000, max_rate: Math.min(r, 33600), max_rate_pcm: Math.min(56000, Math.max(28000, r)) });
+      }
       return Promise.resolve(null);
     },
   };

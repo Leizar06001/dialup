@@ -46,7 +46,10 @@ Sans carte son, l'appli fonctionne quand même : le badge « HP » passe à ✗.
 - **MODEM** : LEDs façon modem externe (HS AA CD OH RD SD TR MR), frise des
   phases V.8 ▸ PH2 ▸ PH3 ▸ PH4 ▸ DATA, afficheur des paramètres négociés,
   signaux TX/RX courants, spectre ou oscilloscope du son de la ligne,
-  constellation, haut-parleur (OFF / AUTO / ON + volume).
+  constellation, haut-parleur (OFF / AUTO / ON + volume). Le bouton
+  **CONFIG** montre la face arrière : interrupteur DIP 1 « 56K V.90 » et
+  molette DÉBIT MAX (2 400 à 56 000 bit/s), mémorisés et pris en compte à
+  l'appel suivant (`ATI4` les affiche).
 - **LIGNE TÉLÉPHONIQUE** : préréglages (Parfaite, Urbaine, Campagne, Longue
   distance, Orage) et curseurs pour chaque défaut de ligne, réglables pendant
   la connexion, courbe de réponse en fréquence (en orange, la réponse mesurée

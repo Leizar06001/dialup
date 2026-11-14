@@ -131,6 +131,32 @@ pub enum EngineCmd {
     NetDirectory,
     /// Envoi d'un fichier (nom, contenu)
     SendFile(String, Vec<u8>),
+    /// Panneau CONFIG : configuration des prochains appels (voir `modem_config`)
+    SetConfig(ModemConfig),
+}
+
+/// Débit le plus bas du V.90 (sens descendant), en bit/s : en dessous, le
+/// 56K ne peut pas tourner.
+const V90_MIN_RATE: u32 = 28000;
+
+/// Panneau CONFIG (interrupteur DIP 1 « 56K V.90 » et molette DÉBIT MAX) →
+/// configuration du modem pour les prochains appels.
+///
+/// `max_rate` est le débit choisi sur la molette, de 2 400 à 56 000 bit/s :
+/// - le V.34 s'arrête à 33 600 bit/s, on plafonne donc `max_rate` ;
+/// - le V.90 descendant va de 28 000 à 56 000 bit/s : `max_rate_pcm` est
+///   ramené dans cet intervalle ;
+/// - sous 28 000 bit/s, le V.90 ne peut pas tourner : il est coupé même si
+///   l'interrupteur est sur ON.
+///
+/// Les autres réglages gardent leurs valeurs par défaut.
+pub fn modem_config(v90: bool, max_rate: u32) -> ModemConfig {
+    ModemConfig {
+        max_rate: max_rate.min(33600),
+        v90: v90 && max_rate >= V90_MIN_RATE,
+        max_rate_pcm: max_rate.clamp(V90_MIN_RATE, 56000),
+        ..ModemConfig::default()
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -484,6 +510,9 @@ impl Engine {
                 };
                 self.console(&txt, "info");
             }
+            // Comme les interrupteurs d'un vrai modem : lus au décroché, donc
+            // pris en compte au prochain `new_call` (l'appel en cours continue).
+            EngineCmd::SetConfig(cfg) => self.cfg = cfg,
             EngineCmd::SendFile(name, data) => {
                 if !matches!(self.status.phase, Phase::Data | Phase::Retrain) {
                     self.chat("system", "Pas de porteuse : connecte-toi d'abord (ATDT…)".into());
@@ -577,14 +606,23 @@ impl Engine {
                     num(&mut i);
                 }
                 'I' => {
-                    let lines: &[&str] = match num(&mut i).unwrap_or(0) {
-                        0 => &["V34-TINYVERSE"],
-                        1 => &["255"],
-                        3 => &["Modem logiciel V.34 Tinyverse 0.1 (Rust)"],
-                        4 => &["V.8 V.34 2400-33600 bit/s", "Symboles 2400 2743 2800 3000 3200 3429"],
-                        _ => &["OK"],
+                    let lines: Vec<String> = match num(&mut i).unwrap_or(0) {
+                        0 => vec!["V34-TINYVERSE".into()],
+                        1 => vec!["255".into()],
+                        3 => vec!["Modem logiciel V.34 Tinyverse 0.1 (Rust)".into()],
+                        // Capacités, d'après le panneau CONFIG
+                        4 => vec![
+                            format!("V.8 V.34 2400-{} bit/s", self.cfg.max_rate),
+                            "Symboles 2400 2743 2800 3000 3200 3429".into(),
+                            if self.cfg.v90 {
+                                format!("V.90 (56K) {V90_MIN_RATE}-{} bit/s", self.cfg.max_rate_pcm)
+                            } else {
+                                "V.90 (56K) désactivé (panneau CONFIG)".into()
+                            },
+                        ],
+                        _ => vec!["OK".into()],
                     };
-                    for l in lines {
+                    for l in &lines {
                         self.console(l, "resp");
                     }
                 }
@@ -1226,5 +1264,36 @@ impl Engine {
             audio_device: self.speaker.device_name(),
         };
         let _ = self.app.emit("v34:state", state);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_panel_maps_to_modem_config() {
+        // 56K au maximum : V.34 plafonné à 33 600, V.90 jusqu'à 56 000
+        let c = modem_config(true, 56000);
+        assert_eq!((c.max_rate, c.v90, c.max_rate_pcm), (33600, true, 56000));
+        // Palier V.90 intermédiaire
+        let c = modem_config(true, 45333);
+        assert_eq!((c.max_rate, c.v90, c.max_rate_pcm), (33600, true, 45333));
+        // Interrupteur 56K sur OFF : V.34 seul
+        let c = modem_config(false, 56000);
+        assert_eq!((c.max_rate, c.v90, c.max_rate_pcm), (33600, false, 56000));
+        // 28 800 : V.90 encore possible (plancher à 28 000)
+        let c = modem_config(true, 28800);
+        assert_eq!((c.max_rate, c.v90, c.max_rate_pcm), (28800, true, 28800));
+        // Sous 28 000 : plus de V.90, même sur ON
+        let c = modem_config(true, 26400);
+        assert_eq!((c.max_rate, c.v90, c.max_rate_pcm), (26400, false, 28000));
+        let c = modem_config(true, 2400);
+        assert_eq!((c.max_rate, c.v90, c.max_rate_pcm), (2400, false, 28000));
+        // Les autres réglages gardent leurs valeurs par défaut
+        let d = ModemConfig::default();
+        assert_eq!(ModemConfig { max_rate: d.max_rate, v90: d.v90, max_rate_pcm: d.max_rate_pcm, ..c }, d);
+        // Réglages d'usine du panneau = configuration par défaut du modem
+        assert_eq!(modem_config(true, 56000), d);
     }
 }
