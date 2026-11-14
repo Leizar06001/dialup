@@ -155,6 +155,15 @@ impl PcmTx {
         self.st == St::Data
     }
 
+    /// Position dans TRN1d (pendant ce signal) : l'abonné se tait alors,
+    /// notre annuleur d'écho peut apprendre.
+    pub fn trn1d_index(&self) -> Option<usize> {
+        match self.st {
+            St::Trn1d { i } => Some(i),
+            _ => None,
+        }
+    }
+
     /// Prochain échantillon émis ; `bit` fournit les bits de données.
     pub fn next_sample(&mut self, bit: &mut dyn FnMut() -> bool) -> f32 {
         while self.queue.is_empty() {

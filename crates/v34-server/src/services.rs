@@ -56,6 +56,9 @@ pub struct ModemCall {
     pub peer: SocketAddr,
     pub sock: UdpSocket,
     pub max_rate: u32,
+    /// 56k (V.90) proposé, et son débit descendant maximal
+    pub v90: bool,
+    pub max_rate_pcm: u32,
     pub carrier_timeout: Duration,
     pub line: Option<LineParams>,
     pub policy: Arc<TunnelPolicy>,
@@ -85,7 +88,10 @@ fn echo(from_modem: Receiver<Vec<u8>>, to_modem: std::sync::mpsc::SyncSender<Vec
 
 fn run(call: ModemCall, rx: Receiver<ModemInput>) -> (HangupReason, String) {
     let label = format!("{} {:08x} ({} / {})", call.service.name().to_uppercase(), call.call_id, call.caller, call.caller_number);
-    let mut modem = Modem::new(Role::Answer, ModemConfig { max_rate: call.max_rate, ..ModemConfig::default() });
+    // Le FAI est raccordé en numérique : il peut jouer le modem numérique
+    // du 56k (V.90) si l'abonné le demande.
+    let cfg = ModemConfig { max_rate: call.max_rate, v90: call.v90, digital: true, max_rate_pcm: call.max_rate_pcm, ..ModemConfig::default() };
+    let mut modem = Modem::new(Role::Answer, cfg);
     modem.command(ModemCommand::Answer);
     info!("{label} : décroché");
 

@@ -111,12 +111,16 @@ pub struct NetInfo {
 }
 
 /// Mode réseau : un seul modem local, le son passe par le central
-/// (dialup.tinyverse.fr). Le simulateur de ligne s'applique au son reçu,
-/// l'écho de notre propre signal est ajouté localement.
+/// (dialup.tinyverse.fr). Le simulateur de ligne représente notre boucle
+/// locale : il s'applique au son reçu ET au son émis (la boucle abîme les
+/// deux sens), et l'écho de notre propre signal est ajouté localement.
 pub struct NetLink {
     central: v34_net::central::CentralClient,
     modem: Modem,
     line: LineSim,
+    /// Boucle locale dans le sens montant (notre émission vers le central)
+    line_up: LineSim,
+    up_buf: Vec<f32>,
     echo: EchoPath,
     last_tx: Vec<f32>,
     incoming: Vec<f32>,
@@ -135,6 +139,8 @@ impl NetLink {
             central,
             modem: Modem::new(Role::Call, ModemConfig::default()),
             line: LineSim::new(params.clone()),
+            line_up: LineSim::with_seed(params.clone(), 0x5eed_0bad),
+            up_buf: Vec::new(),
             echo: EchoPath::new(params.clone()),
             last_tx: Vec::new(),
             incoming: Vec::new(),
@@ -188,7 +194,10 @@ impl Link for NetLink {
         self.echo.process(&self.last_tx, rx);
         self.modem.process(rx, tx);
         if active {
-            let _ = self.central.send_block(tx);
+            // notre émission traverse elle aussi la boucle locale
+            resize(&mut self.up_buf, n);
+            self.line_up.process(tx, &mut self.up_buf);
+            let _ = self.central.send_block(&self.up_buf);
         }
         self.last_tx.copy_from_slice(tx);
     }
@@ -212,6 +221,7 @@ impl Link for NetLink {
 
     fn set_line(&mut self, p: &LineParams) {
         self.line.set_params(p.clone());
+        self.line_up.set_params(p.clone());
         self.echo.set_params(p.clone());
     }
 
@@ -458,6 +468,12 @@ impl Link for LocalLoop {
     fn set_remote_service(&mut self, svc: RemoteService) {
         self.service = svc;
         self.isp = None;
+        if svc == RemoteService::Isp && self.remote.role() == Role::Answer {
+            // Le FAI simulé est raccordé en numérique, comme celui du
+            // central : il propose le 56k (V.90) si notre modem le demande.
+            let cfg = ModemConfig { digital: true, ..ModemConfig::default() };
+            self.remote = Modem::new(Role::Answer, cfg);
+        }
     }
 
     fn set_line(&mut self, p: &LineParams) {

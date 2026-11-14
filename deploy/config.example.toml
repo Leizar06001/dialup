@@ -88,6 +88,11 @@ delai_decroche_ms = 2000
 delai_porteuse_s = 90
 # Débit maximal des modems du central (bit/s, 2400 à 33600).
 debit_max = 33600
+# 56k (V.90) : le FAI est raccordé en numérique au central ; il propose le
+# 56k aux abonnés dont l'appli le demande (interrupteur 1 du panneau CONFIG).
+v90 = true
+# Débit descendant maximal en 56k (bit/s, 28000 à 56000).
+debit_max_56k = 56000
 
 [fai]
 # Pas de « login: / password: » après CONNECT : l'abonné est déjà

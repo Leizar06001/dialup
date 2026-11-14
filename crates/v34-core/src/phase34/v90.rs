@@ -110,6 +110,11 @@ pub(crate) struct V90 {
 }
 
 impl V90 {
+    /// Position dans TRN1d (modem numérique), pour l'annuleur d'écho.
+    pub(crate) fn trn1d_index(&self) -> Option<usize> {
+        self.ptx.as_ref().and_then(|t| t.trn1d_index())
+    }
+
     fn new(digital: bool, law: Law, max_pcm: u32, max_up: u32, power_step: u8) -> V90 {
         V90 {
             digital,

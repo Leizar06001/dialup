@@ -20,7 +20,9 @@ fn run_with(p: LineParams, abonne: ModemConfig, fai: ModemConfig, seconds: f32, 
     // descendant (le FAI, lui, n'a pas de boucle analogique)
     let mut c2a = LineSim::new(p.clone());
     let mut a2c = LineSim::new(p.clone());
-    let mut echo_c = EchoPath::new(p);
+    let mut echo_c = EchoPath::new(p.clone());
+    // écho du côté du FAI aussi (hybride de la carte d'abonné du central)
+    let mut echo_a = EchoPath::new(p);
     call.command(ModemCommand::Dial);
     ans.command(ModemCommand::Answer);
     const B: usize = 160;
@@ -33,6 +35,7 @@ fn run_with(p: LineParams, abonne: ModemConfig, fai: ModemConfig, seconds: f32, 
         call.process(&call_rx, &mut call_tx);
         ans.process(&ans_rx, &mut ans_tx);
         c2a.process(&call_tx, &mut ans_rx);
+        echo_a.process(&ans_tx, &mut ans_rx);
         a2c.process(&ans_tx, &mut call_rx);
         echo_c.process(&call_tx, &mut call_rx);
         for (i, m) in [&mut call, &mut ans].into_iter().enumerate() {
@@ -84,7 +87,7 @@ fn v8_annonce_le_56k_et_phase2_inversee() {
 /// Le 56k complet : descendant en PCM au-delà du V.34.
 #[test]
 fn connexion_56k() {
-    for (ligne, mini) in [("Parfaite", 56000), ("Urbaine", 36000)] {
+    for (ligne, mini, up_mini) in [("Parfaite", 56000, 33600), ("Urbaine", 36000, 16800)] {
         let r = echange(LineParams::preset(ligne).unwrap(), ModemConfig::default(), fai());
         let dump = r.log.join("\n");
         if std::env::var("V90_LOG").is_ok() {
@@ -92,6 +95,7 @@ fn connexion_56k() {
         }
         let (up, down) = r.connected[0].unwrap();
         assert!(down >= mini, "{ligne} : descendant {down} bit/s\n{dump}");
+        assert!(up >= up_mini, "{ligne} : montant {up} bit/s\n{dump}");
         assert_eq!(r.connected[1], Some((down, up)), "{ligne}");
         eprintln!("{ligne} : CONNECT 56k — descendant {down} bit/s, montant {up} bit/s");
     }

@@ -675,6 +675,8 @@ impl Server {
             peer: reg.addr,
             sock,
             max_rate: self.cfg.modems.debit_max,
+            v90: self.cfg.modems.v90,
+            max_rate_pcm: self.cfg.modems.debit_max_56k,
             carrier_timeout: Duration::from_secs(self.cfg.modems.delai_porteuse_s.max(10)),
             line: self.cfg.line_params().ok().flatten(),
             policy: self.policy.clone(),

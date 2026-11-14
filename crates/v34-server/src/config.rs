@@ -173,11 +173,16 @@ pub struct Modems {
     pub delai_porteuse_s: u64,
     /// Débit maximal (bit/s)
     pub debit_max: u32,
+    /// 56k (V.90) : le FAI, raccordé en numérique au central, le propose
+    /// aux abonnés qui le demandent
+    pub v90: bool,
+    /// Débit descendant maximal en 56k (bit/s, 28 000 à 56 000)
+    pub debit_max_56k: u32,
 }
 
 impl Default for Modems {
     fn default() -> Self {
-        Self { appels_max: 4, delai_decroche_ms: 2000, delai_porteuse_s: 90, debit_max: 33600 }
+        Self { appels_max: 4, delai_decroche_ms: 2000, delai_porteuse_s: 90, debit_max: 33600, v90: true, debit_max_56k: 56000 }
     }
 }
 
@@ -356,6 +361,9 @@ impl Config {
             }
         }
         let m = &self.modems;
+        if !(28000..=56000).contains(&m.debit_max_56k) {
+            return Err("modems.debit_max_56k doit être entre 28000 et 56000".into());
+        }
         if !(2400..=33600).contains(&m.debit_max) {
             return Err("modems.debit_max doit être entre 2400 et 33600".into());
         }

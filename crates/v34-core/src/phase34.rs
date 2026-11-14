@@ -948,6 +948,23 @@ impl P34 {
     /// notre S/PP/TRN (large bande, pseudo-aléatoire) quand l'autre se tait,
     /// avec un pas fort au début de la fenêtre puis de plus en plus fin.
     pub fn ec_mu(&self) -> f32 {
+        if let Some(v) = &self.v90 {
+            if let Some(i) = v.trn1d_index() {
+                // V.90, modem numérique : l'écho de notre PCM (hybride du
+                // central) s'apprend sur TRN1d, l'abonné s'étant tu ; on
+                // attend 100 ms qu'il ait cessé Ja.
+                return match i.checked_sub(800).map(|j| j / 8) {
+                    None => 0.0,
+                    Some(0..=99) => 1.0,
+                    Some(100..=199) => 0.5,
+                    Some(200..=399) => 0.2,
+                    Some(_) => 0.05,
+                };
+            }
+            if v.digital {
+                return 0.0;
+            }
+        }
         let since = self.n - self.t_step;
         let open_at = match self.step {
             // L'appelant se tait pendant notre S/PP/TRN : écho seul
