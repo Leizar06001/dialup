@@ -34,6 +34,7 @@ pub mod salon;
 pub mod services;
 pub mod tinyblog;
 pub mod tunnel;
+pub mod verrou;
 pub mod web1998;
 
 pub use central::{Server, ServerHandle, Stats};

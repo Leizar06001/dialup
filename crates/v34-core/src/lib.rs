@@ -23,6 +23,7 @@ pub mod fax;
 pub mod info;
 pub mod lapm;
 pub mod line;
+pub mod morse;
 pub mod probe;
 pub mod qamrx;
 pub mod train;

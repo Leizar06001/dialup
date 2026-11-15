@@ -23,7 +23,7 @@ pub fn nom_mois(m: u32) -> String {
 }
 
 /// « 1:02:03 » ou « 2:03 »
-fn hms(s: u32) -> String {
+pub fn hms(s: u32) -> String {
     if s >= 3600 {
         format!("{}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60)
     } else {
@@ -32,7 +32,7 @@ fn hms(s: u32) -> String {
 }
 
 /// « 1 h 02 min », « 12 min », « 40 s »
-fn duree(s: u64) -> String {
+pub fn duree(s: u64) -> String {
     match s {
         0..60 => format!("{s} s"),
         60..3600 => format!("{} min", s / 60),
@@ -40,7 +40,8 @@ fn duree(s: u64) -> String {
     }
 }
 
-fn correspondant(t: &Ticket) -> String {
+/// Le correspondant d'un appel : le service, ou l'abonné appelé.
+pub fn correspondant(t: &Ticket) -> String {
     match t.service.as_deref() {
         Some("fai") => "TINYVERSE (accès Internet)".into(),
         Some("oracle") => "3615 ORACLE".into(),
@@ -120,8 +121,15 @@ pub fn resume(dir: &Path, nom: &str, maintenant: u64) -> String {
     h
 }
 
-/// Le relevé détaillé d'un mois.
+/// Le relevé détaillé d'un mois (espace abonné).
 pub fn detail(dir: &Path, nom: &str, numero: &str, mois: u32, maintenant: u64) -> String {
+    detail_avec_liens(dir, nom, numero, mois, maintenant, &|m| format!("/compte/facture?mois={m}"), r#"<a href="/compte">Retour à mon compte</a>"#)
+}
+
+/// Le relevé détaillé d'un mois ; `lien_mois` mène aux autres relevés,
+/// `retour` est le lien de fin de page (HTML). L'administration s'en sert
+/// avec ses propres liens.
+pub fn detail_avec_liens(dir: &Path, nom: &str, numero: &str, mois: u32, maintenant: u64, lien_mois: &dyn Fn(u32) -> String, retour: &str) -> String {
     let tickets = appels(dir, nom, mois);
     let total: u64 = tickets.iter().map(|t| t.centimes as u64).sum();
     let mut h = String::new();
@@ -176,10 +184,10 @@ pub fn detail(dir: &Path, nom: &str, numero: &str, mois: u32, maintenant: u64) -
     }
     if !autres.is_empty() {
         h.push_str("<p>Autres relevés : ");
-        let liens: Vec<String> = autres.iter().map(|m| format!(r#"<a href="/compte/facture?mois={m}">{}</a>"#, nom_mois(*m))).collect();
+        let liens: Vec<String> = autres.iter().map(|m| format!(r#"<a href="{}">{}</a>"#, esc(&lien_mois(*m)), nom_mois(*m))).collect();
         h.push_str(&liens.join(" · "));
         h.push_str("</p>");
     }
-    h.push_str(r#"<p><a href="/compte">Retour à mon compte</a></p>"#);
+    let _ = write!(h, "<p>{retour}</p>");
     h
 }

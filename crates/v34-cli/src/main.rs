@@ -1,7 +1,7 @@
 //! v34-cli : tester le modem sans interface graphique.
 //!
 //! ```text
-//! v34-cli local  [--seconds N] [--preset NOM] [--wav fichier.wav] [--block N] [--max-rate R]
+//! v34-cli local  [--seconds N] [--preset NOM] [--wav fichier.wav] [--block N] [--max-rate R] [--morse oui [--texte T]]
 //! v34-cli answer [--port P] [--codec alaw|ulaw|l16] [--preset NOM] [--seconds N]
 //! v34-cli call <ip:port> [--local-port P] [--codec ...] [--preset NOM] [--seconds N]
 //! v34-cli presets
@@ -16,9 +16,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+use v34_core::morse::{self, MorseEvenement};
 use v34_core::{
-    EchoPath, LineParams, LineSim, LinkParams, LogLevel, Modem, ModemCommand, ModemConfig, ModemEvent, ModemStatus, Phase,
-    Role, SAMPLE_RATE,
+    EchoPath, LineParams, LineSim, LinkParams, LogLevel, Modem, ModemCommand, ModemConfig, ModemEvent, ModemStatus, Phase, Role,
+    SAMPLE_RATE,
 };
 use v34_net::central::{CentralClient, CentralConfig, CentralEvent, DEFAULT_SERVER};
 use v34_net::tunnel::{ClientConfig, ModemPipe, TunnelClient, TunnelEvent, DEFAULT_PROXY};
@@ -34,6 +35,8 @@ USAGE :
         Deux modems (appelant + appelé) reliés en mémoire à travers le simulateur
         de ligne, simulés plus vite que le temps réel.
         WAV stéréo : gauche = appelant, droite = appelé.
+        --morse oui : les deux parlent morse (négocié en V.8) ; l'appelant
+        envoie --texte (défaut « CQ CQ DE V34 K ») et l'appelé le lit.
   v34-cli answer [--port P] [--codec alaw|ulaw|l16] [--preset NOM] [--seconds N]
         Attend un appel sur le port UDP P (défaut 3434), décroche après une sonnerie.
   v34-cli call <ip:port> [--local-port P] [--codec ...] [--preset NOM] [--seconds N]
@@ -49,7 +52,7 @@ Via le central téléphonique (v34-server, défaut dialup.tinyverse.fr:3434) :
         Appelle <numéro>. Si c'est le FAI (annoncé par le central, ou
         --isp NUM), lance aussi un proxy local SOCKS5 / HTTP CONNECT
         (--socks ADRESSE, défaut 127.0.0.1:1080) une fois connecté.
-        0800000000 : ligne de test (écho des octets).
+        0800000000 : ligne de test (écho des octets, ou du morse avec --morse oui).
         --chat \"question 1|question 2\" : parle comme l'appli (messages de
         chat), un message après chaque silence de 3 s, puis raccroche ;
         affiche ce qui revient. Sur un serveur Minitel (V.23 : 3615 ORACLE
@@ -60,6 +63,8 @@ Via le central téléphonique (v34-server, défaut dialup.tinyverse.fr:3434) :
         demandé au clavier (il n'apparaît alors pas dans `ps`).
 
 Options temps réel : --jitter-ms N (tampon de gigue, défaut 60).
+--morse oui : propose le morse en V.8 (DIP 4 de l'appli) ; le correspondant
+doit l'accepter (un abonné DIP 4 sur ON, ou la ligne de test), sinon V.34.
 --preset applique le simulateur de ligne (et l'écho local) en réception.";
 
 // ───────────────────────────── arguments ─────────────────────────────
@@ -135,6 +140,8 @@ impl Args {
         cfg.v90 = self.get("v90") != Some("non");
         cfg.express = self.get("express") == Some("oui");
         cfg.max_rate_pcm = self.num("max-rate-56k", cfg.max_rate_pcm)?;
+        // morse (DIP 4 de l'appli) : --morse oui
+        cfg.morse = self.get("morse") == Some("oui");
         Ok(cfg)
     }
 }
@@ -196,6 +203,10 @@ fn fmt_event(ev: &ModemEvent) -> String {
             v34_core::fax::session::FaxEvenement::Ligne(_) => "fax     ligne reçue".into(),
             autre => format!("fax     {autre:?}"),
         },
+        ModemEvent::Morse(m) => match m {
+            MorseEvenement::Emis { texte, code } => format!("morse ▸ {texte:4} {}", morse::code::joli(code)),
+            MorseEvenement::Recu { texte, code } => format!("morse ◂ {texte:4} {}", morse::code::joli(code)),
+        },
     }
 }
 
@@ -248,6 +259,10 @@ fn run_local(args: &Args) -> Result<(), String> {
 
     call.command(ModemCommand::Dial);
     answer.command(ModemCommand::Answer);
+    // Morse : l'appelant envoie ce texte une fois connecté
+    let texte = args.get("texte").unwrap_or("CQ CQ DE V34 K").to_string();
+    let mut morse_lu = String::new();
+    let mut morse_envoye = false;
 
     let total = (seconds * SAMPLE_RATE as f64) as u64;
     let (mut call_rx, mut ans_rx) = (vec![0.0f32; block], vec![0.0f32; block]);
@@ -282,10 +297,24 @@ fn run_local(args: &Args) -> Result<(), String> {
                 if matches!(ev, ModemEvent::Connected { .. }) {
                     *up = true;
                 }
+                if let (Role::Answer, ModemEvent::Morse(MorseEvenement::Recu { texte, .. })) = (role, &ev) {
+                    morse_lu.push_str(texte);
+                }
                 print_event(t, role, &ev);
             }
         }
-        if call_up && ans_up && stop_at == total {
+        let en_morse = call.status().phase == Phase::Morse;
+        if en_morse && call_up && !morse_envoye {
+            morse_envoye = true;
+            call.command(ModemCommand::Send(format!("<KA>{texte}<AR>").into_bytes()));
+        }
+        if en_morse {
+            // en morse : on attend que l'appelé ait tout lu (fin de message)
+            if morse_lu.ends_with("<AR>") && stop_at == total {
+                println!("\nL'appelé a lu : {morse_lu}");
+                stop_at = (t + SAMPLE_RATE as u64).min(total);
+            }
+        } else if call_up && ans_up && stop_at == total {
             // Les deux sont connectés : on laisse tourner 2 s puis on arrête.
             stop_at = (t + 2 * SAMPLE_RATE as u64).min(total);
         }
@@ -486,6 +515,8 @@ struct ChatScript {
     done: bool,
     /// Appel Minitel (CONNECT 1200/75) : son écran
     minitel: Option<v34_net::videotex::Ecran>,
+    /// Liaison morse : du texte, pas des trames (un message = KA … AR)
+    morse: bool,
 }
 
 impl ChatScript {
@@ -501,6 +532,13 @@ impl ChatScript {
             e.recevoir(bytes);
             return;
         }
+        if self.morse {
+            // lettre par lettre ; AR finit la ligne
+            let t = String::from_utf8_lossy(bytes);
+            print!("{}", if t == "<AR>" { "<AR>\n".into() } else { t });
+            let _ = std::io::stdout().flush();
+            return;
+        }
         for it in self.dec.push(bytes) {
             match it {
                 Item::Frame(Frame::Chat(t)) => print!("{t}"),
@@ -513,7 +551,10 @@ impl ChatScript {
 
     /// Prochain ordre au modem : un message après un silence, puis raccrocher.
     fn next(&mut self) -> Option<ModemCommand> {
-        if self.done || self.last_rx.elapsed() < Self::SILENCE {
+        // (en morse, le texte arrive mot par mot, à deux lettres par seconde :
+        // le premier mot de l'écho revient une dizaine de secondes après)
+        let silence = if self.morse { Duration::from_secs(20) } else { Self::SILENCE };
+        if self.done || self.last_rx.elapsed() < silence {
             return None;
         }
         self.last_rx = Instant::now();
@@ -543,6 +584,9 @@ impl ChatScript {
         match self.questions.pop_front() {
             Some(q) => {
                 println!("\n<moi> {q}");
+                if self.morse {
+                    return Some(ModemCommand::Send(format!("<KA>{q}<AR>").into_bytes()));
+                }
                 Some(ModemCommand::Send(v34_net::bbs::encode(&v34_net::bbs::Frame::Chat(q))))
             }
             None => {
@@ -629,6 +673,7 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
         last_rx: Instant::now(),
         done: false,
         minitel: None,
+        morse: false,
     });
     let mut call: Option<CentralCall> = None;
     let mut ring_at: Option<Instant> = None;
@@ -739,6 +784,7 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
                                 e.connexion(true);
                                 s.minitel = Some(e);
                             }
+                            s.morse = c.modem.status().phase == Phase::Morse;
                         }
                         if let Some(listener) = proxy.take() {
                             let (pipe, tin, tout) = ModemPipe::new(tx_rate);
@@ -752,6 +798,8 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
                         print_event(t, role, &ev);
                         finished = Some(if c.connected { Ok(()) } else { Err("la connexion n'a pas abouti".into()) });
                     }
+                    // (le texte du chat suffit : pas un signe par ligne au milieu)
+                    ModemEvent::Morse(_) if chat.is_some() => {}
                     _ => print_event(t, role, &ev),
                 }
             }

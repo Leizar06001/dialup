@@ -116,7 +116,7 @@ $("btn-reneg").addEventListener("click", () => {
 const PHASE_NAMES = {
   Idle: "REPOS", Phase1: "PHASE 1 · V.8", Phase2: "PHASE 2 · SONDAGE", Phase3: "PHASE 3 · ÉGALISEUR",
   Phase4: "PHASE 4 · ENTRAÎNEMENT FINAL", Data: "MODE DONNÉES", Retrain: "RÉENTRAÎNEMENT",
-  Cleardown: "RACCROCHAGE", Failed: "ÉCHEC", Minitel: "MINITEL · V.23",
+  Cleardown: "RACCROCHAGE", Failed: "ÉCHEC", Fax: "TÉLÉCOPIE", Morse: "MORSE · TÉLÉGRAPHE", Minitel: "MINITEL · V.23",
 };
 
 bridge.listen("v34:console", (c) => crt(c.text, c.kind));
@@ -183,7 +183,7 @@ bridge.listen("messagerie:compose", (num) => { $("dial-number").value = num; });
 function updateMessagerie(s) {
   // (un Minitel en ligne aussi : son écran est dans la messagerie)
   const minitel = s.call_state === "minitel" && s.status.leds.cd;
-  const bbs = s.session !== "internet" && (s.call_state === "online" || minitel);
+  const bbs = s.session !== "internet" && (s.call_state === "online" || s.call_state === "morse" || minitel);
   // L'appel aboutit : la LED clignote (une fois par appel : un réentraînement
   // ne la relance pas), jusqu'à ce qu'on ouvre la messagerie.
   if (s.call_state === "idle") messagerie.annonce = messagerie.nouvelAppel = false;
@@ -276,6 +276,7 @@ const cfg = {
   v90: store.get("cfg-v90") !== "0",
   auto: store.get("cfg-auto") !== "0",
   express: store.get("cfg-express") === "1",
+  morse: store.get("cfg-morse") === "1", // DIP 4 : OFF d'usine
   rate: RATES.includes(+store.get("cfg-debit")) ? +store.get("cfg-debit") : RATES[0],
   eff: null, // configuration obtenue, renvoyée par le moteur
   seq: 0,
@@ -285,9 +286,10 @@ function cfgSend() {
   store.set("cfg-v90", cfg.v90 ? "1" : "0");
   store.set("cfg-auto", cfg.auto ? "1" : "0");
   store.set("cfg-express", cfg.express ? "1" : "0");
+  store.set("cfg-morse", cfg.morse ? "1" : "0");
   store.set("cfg-debit", String(cfg.rate));
   const seq = ++cfg.seq;
-  invoke("set_modem_config", { v90: cfg.v90, maxRate: cfg.rate, autoAnswer: cfg.auto, express: cfg.express })
+  invoke("set_modem_config", { v90: cfg.v90, maxRate: cfg.rate, autoAnswer: cfg.auto, express: cfg.express, morse: cfg.morse })
     .then((c) => { if (seq === cfg.seq && c) { cfg.eff = c; cfgRender(); } })
     .catch((e) => crt("Configuration : " + e, "ev warn"));
 }
@@ -297,8 +299,9 @@ function cfgSummary() {
   if (!c) return "";
   // Afficheur en VT323 : pas d'espace insécable étroite dans cette police
   const k = (v) => `${frInt(v).replace(/\s/g, " ")} bit/s`;
-  if (c.v90) return `▸ 56K V.90 : jusqu'à ${k(c.max_rate_pcm)} en réception · V.34 : ${k(c.max_rate)}`;
-  return `▸ V.34 seul : jusqu'à ${k(c.max_rate)}` + (cfg.v90 ? ` · 56K impossible sous ${frInt(28000).replace(/\s/g, " ")}` : "");
+  const morse = c.morse ? " · MORSE proposé en V.8" : "";
+  if (c.v90) return `▸ 56K V.90 : jusqu'à ${k(c.max_rate_pcm)} en réception · V.34 : ${k(c.max_rate)}` + morse;
+  return `▸ V.34 seul : jusqu'à ${k(c.max_rate)}` + (cfg.v90 ? ` · 56K impossible sous ${frInt(28000).replace(/\s/g, " ")}` : "") + morse;
 }
 function cfgRender() {
   const sw = $("dip1");
@@ -310,6 +313,9 @@ function cfgRender() {
   const sw3 = $("dip3");
   sw3.classList.toggle("on", cfg.express);
   sw3.setAttribute("aria-checked", String(cfg.express));
+  const sw4 = $("dip4");
+  sw4.classList.toggle("on", cfg.morse);
+  sw4.setAttribute("aria-checked", String(cfg.morse));
   const i = RATES.indexOf(cfg.rate);
   // Sur le tambour, une vraie espace fine : l'espace insécable étroite y est invisible.
   const fin = (v) => frInt(v).replace(/\s/g, "\u2009");
@@ -340,6 +346,7 @@ function cfgStep(d) {
 $("dip1").addEventListener("click", () => { cfg.v90 = !cfg.v90; cfgRender(); cfgSend(); });
 $("dip2").addEventListener("click", () => { cfg.auto = !cfg.auto; cfgRender(); cfgSend(); });
 $("dip3").addEventListener("click", () => { cfg.express = !cfg.express; cfgRender(); cfgSend(); });
+$("dip4").addEventListener("click", () => { cfg.morse = !cfg.morse; cfgRender(); cfgSend(); });
 $("rate-up").addEventListener("click", () => cfgStep(1));
 $("rate-down").addEventListener("click", () => cfgStep(-1));
 $("rate-prev").addEventListener("click", () => cfgStep(1));
@@ -484,6 +491,7 @@ const CALL_PILL = {
   idle: ["REPOS", ""], dialing: ["NUMÉROTATION", "warn"], ringing: ["SONNERIE", "warn"],
   connecting: ["NÉGOCIATION", "warn"], online: ["EN LIGNE", "good"], fax: ["TÉLÉCOPIE", "good"],
   minitel: ["MINITEL", "good"],
+  morse: ["MORSE", "good"],
 };
 const ledEls = {};
 document.querySelectorAll(".led-cell").forEach((c) => (ledEls[c.dataset.led] = c.querySelector(".led")));
@@ -511,10 +519,19 @@ function onState(s) {
   if (st.phase === "Retrain") idx = 1;
   // Minitel : V.8 jusqu'au sifflement reconnu, puis les données (V.23)
   if (st.phase === "Minitel") idx = st.leds.cd ? 4 : 0;
+  // Morse : V.8, puis directement le télégraphe (pas de phases 2 à 4)
+  const morse = st.phase === "Morse";
+  if (morse) idx = 4;
   document.querySelectorAll(".ph").forEach((el, i) => {
     el.classList.toggle("active", i === idx);
-    el.classList.toggle("done", idx >= 0 && i < idx);
+    el.classList.toggle("done", idx >= 0 && i < idx && !(morse && i > 0));
   });
+  const phData = document.querySelector('.ph[data-phase="Data"]');
+  if (phData.classList.contains("morse") !== morse) {
+    phData.classList.toggle("morse", morse);
+    phData.querySelector("b").textContent = morse ? "MORSE" : "DATA";
+    phData.querySelector("small").textContent = morse ? "ti-taa-ti" : "kshhhh…";
+  }
 
   let [pill, cls] = CALL_PILL[s.call_state] || ["?", ""];
   if (st.phase === "Failed") [pill, cls] = ["ÉCHEC", "bad"];
@@ -869,7 +886,8 @@ const TIPS = {
   dip1: ["DIP 1 · 56K V.90", "ON : le modem propose le V.90 pendant la négociation V.8 et peut recevoir jusqu'à 56 000 bit/s d'un FAI raccordé en numérique (l'émission reste en V.34). OFF : V.34 seul, 33 600 bit/s au mieux."],
   dip2: ["DIP 2 · Réponse automatique", "ON : quand un abonné t'appelle, le modem décroche tout seul après deux sonneries (comme ATS0=2). OFF : ça sonne jusqu'à ce que tu décroches, avec ATA ou le bouton DÉCROCHER."],
   dip3: ["DIP 3 · 56K express", "OFF (d'usine) : toutes les lenteurs de 1999 — long DIL écouté trois fois, temps de réflexion, SCR pendant le calcul des niveaux, puis la fenêtre « Connexion à… » de Windows : 20 à 25 s de la numérotation à Internet. ON : la version pressée, une dizaine de secondes."],
-  dipres: ["DIP 4 à 8 · Réservé", "Réservé usine — ne pas modifier. Réglés en usine et sans effet sur ce modèle ; le technicien qui savait à quoi ils servaient est parti avec le mode d'emploi."],
+  dip4: ["DIP 4 · Morse", "ON : le modem glisse dans son CM un « service non normalisé » (V.8, §6.6 : France, fournisseur TINYVERSE, morse 20 mots/minute). Si le modem d'en face sait faire et le recopie dans son JM, plus de V.34 : du morse en duplex, 800 Hz pour l'appelant, 1600 Hz pour l'appelé, texte seulement, deux lettres par seconde. Sinon, rien ne change : V.34 ou 56K comme d'habitude. Pour essayer seul : la ligne de test, 08 00 00 00 00."],
+  dipres: ["DIP 5 à 8 · Réservé", "Réservé usine — ne pas modifier. Réglés en usine et sans effet sur ce modèle ; le technicien qui savait à quoi ils servaient est parti avec le mode d'emploi. (Le 4 aussi était sous le ruban, avant qu'on le décolle.)"],
   debit: ["DÉBIT MAX", "Plafond du débit négocié, pour imiter un modem plus ancien ou brider la ligne. Le V.34 s'arrête à 33 600 bit/s ; au-dessus, seul le 56K (V.90) monte, par paliers de 2 667 bit/s, et il ne descend pas sous 28 000. Molette de la souris, ▲ ▼ ou flèches du clavier."],
   cast: ["COMMENTAIRES", "Le modem commente sa propre négociation comme un match à la télé : ANSam, sondage, débit symbole, CONNECT… Les phrases sont tirées au hasard dans des banques écrites à la main, avec les vraies valeurs mesurées. Aucune intelligence artificielle n'a été dérangée."],
   messagerie: ["MESSAGERIE", "Ouvre la messagerie du navigateur : le chat (ou le salon du FAI), l'envoi de fichiers et le visiophone V.Hallucination, avec les contacts du central. Elle ne s'ouvre pas toute seule : quand un appel entre abonnés aboutit (ou qu'un Minitel se connecte : son écran s'y affiche), sa LED verte clignote jusqu'à ce que tu l'ouvres, puis reste allumée tant que dure l'appel ; rouge qui clignote : un message t'attend, comme sur un répondeur."],
@@ -912,6 +930,11 @@ function tipLive(key) {
   if (key === "karaoke") {
     const s = state && state.status;
     return s ? `TX ▸ ${s.tx_signal || "—"} · RX ◂ ${s.rx_signal || "—"}` : "";
+  }
+  if (key === "dip4") {
+    const mo = state && state.status && state.status.morse;
+    if (mo && state.status.phase === "Morse") return `● en morse : ${mo.mpm} mots/minute, TX ${frInt(mo.f_tx)} Hz, RX ${frInt(mo.f_rx)} Hz`;
+    return cfg.morse ? "● ON — morse proposé au prochain appel" : "○ OFF — V.34 ou 56K, comme d'habitude";
   }
   if (key === "dip3") return cfg.express ? "● ON — 56K pressé" : "○ OFF — lenteurs d'époque (20 à 25 s)";
   if (key === "dip2") return cfg.auto ? "● ON — décroche après 2 sonneries" : "○ OFF — décroche avec ATA";
@@ -1025,10 +1048,12 @@ function updateMonitor(s) {
   // Modem
   const p = st.params || {};
   const online = st.phase === "Data" || st.phase === "Retrain";
-  monSet("mn-rx", online && p.data_rate_rx ? `${frInt(p.data_rate_rx)} bit/s` : "—");
-  monSet("mn-tx", online && p.data_rate_tx ? `${frInt(p.data_rate_tx)} bit/s` : "—");
-  const snr = p.snr_db;
-  monSet("mn-snr", online && snr ? `${fr1(snr)} dB` : "—", snr && snr < 20 ? "warn" : "");
+  const mo = st.phase === "Morse" && st.morse;
+  monSet("mn-rx", mo ? `${mo.mpm} mots/min · ${frInt(mo.f_rx)} Hz` : online && p.data_rate_rx ? `${frInt(p.data_rate_rx)} bit/s` : "—");
+  monSet("mn-tx", mo ? `${mo.mpm} mots/min · ${frInt(mo.f_tx)} Hz` : online && p.data_rate_tx ? `${frInt(p.data_rate_tx)} bit/s` : "—");
+  if (mo) monSet("mn-snr", mo.snr_db != null ? `${fr1(mo.snr_db)} dB` : "—");
+  const snr = mo ? null : p.snr_db;
+  if (!mo) monSet("mn-snr", online && snr ? `${fr1(snr)} dB` : "—", snr && snr < 20 ? "warn" : "");
   monSet("mn-rec", String(c.recoveries || 0), c.recoveries > 3 ? "bad" : c.recoveries ? "warn" : "");
   // LAPM
   if (link) {

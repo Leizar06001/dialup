@@ -395,10 +395,15 @@ impl Annuaire {
 
     /// Ajoute les comptes créés par le site. Ceux de la configuration
     /// gardent la priorité : un compte du site en conflit (même nom ou même
-    /// numéro) est ignoré et signalé.
+    /// numéro) est ignoré et signalé. Un compte suspendu par
+    /// l'administrateur du site n'est pas ajouté (il ne peut plus se
+    /// connecter).
     pub fn ajouter_comptes(&mut self, comptes: &[crate::comptes::Compte]) -> Vec<String> {
         let mut avert = Vec::new();
         for c in comptes {
+            if c.suspendu {
+                continue;
+            }
             if self.nom_pris(&c.nom) || self.numero_pris(&c.numero) {
                 avert.push(format!("compte du site « {} » ({}) ignoré : nom ou numéro déjà dans la configuration", c.nom, c.numero));
                 continue;
@@ -646,6 +651,26 @@ mod tests {
         // configuration vide : valide (avec avertissement), pour pouvoir ajouter des abonnés ensuite
         let vide = Config::from_toml("").unwrap();
         assert!(!vide.validate().unwrap().is_empty());
+    }
+
+    #[test]
+    fn comptes_du_site_suspendus_ignores() {
+        let c = Config::from_toml("").unwrap();
+        let compte = |nom: &str, numero: &str, suspendu: bool| crate::comptes::Compte {
+            nom: nom.into(),
+            numero: numero.into(),
+            mot_de_passe_hash: hash("x"),
+            courriel: format!("{nom}@example.org"),
+            fai: true,
+            fai_decide: true,
+            cree: 1,
+            suspendu,
+        };
+        let mut a = c.annuaire().unwrap();
+        let avert = a.ajouter_comptes(&[compte("gaston", "0612345678", false), compte("lagaffe", "0699999999", true)]);
+        assert!(avert.is_empty(), "une suspension n'est pas une anomalie : {avert:?}");
+        assert!(a.get("gaston").is_some() && a.fai_autorise("gaston"));
+        assert!(a.get("lagaffe").is_none(), "suspendu : absent de l'annuaire, il ne peut plus se connecter");
     }
 
     #[test]

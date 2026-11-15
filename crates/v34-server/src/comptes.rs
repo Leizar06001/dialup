@@ -10,7 +10,9 @@
 //!    l'empreinte d'un jeton envoyé par e-mail (le jeton lui-même n'est
 //!    jamais stocké) ;
 //! 2. validation : le compte est créé, **sans accès Internet** ;
-//! 3. l'administrateur accorde (ou non) l'accès Internet (FAI).
+//! 3. l'administrateur accorde (ou non) l'accès Internet (FAI) ; depuis
+//!    `/admin`, il peut aussi changer le numéro, suspendre le compte (le
+//!    central l'ignore alors, le numéro reste réservé) ou le supprimer.
 //!
 //! Mot de passe oublié : une demande de réinitialisation (empreinte d'un
 //! jeton envoyé par e-mail, valable 1 h, à usage unique) est gardée EN
@@ -58,6 +60,11 @@ pub struct Compte {
     pub fai_decide: bool,
     /// Création (secondes Unix)
     pub cree: u64,
+    /// Suspendu par l'administrateur : le central l'ignore (il ne peut plus
+    /// se connecter), mais le nom et le numéro restent réservés. Écrit
+    /// seulement s'il est vrai (un central plus ancien refuserait le champ).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub suspendu: bool,
 }
 
 /// Une inscription en attente de validation de l'e-mail.
@@ -264,6 +271,7 @@ impl Comptes {
                 fai: false,
                 fai_decide: false,
                 cree: now,
+                suspendu: false,
             };
             d.compte.push(c.clone());
             Ok(c)
@@ -290,6 +298,57 @@ impl Comptes {
         })?;
         self.reinit.lock().unwrap().retain(|r| r.nom != nom);
         Ok(())
+    }
+
+    /// Suspend (ou réactive) un compte : le central le retire de l'annuaire
+    /// (déconnecté, il ne peut plus s'enregistrer) sans libérer son numéro.
+    pub fn suspendre(&self, nom: &str, suspendu: bool) -> Result<Compte, String> {
+        self.modifier(true, |d| {
+            let c = d.compte.iter_mut().find(|c| c.nom == nom).ok_or("compte inconnu")?;
+            c.suspendu = suspendu;
+            Ok(c.clone())
+        })
+    }
+
+    /// Attribue un autre numéro à un compte du site (l'appelant a vérifié le
+    /// format et l'annuaire de la configuration) ; refusé s'il est pris par
+    /// un autre compte ou une inscription en attente. Rend (compte, ancien
+    /// numéro).
+    pub fn changer_numero(&self, nom: &str, numero: &str) -> Result<(Compte, String), String> {
+        let now = maintenant();
+        self.modifier(true, |d| {
+            let pris = d.compte.iter().any(|c| c.nom != nom && c.numero == numero) || d.inscription.iter().any(|i| i.expire > now && i.numero == numero);
+            if pris {
+                return Err("ce numéro est déjà attribué (ou réservé par une inscription en attente)".to_string());
+            }
+            let c = d.compte.iter_mut().find(|c| c.nom == nom).ok_or("compte inconnu")?;
+            let ancien = std::mem::replace(&mut c.numero, numero.into());
+            Ok((c.clone(), ancien))
+        })
+    }
+
+    /// Abandonne une inscription en attente (le nom, le numéro et l'adresse
+    /// sont libérés).
+    pub fn annuler_inscription(&self, nom: &str) -> Result<Inscription, String> {
+        self.modifier(false, |d| {
+            let i = d.inscription.iter().position(|i| i.nom == nom).ok_or("inscription introuvable (déjà confirmée ou expirée ?)")?;
+            Ok(d.inscription.remove(i))
+        })
+    }
+
+    /// Nouveau lien d'activation pour une inscription en attente (le
+    /// précédent ne marche plus), valable 48 h de plus ; rend
+    /// (inscription, jeton à envoyer).
+    pub fn renouveler_inscription(&self, nom: &str) -> Result<(Inscription, String), String> {
+        let jeton = to_hex(&random_bytes::<24>());
+        let now = maintenant();
+        let i = self.modifier(false, |d| {
+            let i = d.inscription.iter_mut().find(|i| i.nom == nom && i.expire > now).ok_or("inscription introuvable (déjà confirmée ou expirée ?)")?;
+            i.jeton = empreinte(&jeton);
+            i.expire = now + ATTENTE_MAX_S;
+            Ok(i.clone())
+        })?;
+        Ok((i, jeton))
     }
 
     pub fn supprimer(&self, nom: &str) -> Result<Compte, String> {
@@ -481,6 +540,44 @@ mod tests {
         // Le central lit un fichier contenant une section qu'il ne connaît pas.
         std::fs::write(&path, format!("{}\n[[nouveaute]]\nx = 1\n", std::fs::read_to_string(&path).unwrap())).unwrap();
         assert!(lire_comptes(&path).is_ok());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn administration_numero_suspension_inscriptions() {
+        let dir = std::env::temp_dir().join(format!("v34-comptes-{}", to_hex(&random_bytes::<6>())));
+        let path = dir.join("comptes.toml");
+        let c = Comptes::ouvrir(&path).unwrap();
+        let j = c.inscrire("gaston", "0612345678", "h", "g@example.org").unwrap();
+        c.valider(&j, |_, _| true).unwrap();
+        let j2 = c.inscrire("lagaffe", "0699999999", "h", "l@example.org").unwrap();
+        // Pas de champ « suspendu » dans le fichier tant que personne ne l'est
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("suspendu"));
+
+        // Changement de numéro : pas celui d'un autre, ni celui d'une inscription en attente
+        let g0 = c.generation();
+        assert!(c.changer_numero("gaston", "0699999999").is_err());
+        assert!(c.changer_numero("inconnu", "0611111111").is_err());
+        let (g, ancien) = c.changer_numero("gaston", "0611111111").unwrap();
+        assert_eq!((g.numero.as_str(), ancien.as_str()), ("0611111111", "0612345678"));
+        assert!(c.generation() > g0, "le central recharge son annuaire");
+        assert_eq!(c.conflit("x", "0612345678", "x@y.z"), None, "l'ancien numéro est libéré");
+
+        // Suspension : écrite dans le fichier, lue par le central, réversible
+        c.suspendre("gaston", true).unwrap();
+        assert!(lire_comptes(&path).unwrap()[0].suspendu);
+        assert_eq!(c.conflit("x", "0611111111", "x@y.z"), Some("numero"), "numéro toujours réservé");
+        c.suspendre("gaston", false).unwrap();
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("suspendu"));
+
+        // Inscription en attente : nouveau lien (l'ancien ne marche plus), puis abandon
+        let (i, j3) = c.renouveler_inscription("lagaffe").unwrap();
+        assert_eq!(i.numero, "0699999999");
+        assert!(c.inscription(&j2).is_none() && c.inscription(&j3).is_some());
+        assert!(c.renouveler_inscription("gaston").is_err(), "un compte confirmé n'est pas une inscription");
+        c.annuler_inscription("lagaffe").unwrap();
+        assert!(c.en_attente().is_empty() && c.annuler_inscription("lagaffe").is_err());
+        assert_eq!(c.conflit("lagaffe", "0699999999", "l@example.org"), None);
         let _ = std::fs::remove_dir_all(dir);
     }
 

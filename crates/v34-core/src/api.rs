@@ -42,6 +42,8 @@ pub enum Phase {
     Fax,
     /// Minitel (V.23 1200/75) : le sifflement, puis l'écran Vidéotex
     Minitel,
+    /// Morse : mode propriétaire négocié en V.8 (services non normalisés)
+    Morse,
 }
 
 /// Les LEDs d'un modem externe des années 90.
@@ -112,6 +114,8 @@ pub enum ModemEvent {
     Data(Vec<u8>),
     /// Télécopie : étapes, lignes de la page reçue, fin
     Fax(crate::fax::session::FaxEvenement),
+    /// Morse : un signe part sur la ligne, ou vient d'être reconnu
+    Morse(crate::morse::MorseEvenement),
 }
 
 /// Commandes envoyées au moteur.
@@ -167,6 +171,10 @@ pub struct ModemConfig {
     /// lieu de négocier en V.8 (3615 ORACLE, numéros cachés)
     #[serde(default)]
     pub minitel: bool,
+    /// Morse (DIP 4) : l'appelant le propose en V.8 (service non normalisé
+    /// TINYVERSE), l'appelé l'accepte ; sinon l'appel continue en V.34/V.90
+    #[serde(default)]
+    pub morse: bool,
 }
 
 impl Default for ModemConfig {
@@ -183,6 +191,7 @@ impl Default for ModemConfig {
             express: false,
             ident: String::new(),
             minitel: false,
+            morse: false,
         }
     }
 }
@@ -219,4 +228,7 @@ pub struct ModemStatus {
     pub bytes_rx: u64,
     /// Statistiques de la couche de correction d'erreurs (si une liaison existe)
     pub link: Option<crate::lapm::LapmStats>,
+    /// Morse : manipulateur et écoute, en direct
+    #[serde(default)]
+    pub morse: Option<crate::morse::MorseVue>,
 }

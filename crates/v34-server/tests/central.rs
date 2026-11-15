@@ -406,6 +406,9 @@ fn etat_publie_pour_le_site() {
     assert_eq!(v["modems"]["max"], 4);
     assert_eq!(v["salon"], 0);
     assert!(v["maj"].as_u64().unwrap() >= v["depuis"].as_u64().unwrap());
+    // Pour l'administration du site : qui est en ligne, qui appelle qui
+    assert_eq!(v["en_ligne"], serde_json::json!([A.0]));
+    assert_eq!(v["communications"], serde_json::json!([]));
     drop(server);
     let _ = std::fs::remove_dir_all(dir);
 }

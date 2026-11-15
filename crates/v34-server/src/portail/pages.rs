@@ -79,6 +79,13 @@ table.succes td:first-child,table.classement td:first-child{width:1.5em;text-ali
 table.succes tr.eu td:first-child{color:#cc9900}
 table.succes tr.pas-eu{color:#808080}
 table.classement tr.moi{background:#ffffcc;font-weight:bold}
+.adm-menu{background:#000080;border:3px outset #c0c0c0;padding:4px 6px;margin:8px 0;font:bold 13px Verdana,Arial,sans-serif;line-height:1.9}
+.adm-menu a{color:#fff;text-decoration:none;margin-right:10px;white-space:nowrap}.adm-menu a:hover{text-decoration:underline}
+.adm-menu a.ici{color:#ffff00}.adm-menu form{display:inline}.adm-menu button{font-size:11px;padding:1px 6px}
+.adm-chiffre{font:bold 22px "Courier New",monospace;color:#800000}
+table.grille td.n{text-align:right;white-space:nowrap}
+.adm-form{border:2px groove #c0c0c0;background:#f4f4f4;padding:6px 10px;margin:8px 0}
+.adm-form p{margin:4px 0}
 .msg{border:2px groove #c0c0c0;background:#fffff0;padding:6px 10px;margin:8px 0;overflow-wrap:anywhere}
 .msg-t{font:12px Verdana,sans-serif;color:#555;border-bottom:1px dotted #c0c0c0;margin-bottom:4px}
 .pied p{margin:6px 0}
@@ -508,6 +515,11 @@ Pas de mot de passe à retenir : le FAI sait déjà qui vous êtes.</p>
 <p>Il paraît que certains numéros ne figurent dans aucun annuaire. L'oracle en connaîtrait au moins un… Chaque numéro trouvé rapporte un succès, et parfois une belle facture.
 Ce sont, eux aussi, de vrais services Minitel : chacun sa page, son bandeau et ses touches (RÉPÉTITION, SUITE, GUIDE…).
 Les plus patients balaieront une plage entière depuis le TERMINAL, avec la commande <code>AT*B</code> (voir l'aide du logiciel). Attention : chaque porteuse trouvée est taxée.</p>
+<h3>Le morse</h3>
+<p>Un mode « maison », comme les modems bricolés des années 90 : avec l'interrupteur <b>DIP 4 « MORSE »</b> du panneau <b>CONFIG</b> sur ON, votre modem le propose pendant la négociation V.8, dans un « service non normalisé » (code pays de la France, fournisseur TINYVERSE).
+Si le modem d'en face sait faire et accepte, plus de V.34 : <b>CONNECT 20 MPM MORSE</b>, et du vrai code morse international, 20 mots par minute (environ deux lettres par seconde), lettres accentuées comprises.
+Les deux parlent en même temps : 800 Hz pour l'appelant, 1600 Hz pour l'appelé. Vos messages partent entre KA et AR, la réponse s'écrit lettre par lettre dans la MESSAGERIE ; texte seulement, ni fichiers ni visiophone.
+Sinon, rien ne change : V.34 ou 56K comme d'habitude (le FAI et 3615 ORACLE ne parlent pas morse). Pour vous entraîner seul, appelez la ligne de test, le <b>08 00 00 00 00</b> : elle répond en morse et vous renvoie ce qu'elle entend.</p>
 <h3>Je n'arrive pas à me connecter</h3>
 <ul><li>Vérifiez le nom d'abonné (sensible aux majuscules) et le mot de passe. Changé sur ce site ? Changez-le aussi dans le logiciel s'il était mémorisé.</li>
 <li>Le central utilise le port <b>UDP 3434</b> : certains réseaux d'entreprise le bloquent.</li></ul>
@@ -521,119 +533,8 @@ Suivez <code>deploy/README.md</code> : un VPS sous Linux suffit.</p>"#,
     )
 }
 
-pub fn admin_connexion(admin: &str, erreur: Option<&str>) -> String {
-    let mut h = String::from("<h2>Administration</h2>");
-    if let Some(e) = erreur {
-        let _ = write!(h, r#"<div class="erreur">{}</div>"#, esc(e));
-    }
-    let _ = write!(
-        h,
-        r#"<form method="post" action="/admin/connexion">
-<p><label>Abonné</label><br><input type="text" value="{a}" disabled></p>
-<p><label for="mdp">Mot de passe</label><br><input type="password" id="mdp" name="mdp" required autofocus></p>
-<p><button type="submit">Entrer</button></p></form>"#,
-        a = esc(admin)
-    );
-    h
-}
-
-/// Ligne du tableau d'administration.
-pub struct LigneAdmin {
-    pub nom: String,
-    pub numero: String,
-    pub courriel: String,
-    pub cree: String,
-    pub fai: bool,
-    pub decide: bool,
-}
-
-pub fn admin_tableau(csrf: &str, comptes: &[LigneAdmin], attente: &[(String, String, String)], config: &[(String, String)], livre: (&[Message], &[Message]), info: Option<&str>) -> String {
-    let mut h = String::from("<h2>Administration</h2>");
-    if let Some(i) = info {
-        let _ = write!(h, r#"<div class="ok">{}</div>"#, esc(i));
-    }
-    // Pas de JavaScript (la politique de sécurité du site l'interdit) : la
-    // suppression d'un compte demande de cocher une case.
-    let bouton = |action: &str, caches: &str, texte: &str, confirm: bool| {
-        format!(
-            r#"<form method="post" action="/admin/{action}" style="display:inline"><input type="hidden" name="csrf" value="{csrf}">{caches}{coche}<button type="submit">{texte}</button></form>"#,
-            csrf = esc(csrf),
-            coche = if confirm { r#"<label class="aide"><input type="checkbox" name="sur" value="1" required>sûr</label> "# } else { "" }
-        )
-    };
-    let cache = |nom: &str, valeur: &str| format!(r#"<input type="hidden" name="{nom}" value="{}">"#, esc(valeur));
-    let _ = write!(h, "<h3>Abonnés inscrits par le site ({})</h3>", comptes.len());
-    if comptes.is_empty() {
-        h.push_str("<p>Aucun pour l'instant.</p>");
-    } else {
-        h.push_str("<table class=\"grille\"><tr><th>Abonné</th><th>Numéro</th><th>Courriel</th><th>Inscrit le</th><th>Internet</th><th></th></tr>");
-        for c in comptes {
-            let etat = if c.fai { "<b style=\"color:green\">oui</b>" } else if c.decide { "refusé" } else { "<span class=\"nouveau\">à décider</span>" };
-            let d = if c.fai { "non" } else { "oui" };
-            let action = bouton("fai", &(cache("nom", &c.nom) + &cache("d", d)), if c.fai { "Retirer" } else { "Accorder" }, false);
-            let _ = write!(
-                h,
-                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{etat}</td><td>{action} {}</td></tr>",
-                esc(&c.nom),
-                esc(&numero_lisible(&c.numero)),
-                esc(&c.courriel),
-                esc(&c.cree),
-                bouton("supprimer", &cache("nom", &c.nom), "Supprimer", true)
-            );
-        }
-        h.push_str("</table>");
-    }
-    if !attente.is_empty() {
-        let _ = write!(h, "<h3>Inscriptions en attente de confirmation de l'e-mail ({})</h3><table class=\"grille\"><tr><th>Abonné</th><th>Numéro</th><th>Courriel</th></tr>", attente.len());
-        for (n, num, c) in attente {
-            let _ = write!(h, "<tr><td>{}</td><td>{}</td><td>{}</td></tr>", esc(n), esc(&numero_lisible(num)), esc(c));
-        }
-        h.push_str("</table>");
-    }
-    let (a_relire, publies) = livre;
-    let ligne_livre = |h: &mut String, m: &Message, publier: bool| {
-        let id = cache("id", &m.id);
-        let publier = if publier { bouton("livre/publier", &id, "Publier", false) + " " } else { String::new() };
-        let _ = write!(
-            h,
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{publier}{}</td></tr>",
-            esc(&date_heure_fr(m.date)),
-            esc(&m.pseudo),
-            texte_multiligne(&m.texte),
-            bouton("livre/supprimer", &id, "Supprimer", false)
-        );
-    };
-    let _ = write!(h, "<h3>Livre d'or : messages à relire ({})</h3>", a_relire.len());
-    if a_relire.is_empty() {
-        h.push_str("<p>Rien à relire.</p>");
-    } else {
-        h.push_str("<table class=\"grille\"><tr><th>Déposé le</th><th>Pseudo</th><th>Message</th><th></th></tr>");
-        for m in a_relire {
-            ligne_livre(&mut h, m, true);
-        }
-        h.push_str("</table>");
-    }
-    if !publies.is_empty() {
-        let _ = write!(h, "<h3>Livre d'or : derniers messages publiés ({})</h3><table class=\"grille\"><tr><th>Déposé le</th><th>Pseudo</th><th>Message</th><th></th></tr>", publies.len());
-        for m in publies {
-            ligne_livre(&mut h, m, false);
-        }
-        h.push_str("</table>");
-    }
-    let _ = write!(h, "<h3>Abonnés de la configuration du serveur ({})</h3><p class=\"aide\">Gérés avec <code>v34-server ajouter-abonne</code> / <code>retirer-abonne</code>.</p><table class=\"grille\"><tr><th>Abonné</th><th>Numéro</th></tr>", config.len());
-    for (n, num) in config {
-        let _ = write!(h, "<tr><td>{}</td><td>{}</td></tr>", esc(n), esc(&numero_lisible(num)));
-    }
-    let _ = write!(
-        h,
-        r#"</table><form method="post" action="/admin/deconnexion"><input type="hidden" name="csrf" value="{}"><p><button type="submit">Se déconnecter</button></p></form>"#,
-        esc(csrf)
-    );
-    h
-}
-
 /// Texte de plusieurs lignes, échappé (retours à la ligne gardés).
-fn texte_multiligne(t: &str) -> String {
+pub fn texte_multiligne(t: &str) -> String {
     esc(t).replace('\n', "<br>")
 }
 
@@ -703,7 +604,7 @@ pub fn duree_fr(s: u64) -> String {
     }
 }
 
-fn pluriel(n: u64, singulier: &str, pluriel: &str) -> String {
+pub fn pluriel(n: u64, singulier: &str, pluriel: &str) -> String {
     format!("{n} {}", if n > 1 { pluriel } else { singulier })
 }
 
@@ -743,6 +644,8 @@ pub struct VueCompte<'a> {
     pub courriel: Option<&'a str>,
     pub cree: Option<String>,
     pub acces: Acces,
+    /// Abonnement suspendu par l'opérateur
+    pub suspendu: bool,
 }
 
 pub fn compte(v: &VueCompte, central: &str, csrf: &str, info: Option<&str>, erreur: Option<&str>, suite: &str) -> String {
@@ -752,6 +655,9 @@ pub fn compte(v: &VueCompte, central: &str, csrf: &str, info: Option<&str>, erre
     }
     if let Some(e) = erreur {
         let _ = write!(h, r#"<div class="erreur">{}</div>"#, esc(e));
+    }
+    if v.suspendu {
+        h.push_str(r#"<div class="erreur"><b>Abonnement suspendu</b> par l'opérateur : le central refuse la connexion de votre logiciel. Pour en savoir plus, écrivez-lui (voir les <a href="/mentions">mentions légales</a>).</div>"#);
     }
     let acces = match v.acces {
         Acces::Accorde => r#"<span class="voyant v-vert"></span> <b>accordé</b> : appelez TINYVERSE (08 36 15 42 86), en tête de l'annuaire du logiciel, et surfez !"#,
@@ -933,7 +839,7 @@ pub fn livre_merci(pseudo: &str) -> String {
 
 // ───────────────────────── état du réseau ─────────────────────────
 
-fn voyant(classe: &str) -> String {
+pub fn voyant(classe: &str) -> String {
     format!(r#"<span class="voyant {classe}"></span>"#)
 }
 

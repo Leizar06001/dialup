@@ -11,7 +11,7 @@ use super::pages::esc;
 
 /// Date de la version en vigueur des conditions et de la politique de
 /// confidentialité.
-pub const VERSION: &str = "14 novembre 2026";
+pub const VERSION: &str = "15 novembre 2026";
 
 /// Ce que les pages légales affichent sur l'éditeur du site.
 pub struct Editeur<'a> {
@@ -109,14 +109,14 @@ pub fn confidentialite(e: &Editeur) -> String {
 <h3>Les données traitées</h3>
 <table class="grille">
 <tr><th>Données</th><th>Pour quoi faire</th><th>Combien de temps</th></tr>
-<tr><td>Nom d'abonné, adresse électronique, numéro, <b>empreinte</b> du mot de passe (PBKDF2-SHA-256 salé : jamais le mot de passe lui-même), date d'inscription, décision d'accès Internet</td><td>Créer et faire fonctionner votre abonnement (connexion au central, annuaire, accès Internet) ; vous écrire au sujet de votre compte</td><td>Inscription non confirmée : <b>48 heures</b>.<br>Compte : <b>jusqu'à sa suppression</b>, par vous ou par l'opérateur</td></tr>
+<tr><td>Nom d'abonné, adresse électronique, numéro, <b>empreinte</b> du mot de passe (PBKDF2-SHA-256 salé : jamais le mot de passe lui-même), date d'inscription, décision d'accès Internet, suspension éventuelle par l'opérateur</td><td>Créer et faire fonctionner votre abonnement (connexion au central, annuaire, accès Internet) ; vous écrire au sujet de votre compte</td><td>Inscription non confirmée : <b>48 heures</b>.<br>Compte : <b>jusqu'à sa suppression</b>, par vous ou par l'opérateur</td></tr>
 <tr><td>Empreinte des liens envoyés par e-mail (activation, mot de passe oublié)</td><td>Vérifier qu'un lien est bien le vôtre</td><td>48 heures (activation) ou 1 heure (mot de passe), effacée dès l'usage</td></tr>
 <tr><td>Adresse IP</td><td>Sécurité et lutte contre les abus : journaux du serveur, limites du nombre d'essais (inscriptions, connexions, messages)</td><td>Journaux : selon la durée de rétention du système du serveur.<br>Limites anti-abus : en mémoire, 24 heures au plus, oubliées au redémarrage</td></tr>
 <tr><td>Pseudo, message et date (livre d'or)</td><td>Publier votre message après relecture</td><td>Jusqu'à sa suppression : sur demande, ou quand les plus récents le poussent hors du livre</td></tr>
 <tr><td><b>Facture et succès</b> : tickets de vos appels aboutis (numéro composé, correspondant, début, durée, prix fictif en francs), succès obtenus, jours de connexion au central</td><td>Afficher votre facture (jamais réclamée) et vos succès, et le classement des plus grosses factures entre abonnés</td><td>Tickets : un fichier par mois sur le serveur ; succès : sur le serveur. Supprimés sur demande</td></tr>
 <tr><td><b>Tinyblog</b> : vos articles, images, commentaires et « j'kiffe », sous votre nom d'abonné</td><td>Les publier pour les abonnés connectés au fournisseur d'accès</td><td>Jusqu'à ce que vous les supprimiez (ou l'opérateur)</td></tr>
-<tr><td><b>Services du central</b> : messages que vous y laissez et meilleurs scores des jeux, sous votre nom d'abonné</td><td>Les faire lire aux autres abonnés</td><td>Les derniers messages seulement (les plus anciens s'effacent) ; scores : jusqu'à suppression sur demande</td></tr>
-<tr><td><b>Central téléphonique</b> : présence (abonné connecté, adresse IP et port du logiciel), appels (qui appelle quel numéro, début et fin), entrées et sorties du salon</td><td>Acheminer les appels, diagnostiquer les pannes, lutter contre les abus</td><td>Présence : en mémoire, le temps de la connexion.<br>Journaux : selon la durée de rétention du système</td></tr>
+<tr><td><b>Services du central</b> : messages que vous y laissez et meilleurs scores des jeux, sous votre nom d'abonné</td><td>Les faire lire aux autres abonnés</td><td>Les derniers messages seulement (les plus anciens s'effacent) ; scores : jusqu'à suppression sur demande. L'opérateur peut aussi retirer un message ou un score</td></tr>
+<tr><td><b>Central téléphonique</b> : présence (abonné connecté, adresse IP et port du logiciel), appels (qui appelle quel numéro, début et fin), entrées et sorties du salon</td><td>Acheminer les appels, diagnostiquer les pannes, lutter contre les abus ; montrer à l'opérateur, sur sa page d'administration, qui est en ligne et qui appelle qui</td><td>Présence et appels en cours : en mémoire, et dans le petit fichier d'état que le central réécrit chaque seconde (noms et numéros, sans adresse IP), le temps de la connexion ou de l'appel.<br>Journaux : selon la durée de rétention du système</td></tr>
 <tr><td><b>Accès Internet</b> : destinations ouvertes par le tunnel (nom du site et port)</td><td>Diagnostic</td><td>Journalisées <b>seulement en mode débogage</b> ; les tentatives refusées ou en échec sont notées dans le journal ordinaire</td></tr>
 <tr><td><b>3615 ORACLE</b> : vos questions et les réponses de la consultation en cours ; nombre de questions posées dans la journée</td><td>Fabriquer la réponse : le texte des questions (et des échanges précédents du même appel) est <b>transmis à OpenRouter et au fournisseur du modèle d'IA</b> (voir ci-dessous) ; compter les questions pour appliquer les quotas</td><td>Questions et réponses : en mémoire, <b>le temps de l'appel</b>, jamais journalisées ni enregistrées par le central ; une réponse à une première question identique peut resservir, sans nom d'abonné, 6 heures au plus.<br>Nombre de questions : en mémoire, jusqu'au lendemain</td></tr>
 </table>

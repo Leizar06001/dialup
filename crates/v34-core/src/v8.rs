@@ -83,6 +83,103 @@ pub struct Menu {
     /// Catégorie « modem PCM » (bits b5..b7, tableau 5/V.8), si présente :
     /// [`PCM_ANALOG`], [`PCM_DIGITAL`], V.91
     pub pcm: Option<u8>,
+    /// Services non normalisés (§6.6/V.8), après les champs normalisés
+    pub nsf: Vec<NonNormalise>,
+}
+
+/// Catégorie « services non normalisés » (tableau 2/V.8) : b0..b3 = 1111.
+const CAT_NSF: u8 = 0x0F;
+/// Indicatif de pays T.35 de la France (T.35, annexe A).
+pub const T35_FRANCE: u8 = 0x3D;
+/// Notre code de fournisseur, « TV » pour TINYVERSE (T.35 : attribué par
+/// l'administration du pays ; on s'est servi nous-mêmes, comme tout le
+/// monde en 1998). Deux octets, comme les codes des fabricants de fax : le
+/// nom en entier allongeait chaque CM d'une demi-seconde à 300 bit/s, et
+/// par temps d'orage un CM sur deux y laissait un bit (négociation réussie
+/// 34 fois sur 40 au lieu de 40, et 22 au lieu de 30 face à un modem qui
+/// ne parle pas morse).
+pub const FOURNISSEUR: &[u8] = b"TV";
+/// Nos services non normalisés : le premier octet de l'information les
+/// désigne. « M » : le morse, suivi de la vitesse en mots par minute.
+pub const SERVICE_MORSE: u8 = b'M';
+
+/// Un bloc d'information non normalisée (tableau 8/V.8) : longueur, pays
+/// T.35, longueur du code fournisseur, code fournisseur, information.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NonNormalise {
+    /// Indicatif de pays T.35 (un octet, deux si le premier vaut 0xFF)
+    pub pays: Vec<u8>,
+    pub fournisseur: Vec<u8>,
+    pub info: Vec<u8>,
+}
+
+impl NonNormalise {
+    /// « Je parle morse, à `mpm` mots par minute » (France, TINYVERSE).
+    pub fn morse(mpm: u8) -> Self {
+        NonNormalise { pays: vec![T35_FRANCE], fournisseur: FOURNISSEUR.to_vec(), info: vec![SERVICE_MORSE, mpm] }
+    }
+
+    /// Notre service morse ? Renvoie alors la vitesse proposée.
+    pub fn mpm_morse(&self) -> Option<u8> {
+        if self.pays != [T35_FRANCE] || self.fournisseur != FOURNISSEUR {
+            return None;
+        }
+        match self.info.as_slice() {
+            [SERVICE_MORSE, mpm, ..] if *mpm > 0 => Some(*mpm),
+            _ => None,
+        }
+    }
+
+    /// Le bloc en octets (avant répartition dans les octets d'extension).
+    fn octets(&self) -> Vec<u8> {
+        let mut o = vec![(self.pays.len() + self.fournisseur.len() + self.info.len() + 1) as u8];
+        o.extend(&self.pays);
+        o.push(self.fournisseur.len() as u8);
+        o.extend(&self.fournisseur);
+        o.extend(&self.info);
+        o
+    }
+
+    /// Relit des blocs concaténés ; s'arrête au premier bloc incohérent.
+    fn lire(mut o: &[u8]) -> Vec<NonNormalise> {
+        let mut v = Vec::new();
+        while let Some((&n, reste)) = o.split_first() {
+            let n = n as usize;
+            if n < 2 || reste.len() < n {
+                break; // bourrage, ou bloc tronqué
+            }
+            let (bloc, suite) = reste.split_at(n);
+            o = suite;
+            // T.35 (2000) : un indicatif 0xFF est suivi d'un second octet
+            let k = if bloc[0] == 0xFF { 2 } else { 1 };
+            let Some(&l) = bloc.get(k) else { break };
+            let l = l as usize;
+            if bloc.len() < k + 1 + l {
+                break;
+            }
+            v.push(NonNormalise { pays: bloc[..k].to_vec(), fournisseur: bloc[k + 1..k + 1 + l].to_vec(), info: bloc[k + 1 + l..].to_vec() });
+        }
+        v
+    }
+}
+
+/// Positions des 5 bits d'option d'un octet d'extension (§5.2/V.8).
+const EXT_BITS: [u8; 5] = [0, 1, 2, 6, 7];
+
+/// Champ NS → octets d'extension : « chaque groupe de cinq bits du champ
+/// NS (bits de poids fort aux positions b de poids fort) sur les 10 bits
+/// d'un octet d'extension » (§6.6/V.8). Les octets du champ sont pris bit de
+/// poids faible d'abord, comme ils seraient émis ; le dernier groupe est
+/// complété par des zéros.
+fn nsf_vers_extensions(champ: &[u8]) -> Vec<u8> {
+    let bits: Vec<bool> = champ.iter().flat_map(|&o| (0..8).map(move |i| (o >> i) & 1 == 1)).collect();
+    bits.chunks(5).map(|g| g.iter().zip(EXT_BITS).fold(0x10u8, |acc, (&b, pos)| acc | (b as u8) << pos)).collect()
+}
+
+/// Octets d'extension → champ NS (le bourrage de fin, moins de 8 bits, tombe).
+fn extensions_vers_nsf(ext: &[u8]) -> Vec<u8> {
+    let bits: Vec<bool> = ext.iter().flat_map(|&o| EXT_BITS.iter().map(move |&p| (o >> p) & 1 == 1)).collect();
+    bits.chunks_exact(8).map(|g| g.iter().enumerate().fold(0u8, |acc, (i, &b)| acc | (b as u8) << i)).collect()
 }
 
 /// Modem analogique V.90/V.92 disponible (b5 de l'octet pcm0).
@@ -101,7 +198,13 @@ impl Menu {
             lapm: true,
             access: None,
             pcm: None,
+            nsf: Vec::new(),
         }
+    }
+
+    /// Vitesse du morse proposée dans ce menu (service non normalisé), s'il y en a un.
+    pub fn morse(&self) -> Option<u8> {
+        self.nsf.iter().find_map(NonNormalise::mpm_morse)
     }
 
     /// Menu annoncé selon la configuration : avec le 56k, l'appelant se
@@ -118,6 +221,11 @@ impl Menu {
                 m.pcm = Some(PCM_DIGITAL);
                 m.access = Some(ACCESS_DIGITAL);
             }
+        }
+        // Morse (DIP 4) : l'appelant le propose ; l'appelé ne l'accepte dans
+        // son JM que si le CM le demande (voir modem.rs).
+        if cfg.morse && !answer {
+            m.nsf.push(NonNormalise::morse(crate::morse::MPM));
         }
         m
     }
@@ -145,6 +253,12 @@ impl Menu {
         if let Some(a) = self.access {
             o.push(0x0D | (a & 7) << 5);
         }
+        // Services non normalisés : après les champs normalisés (§6.6/V.8)
+        if !self.nsf.is_empty() {
+            let champ: Vec<u8> = self.nsf.iter().flat_map(NonNormalise::octets).collect();
+            o.push(CAT_NSF);
+            o.extend(nsf_vers_extensions(&champ));
+        }
         o
     }
 
@@ -154,10 +268,16 @@ impl Menu {
         let mut cat: Option<u8> = None;
         let mut ext_idx = 0;
         let mut first = true;
+        // Champs NS en cours (un par catégorie « non normalisé »)
+        let mut ns: Vec<Vec<u8>> = Vec::new();
         for &o in oct {
             let is_ext = (o & 0x38) == 0x10; // b3=0 b4=1 b5=0
             if is_ext {
-                if cat == Some(0x05) {
+                if cat == Some(CAT_NSF) {
+                    if let Some(c) = ns.last_mut() {
+                        c.push(o);
+                    }
+                } else if cat == Some(0x05) {
                     ext_idx += 1;
                     let m = &mut menu.modes;
                     let bit = |v: u8| o & v != 0;
@@ -197,8 +317,12 @@ impl Menu {
                 0x0A => menu.lapm = opts == 0b001,
                 0x0D => menu.access = Some(opts),
                 0x07 => menu.pcm = Some(opts),
+                CAT_NSF => ns.push(Vec::new()),
                 _ => {}
             }
+        }
+        for c in ns {
+            menu.nsf.extend(NonNormalise::lire(&extensions_vers_nsf(&c)));
         }
         if first {
             None
@@ -241,7 +365,7 @@ pub fn cj_bits() -> Vec<bool> {
 pub enum V8Rx {
     /// Une séquence CM/JM a été reçue (pas encore confirmée)
     Sequence(Vec<u8>),
-    /// Deux séquences identiques consécutives : menu validé
+    /// Deux séquences identiques reçues : menu validé
     Confirmed(Menu),
     /// Signal CJ reçu (3 octets nuls)
     Cj,
@@ -257,7 +381,9 @@ pub struct V8Parser {
     octet_bits: u32,
     octet_val: u16,
     octets: Vec<u8>,
-    last_seq: Option<Vec<u8>>,
+    /// Dernières séquences reçues (une copie abîmée entre deux bonnes ne
+    /// remet pas le compte à zéro : utile pour les longs CM du morse)
+    recent: Vec<Vec<u8>>,
     confirmed: bool,
 }
 
@@ -321,14 +447,17 @@ impl V8Parser {
             return None;
         }
         let seq = std::mem::take(&mut self.octets);
-        if self.last_seq.as_ref() == Some(&seq) && !self.confirmed {
+        // §8.1.2/V.8 : « au moins 2 séquences identiques reçues »
+        if self.recent.contains(&seq) && !self.confirmed {
             if let Some(menu) = Menu::from_octets(&seq) {
                 self.confirmed = true;
-                self.last_seq = Some(seq);
                 return Some(V8Rx::Confirmed(menu));
             }
         }
-        self.last_seq = Some(seq.clone());
+        self.recent.push(seq.clone());
+        if self.recent.len() > 4 {
+            self.recent.remove(0);
+        }
         Some(V8Rx::Sequence(seq))
     }
 }
@@ -512,6 +641,87 @@ mod tests {
             }
         }
         assert!(confirmed && cj);
+    }
+
+    fn menu_morse() -> Menu {
+        let mut m = Menu::ours();
+        m.nsf.push(NonNormalise::morse(20));
+        m
+    }
+
+    #[test]
+    fn nsf_morse_aller_retour() {
+        let m = menu_morse();
+        let o = m.to_octets();
+        let i = o.iter().position(|&x| x == 0x0F).expect("catégorie « non normalisé »");
+        assert!(o[i + 1..].iter().all(|&x| x & 0x38 == 0x10), "rien que des octets d'extension après : {o:02X?}");
+        // longueur, pays, longueur du code, « TV », « M », 20 :
+        // 7 octets = 56 bits → 12 octets d'extension de 5 bits
+        assert_eq!(o.len() - i - 1, 12);
+        let lu = Menu::from_octets(&o).unwrap();
+        assert_eq!(lu, m);
+        assert_eq!(lu.morse(), Some(20));
+        // Les champs normalisés sont intacts : un modem qui ignore le NS
+        // (§10/V.8) lit exactement notre menu habituel.
+        assert_eq!(Menu { nsf: Vec::new(), ..lu }, Menu::ours());
+        assert_eq!(Menu::ours().morse(), None);
+    }
+
+    #[test]
+    fn nsf_cinq_bits_par_octet_d_extension() {
+        // poids faibles en b0..b2, poids forts en b6 et b7 ; bourrage à zéro
+        assert_eq!(nsf_vers_extensions(&[0xFF]), vec![0xD7, 0x17]);
+        assert_eq!(nsf_vers_extensions(&[0x01]), vec![0x11, 0x10]);
+        assert_eq!(extensions_vers_nsf(&[0xD7, 0x17]), vec![0xFF]);
+        let champ: Vec<u8> = (0..=255u8).collect();
+        assert_eq!(extensions_vers_nsf(&nsf_vers_extensions(&champ)), champ);
+    }
+
+    #[test]
+    fn nsf_autres_fournisseurs_et_blocs_concatenes() {
+        let acme = NonNormalise { pays: vec![0xB5], fournisseur: b"ACME".to_vec(), info: vec![b'M', 20] };
+        let deux = NonNormalise { pays: vec![0xFF, 0x01], fournisseur: b"XY".to_vec(), info: vec![] };
+        let mut m = Menu::ours();
+        m.nsf = vec![acme.clone(), deux.clone(), NonNormalise::morse(13)];
+        let lu = Menu::from_octets(&m.to_octets()).unwrap();
+        assert_eq!(lu.nsf, vec![acme.clone(), deux, NonNormalise::morse(13)]);
+        assert_eq!(lu.morse(), Some(13), "seul notre bloc compte");
+        m.nsf = vec![acme];
+        assert_eq!(Menu::from_octets(&m.to_octets()).unwrap().morse(), None, "un « M » d'ACME n'est pas notre morse");
+    }
+
+    #[test]
+    fn cm_morse_sans_faux_drapeau_ni_faux_preambule() {
+        let bits = menu_morse().sequence_bits();
+        let s: String = bits.iter().map(|&b| if b { '1' } else { '0' }).collect();
+        assert!(!s.contains("01111110"), "drapeau HDLC simulé");
+        assert!(!s[20..].contains("1111111111"), "faux préambule dans les octets");
+        // Le décodeur confirme le CM malgré sa longueur
+        let mut p = V8Parser::new();
+        let mut lu = None;
+        for b in (0..3).flat_map(|_| menu_morse().sequence_bits()) {
+            if let Some(V8Rx::Confirmed(m)) = p.push(b) {
+                lu = Some(m);
+            }
+        }
+        assert_eq!(lu, Some(menu_morse()));
+    }
+
+    #[test]
+    fn une_copie_abimee_entre_deux_bonnes() {
+        let m = menu_morse();
+        let mut abimee = m.clone();
+        abimee.nsf[0].info[1] = 21;
+        let mut p = V8Parser::new();
+        let mut lu = None;
+        for menu in [&m, &abimee, &m, &m] {
+            for b in menu.sequence_bits() {
+                if let Some(V8Rx::Confirmed(c)) = p.push(b) {
+                    lu.get_or_insert(c);
+                }
+            }
+        }
+        assert_eq!(lu, Some(m), "confirmé à la troisième séquence");
     }
 
     #[test]
