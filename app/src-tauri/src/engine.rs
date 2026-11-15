@@ -373,6 +373,10 @@ pub struct Engine {
     fax_y: usize,
     /// Balayage de numéros en cours (AT*B)
     balayage: Option<Balayage>,
+    /// Liaison morse en cours (vitesse, mots/minute) ; une ligne du
+    /// correspondant est ouverte dans la messagerie
+    morse: Option<u8>,
+    morse_ligne: bool,
 }
 
 /// Balayage de numéros (AT*B) : chaque numéro d'une plage est composé à son
@@ -438,12 +442,13 @@ fn fmt_speed(x: f64) -> String {
 /// Le haut-parleur joue-t-il ? ATM0 jamais, ATM2 toujours (décroché), ATM1
 /// (AUTO) jusqu'à la porteuse… sauf une télécopie, qu'on entend jusqu'au
 /// bout : la porteuse s'y allume dès le CNG, et le sifflement de la page,
-/// c'est tout l'intérêt.
+/// c'est tout l'intérêt. Pareil pour le morse : ti-ta-ti-ti.
 fn hp_actif(mode: u8, offhook: bool, cd: bool, phase: Phase) -> bool {
     offhook
         && match mode {
             0 => false,
-            1 => !cd || phase == Phase::Fax,
+            // (le morse aussi : il est fait pour l'oreille)
+            1 => !cd || matches!(phase, Phase::Fax | Phase::Morse),
             _ => true,
         }
 }
@@ -515,6 +520,8 @@ impl Engine {
             fax_de: None,
             fax_y: 0,
             balayage: None,
+            morse: None,
+            morse_ligne: false,
         }
     }
 
@@ -641,6 +648,7 @@ impl Engine {
                     "Les fichiers vont d'abonné à abonné : appelle quelqu'un de l'ANNUAIRE pour lui en envoyer un.".into(),
                 );
             }
+            EngineCmd::Chat(text) if self.morse.is_some() => self.chat_morse(text),
             EngineCmd::Chat(text) => {
                 if self.status.phase == Phase::Data {
                     let bytes = crate::bbs::encode(&crate::bbs::Frame::Chat(text.clone()));
@@ -690,6 +698,9 @@ impl Engine {
             EngineCmd::SetConfig(cfg, auto) => {
                 self.cfg = cfg;
                 self.auto_answer = auto;
+            }
+            EngineCmd::SendFile(..) if self.morse.is_some() => {
+                self.chat("system", "Pas de fichier en morse : le télégraphe ne transporte que du texte, deux lettres par seconde. Pour un fichier, raccroche et rappelle avec le DIP 4 (MORSE) sur OFF.".into());
             }
             EngineCmd::SendFile(name, data) => {
                 if !matches!(self.status.phase, Phase::Data | Phase::Retrain) {
@@ -840,12 +851,21 @@ impl Engine {
                             } else {
                                 "V.90 (56K) désactivé (panneau CONFIG)".into()
                             },
+                            if self.cfg.morse {
+                                format!("Morse {} mots/minute (V.8 non normalisé TINYVERSE, DIP 4)", v34_core::morse::MPM)
+                            } else {
+                                "Morse désactivé (DIP 4)".into()
+                            },
                         ],
                         _ => vec!["OK".into()],
                     };
                     for l in &lines {
                         self.console(l, "resp");
                     }
+                }
+                'O' if self.morse.is_some() => {
+                    self.console(&format!("CONNECT {} MPM MORSE", self.morse.unwrap_or(v34_core::morse::MPM)), "result");
+                    responded = true;
                 }
                 'O' => {
                     if self.status.phase != Phase::Data {
@@ -898,6 +918,8 @@ impl Engine {
         self.utf8_pending.clear();
         // Nouvel appel : nouveau flux, nouvelle couche de correction d'erreurs
         self.bbs_rx = crate::bbs::Decoder::default();
+        self.morse = None;
+        self.morse_ligne = false;
         self.stream_pos = 0;
         self.outgoing.clear();
         self.incoming = None;
@@ -1012,7 +1034,7 @@ impl Engine {
                     return;
                 }
                 self.user_hangup = true;
-                let connected = matches!(self.status.phase, Phase::Data | Phase::Phase2 | Phase::Phase3 | Phase::Phase4 | Phase::Retrain | Phase::Cleardown);
+                let connected = matches!(self.status.phase, Phase::Data | Phase::Phase2 | Phase::Phase3 | Phase::Phase4 | Phase::Retrain | Phase::Cleardown | Phase::Morse);
                 match reason {
                     // FAI non activé : il « sonne occupé » (comme le dit le site)
                     H::Forbidden if !connected => {
@@ -1361,10 +1383,12 @@ impl Engine {
         self.ringing_from = None;
         self.script.clear();
         self.ringback = false;
-        if self.link.is_network() && self.status.phase != Phase::Data {
+        // (morse : SK part d'abord, puis le modem raccroche de lui-même)
+        let propre = matches!(self.status.phase, Phase::Data | Phase::Morse);
+        if self.link.is_network() && !propre {
             self.link.net_hangup();
         }
-        if self.status.phase == Phase::Data {
+        if propre {
             // Raccrochage propre (cleardown V.34) ; le distant suivra.
             self.link.command_local(ModemCommand::Hangup);
         } else {
@@ -1691,8 +1715,23 @@ impl Engine {
             // (les lignes reçues sont lourdes : l'IHM les reçoit empaquetées)
             return self.on_fax(side, f);
         }
+        if let (Side::Local, ModemEvent::Morse(m)) = (side, &ev) {
+            self.on_morse(m);
+        }
         if side == Side::Local {
             match &ev {
+                ModemEvent::PhaseChanged(Phase::Morse) => {
+                    self.morse = Some(self.link.local_status().morse.map_or(v34_core::morse::MPM, |m| m.mpm));
+                    self.morse_ligne = false;
+                }
+                ModemEvent::Connected { .. } if self.morse.is_some() => {
+                    let mpm = self.morse.unwrap_or(v34_core::morse::MPM);
+                    self.console(&format!("CONNECT {mpm} MPM MORSE"), "result");
+                    self.chat(
+                        "system",
+                        format!("Liaison en MORSE ({mpm} mots/minute, environ deux lettres par seconde) : tape ton message, il part en ti-ta-ti ; la réponse s'écrit ici lettre par lettre. Pas de fichiers ni d'images au télégraphe."),
+                    );
+                }
                 ModemEvent::PhaseChanged(Phase::Retrain) => {
                     self.counters.recoveries += 1;
                     self.retrains += 1;
@@ -1719,6 +1758,8 @@ impl Engine {
                         self.user_hangup = true;
                     }
                 }
+                // en morse, le texte arrive par les événements Morse (lettre par lettre)
+                ModemEvent::Data(_) if self.morse.is_some() => {}
                 ModemEvent::Data(bytes) => {
                     if let Some(t) = self.tunnel.as_mut() {
                         t.pipe.on_modem_data(bytes.clone());
@@ -1809,6 +1850,48 @@ impl Engine {
         }
     }
 
+    /// Morse : un message de la messagerie part entre KA (début) et AR
+    /// (fin). Ce que le morse ne sait pas dire est signalé (et sauté).
+    fn chat_morse(&mut self, text: String) {
+        // (les chevrons servent aux procédures tapées à la main : <BT>, <SK>…)
+        let muet = |c: &char| !c.is_whitespace() && !"<>".contains(*c) && v34_core::morse::code::signes_du_caractere(*c).is_empty();
+        let muets: String = text.chars().filter(muet).collect();
+        if !muets.is_empty() {
+            self.chat("system", format!("Le morse ne sait pas dire « {muets} » : sauté."));
+        }
+        let propre: String = text.chars().filter(|c| !muet(c)).collect();
+        if !propre.trim().is_empty() {
+            self.send_bytes(format!("<KA>{}<AR>", propre.trim()).into_bytes());
+        }
+        self.chat("local", text);
+    }
+
+    /// Morse : ce que l'écoute reconnaît s'écrit dans la messagerie au fil
+    /// de l'eau, lettre par lettre ; KA ouvre une ligne, AR la ferme.
+    fn on_morse(&mut self, m: &v34_core::morse::MorseEvenement) {
+        use v34_core::morse::MorseEvenement as M;
+        let M::Recu { texte, .. } = m else { return };
+        match texte.as_str() {
+            "<KA>" | "<AR>" => {
+                if std::mem::take(&mut self.morse_ligne) {
+                    self.chat("remote", "\n".into());
+                }
+            }
+            "<SK>" => {
+                if std::mem::take(&mut self.morse_ligne) {
+                    self.chat("remote", "\n".into());
+                }
+                self.chat("system", "SK : fin de contact, le correspondant raccroche.".into());
+            }
+            // pas d'espace en début de ligne
+            " " if !self.morse_ligne => {}
+            t => {
+                self.morse_ligne = true;
+                self.chat("remote", t.to_string());
+            }
+        }
+    }
+
     /// Décodage UTF-8 incrémental (un caractère peut être coupé entre deux paquets).
     fn decode_utf8(&mut self, bytes: &[u8]) -> String {
         self.utf8_pending.extend_from_slice(bytes);
@@ -1865,6 +1948,7 @@ impl Engine {
         match self.status.phase {
             Phase::Data => "online",
             Phase::Fax => "fax",
+            Phase::Morse => "morse",
             p if in_call(p) => "connecting",
             _ => "idle",
         }
@@ -1920,12 +2004,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hp_auto_jusqu_a_la_porteuse_sauf_le_fax() {
+    fn hp_auto_jusqu_a_la_porteuse_sauf_le_fax_et_le_morse() {
         // AUTO : la négociation s'entend, plus les données…
         assert!(hp_actif(1, true, false, Phase::Phase2));
         assert!(!hp_actif(1, true, true, Phase::Data));
         // …mais une télécopie, porteuse allumée, s'entend jusqu'au bout
         assert!(hp_actif(1, true, true, Phase::Fax));
+        // …et le morse aussi, tout du long
+        assert!(hp_actif(1, true, true, Phase::Morse));
+        assert!(!hp_actif(0, true, true, Phase::Morse));
         // OFF reste muet, même pour un fax ; raccroché, rien
         assert!(!hp_actif(0, true, true, Phase::Fax));
         assert!(!hp_actif(1, false, false, Phase::Fax));

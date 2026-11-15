@@ -6,7 +6,8 @@
 //! Une fois CONNECT obtenu, le flux d'octets du modem est raccordé par un
 //! [`ModemPipe`] au service :
 //! - [`Service::Fai`] : bout serveur du tunnel ([`crate::tunnel`]) ;
-//! - [`Service::Echo`] : ligne de test, renvoie tout ce qu'elle reçoit ;
+//! - [`Service::Echo`] : ligne de test, renvoie tout ce qu'elle reçoit (en
+//!   morse aussi, si l'appelant le propose : on peut s'y essayer seul) ;
 //! - [`Service::Oracle`] : 3615 ORACLE ([`crate::oracle`]), questions et
 //!   réponses en trames de chat, comme un abonné.
 //!
@@ -19,7 +20,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use v34_core::{LineParams, LineSim, Modem, ModemCommand, ModemConfig, ModemEvent, Role};
+use v34_core::{LineParams, LineSim, Modem, ModemCommand, ModemConfig, ModemEvent, Phase, Role};
 use v34_net::jitter::{Concealment, JitterBuffer};
 use v34_net::signal::HangupReason;
 use v34_net::tunnel::ModemPipe;
@@ -31,6 +32,8 @@ use crate::tunnel::{self, TunnelPolicy};
 use crate::{debug, info, warn};
 
 const PERIOD: Duration = Duration::from_millis(20);
+/// Accueil de la ligne de test en morse
+pub const ECHO_MORSE: &[u8] = "<KA>ICI ECHO, À VOUS<AR>".as_bytes();
 /// Profondeur du tampon de gigue côté FAI (ms)
 const MODEM_JITTER_MS: u32 = 140;
 /// Temps laissé au modem pour émettre ses derniers octets avant de raccrocher.
@@ -80,9 +83,11 @@ pub fn spawn(call: ModemCall, rx: Receiver<ModemInput>, notify: Sender<ModemNoti
     })
 }
 
-/// Ligne de test : message d'accueil, puis écho de tout ce qui arrive.
-fn echo(from_modem: Receiver<Vec<u8>>, to_modem: std::sync::mpsc::SyncSender<Vec<u8>>) -> String {
-    let hello = b"\r\nLigne de test V34NET : tout ce que vous envoyez revient en echo.\r\n".to_vec();
+/// Ligne de test : message d'accueil, puis écho de tout ce qui arrive. En
+/// morse, l'accueil est court (deux caractères par seconde) et le texte lu
+/// revient tel quel, procédures comprises (KA … AR).
+fn echo(from_modem: Receiver<Vec<u8>>, to_modem: std::sync::mpsc::SyncSender<Vec<u8>>, morse: bool) -> String {
+    let hello = if morse { ECHO_MORSE.to_vec() } else { b"\r\nLigne de test V34NET : tout ce que vous envoyez revient en echo.\r\n".to_vec() };
     if to_modem.send(hello).is_err() {
         return "liaison modem terminée".into();
     }
@@ -98,7 +103,15 @@ fn run(call: ModemCall, rx: Receiver<ModemInput>) -> (HangupReason, String) {
     let label = format!("{} {:08x} ({} / {})", call.service.name().to_uppercase(), call.call_id, call.caller, call.caller_number);
     // Le FAI est raccordé en numérique : il peut jouer le modem numérique
     // du 56k (V.90) si l'abonné le demande.
-    let cfg = ModemConfig { max_rate: call.max_rate, v90: call.v90, digital: true, max_rate_pcm: call.max_rate_pcm, ..ModemConfig::default() };
+    // La ligne de test parle aussi morse, si l'appelant le propose (DIP 4).
+    let cfg = ModemConfig {
+        max_rate: call.max_rate,
+        v90: call.v90,
+        digital: true,
+        max_rate_pcm: call.max_rate_pcm,
+        morse: call.service == Service::Echo,
+        ..ModemConfig::default()
+    };
     let mut modem = Modem::new(Role::Answer, cfg);
     modem.command(ModemCommand::Answer);
     info!("{label} : décroché");
@@ -169,7 +182,12 @@ fn run(call: ModemCall, rx: Receiver<ModemInput>) -> (HangupReason, String) {
         for ev in modem.drain_events() {
             match ev {
                 ModemEvent::Connected { tx_rate, rx_rate } => {
-                    info!("{label} : CONNECT {tx_rate}/{rx_rate} bit/s");
+                    let morse = modem.status().morse.map(|m| m.mpm);
+                    match morse {
+                        Some(mpm) => info!("{label} : CONNECT {mpm} MPM MORSE"),
+                        None => info!("{label} : CONNECT {tx_rate}/{rx_rate} bit/s"),
+                    }
+                    let morse = morse.is_some() && modem.status().phase == Phase::Morse;
                     connected = true;
                     let (p, tin, tout) = ModemPipe::new(tx_rate);
                     let policy = call.policy.clone();
@@ -181,7 +199,7 @@ fn run(call: ModemCall, rx: Receiver<ModemInput>) -> (HangupReason, String) {
                     let exploits = call.exploits.clone();
                     match std::thread::Builder::new().name(format!("svc-{:08x}", call.call_id)).spawn(move || match service {
                         Service::Fai => tunnel::run(policy, l, &user, tin, tout),
-                        Service::Echo => echo(tin, tout),
+                        Service::Echo => echo(tin, tout, morse),
                         Service::Oracle => oracle::session(orc, &l, &user, tin, tout),
                         Service::Cache(i) => crate::caches::session(i, &l, &user, donnees.as_deref(), &exploits, tin, tout),
                     }) {

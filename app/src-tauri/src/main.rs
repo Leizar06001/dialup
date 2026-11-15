@@ -256,14 +256,16 @@ async fn visio_frame(state: State<'_, AppState>, rgba: Vec<u8>, w: u32, h: u32, 
 }
 
 /// Panneau CONFIG : interrupteurs DIP 1 (56K V.90) et 2 (réponse
-/// automatique), molette DÉBIT MAX (bit/s). Pris en compte au prochain
-/// appel ; renvoie la configuration obtenue, que le panneau affiche.
+/// automatique), 3 (56K express), 4 (morse), molette DÉBIT MAX (bit/s).
+/// Pris en compte au prochain appel ; renvoie la configuration obtenue, que
+/// le panneau affiche.
 #[tauri::command]
-fn set_modem_config(state: State<AppState>, v90: bool, max_rate: u32, auto_answer: Option<bool>, express: Option<bool>) -> Result<v34_core::ModemConfig, String> {
+fn set_modem_config(state: State<AppState>, v90: bool, max_rate: u32, auto_answer: Option<bool>, express: Option<bool>, morse: Option<bool>) -> Result<v34_core::ModemConfig, String> {
     if !(2400..=56000).contains(&max_rate) {
         return Err(format!("débit max hors limites : {max_rate} bit/s (2 400 à 56 000)"));
     }
-    let cfg = engine::modem_config(v90, max_rate, express.unwrap_or(false));
+    // DIP 4 : proposer le morse (service non normalisé de V.8)
+    let cfg = v34_core::ModemConfig { morse: morse.unwrap_or(false), ..engine::modem_config(v90, max_rate, express.unwrap_or(false)) };
     state.send(EngineCmd::SetConfig(cfg.clone(), auto_answer.unwrap_or(true)))?;
     Ok(cfg)
 }

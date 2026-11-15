@@ -40,6 +40,8 @@ pub enum Phase {
     Failed,
     /// Télécopie (T.30 / V.29) en cours
     Fax,
+    /// Morse : mode propriétaire négocié en V.8 (services non normalisés)
+    Morse,
 }
 
 /// Les LEDs d'un modem externe des années 90.
@@ -110,6 +112,8 @@ pub enum ModemEvent {
     Data(Vec<u8>),
     /// Télécopie : étapes, lignes de la page reçue, fin
     Fax(crate::fax::session::FaxEvenement),
+    /// Morse : un signe part sur la ligne, ou vient d'être reconnu
+    Morse(crate::morse::MorseEvenement),
 }
 
 /// Commandes envoyées au moteur.
@@ -161,6 +165,10 @@ pub struct ModemConfig {
     /// Identité du télécopieur (TSI/CSI) : le numéro de l'abonné
     #[serde(default)]
     pub ident: String,
+    /// Morse (DIP 4) : l'appelant le propose en V.8 (service non normalisé
+    /// TINYVERSE), l'appelé l'accepte ; sinon l'appel continue en V.34/V.90
+    #[serde(default)]
+    pub morse: bool,
 }
 
 impl Default for ModemConfig {
@@ -176,6 +184,7 @@ impl Default for ModemConfig {
             max_rate_pcm: 56000,
             express: false,
             ident: String::new(),
+            morse: false,
         }
     }
 }
@@ -212,4 +221,7 @@ pub struct ModemStatus {
     pub bytes_rx: u64,
     /// Statistiques de la couche de correction d'erreurs (si une liaison existe)
     pub link: Option<crate::lapm::LapmStats>,
+    /// Morse : manipulateur et écoute, en direct
+    #[serde(default)]
+    pub morse: Option<crate::morse::MorseVue>,
 }
