@@ -14,8 +14,8 @@
 use std::io::Write;
 
 use v34_core::orgue::banc::{appel, prbs, Sens};
-use v34_core::orgue::partition::{f0, justesse, periode, DEGRES};
-use v34_core::orgue::{Duplex, Mode, Voix};
+use v34_core::orgue::partition::{duree_motif, f0, justesse, periode, Degre, DEGRES, TEMPS};
+use v34_core::orgue::{decalage_donnees, Duplex, Mode, Voix};
 use v34_core::{EchoPath, LineParams, LineSim, Modem, ModemCommand, ModemConfig, ModemEvent, Role};
 
 /// WAV 8 kHz 16 bits mono, écrit à la main.
@@ -39,6 +39,34 @@ fn ecrire_wav(chemin: &std::path::Path, x: &[f32], gain: f32) -> std::io::Result
         f.write_all(&s.to_le_bytes())?;
     }
     f.flush()
+}
+
+/// Part de la puissance de `x` (sur `n` échantillons à partir de `debut`)
+/// qui tombe à ±4 Hz des harmoniques de `f0` : 1 pour une note tenue, peu
+/// pour un souffle. Fenêtre de Hann, TFD aux seules cases utiles.
+fn tonalite(x: &[f32], debut: usize, n: usize, f0: f32) -> f32 {
+    let seg: Vec<f32> =
+        (0..n).map(|i| x[debut + i] * (0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / n as f32).cos())).collect();
+    let total: f32 = seg.iter().map(|v| v * v).sum::<f32>() * n as f32;
+    let df = 8000.0 / n as f32;
+    let mut raies = 0.0f32;
+    let mut k = 1;
+    while k as f32 * f0 < 3900.0 {
+        let c = k as f32 * f0 / df;
+        for bin in ((c - 4.0 / df).ceil() as i32)..=((c + 4.0 / df).floor() as i32) {
+            let w = 2.0 * std::f32::consts::PI * bin as f32 / n as f32;
+            let (mut re, mut im) = (0.0f32, 0.0f32);
+            for (i, v) in seg.iter().enumerate() {
+                let (s, c) = (w * i as f32).sin_cos();
+                re += v * c;
+                im -= v * s;
+            }
+            // deux côtés du spectre (signal réel)
+            raies += 2.0 * (re * re + im * im);
+        }
+        k += 1;
+    }
+    raies / total
 }
 
 fn arg(nom: &str) -> Option<String> {
@@ -74,9 +102,12 @@ fn teb(s: &Sens) -> String {
     format!("{:.1e}", s.teb())
 }
 
+/// Débits CONNECT, puis appelant, appelé et ligne enregistrés.
+type AppelV34 = (Option<(u32, u32)>, Vec<f32>, Vec<f32>, Vec<f32>);
+
 /// V.34 entre deux modems complets : (débits CONNECT, signaux enregistrés
 /// sur `duree` échantillons après le CONNECT).
-fn v34(preset: &str, duree: usize) -> (Option<(u32, u32)>, Vec<f32>, Vec<f32>, Vec<f32>) {
+fn v34(preset: &str, duree: usize) -> AppelV34 {
     let p = LineParams::preset(preset).unwrap();
     let mut call = Modem::new(Role::Call, ModemConfig::default());
     let mut ans = Modem::new(Role::Answer, ModemConfig::default());
@@ -204,24 +235,33 @@ fn main() {
     if let Some(dir) = wav {
         std::fs::create_dir_all(&dir).unwrap();
         let p = LineParams::preset("Urbaine").unwrap();
+        println!();
+        println!("Tonalité (part de la puissance à ±4 Hz des harmoniques, do tenu 4 temps, 1,6 s ; une note pure donne 1) :");
+        let debut = duree_motif() + decalage_donnees(Voix::Appelant);
         for mode in [Mode::Joli, Mode::Rapide] {
             for duplex in [Duplex::Duo, Duplex::PleineBande] {
-                let r = appel(&p, mode, duplex, 10.5, 1, 0);
-                let fin = r.debut_donnees + 10 * 8000;
-                let r = appel(&p, mode, duplex, 10.5, 1, fin);
+                let r = appel(&p, mode, duplex, 10.5, 1, debut + 10 * 8000);
                 let e = r.enregistrement.unwrap();
+                let seg = debut + 12 * TEMPS + 1500;
+                println!(
+                    "  {} {} : appelant {:.2}, appelé {:.2}",
+                    nom_mode(mode),
+                    nom_duplex(duplex),
+                    tonalite(&e.appelant, seg, 12800, f0(Voix::Appelant, Degre::Do)),
+                    tonalite(&e.appele, seg, 12800, f0(Voix::Appele, Degre::Do))
+                );
                 let base = format!("orgue_{}_{}", nom_mode(mode), if duplex == Duplex::Duo { "duo" } else { "pleine_bande" });
-                ecrire_wav(&dir.join(format!("{base}_appelant.wav")), &e.appelant, 1.0).unwrap();
-                ecrire_wav(&dir.join(format!("{base}_appele.wav")), &e.appele, 1.0).unwrap();
-                ecrire_wav(&dir.join(format!("{base}_ligne.wav")), &e.ligne, 0.7).unwrap();
+                ecrire_wav(&dir.join(format!("{base}_appelant.wav")), &e.appelant, 0.8).unwrap();
+                ecrire_wav(&dir.join(format!("{base}_appele.wav")), &e.appele, 0.8).unwrap();
+                ecrire_wav(&dir.join(format!("{base}_ligne.wav")), &e.ligne, 0.6).unwrap();
                 println!("WAV : {}/{base}_{{appelant,appele,ligne}}.wav ({:.1} s, données à {:.1} s)", dir.display(), e.appelant.len() as f32 / 8000.0, r.debut_donnees as f32 / 8000.0);
             }
         }
         if drapeau("--v34") {
             let (c, ec, ea, el) = v34("Urbaine", 10 * 8000);
-            ecrire_wav(&dir.join("v34_appelant.wav"), &ec, 1.0).unwrap();
-            ecrire_wav(&dir.join("v34_appele.wav"), &ea, 1.0).unwrap();
-            ecrire_wav(&dir.join("v34_ligne.wav"), &el, 0.7).unwrap();
+            ecrire_wav(&dir.join("v34_appelant.wav"), &ec, 0.8).unwrap();
+            ecrire_wav(&dir.join("v34_appele.wav"), &ea, 0.8).unwrap();
+            ecrire_wav(&dir.join("v34_ligne.wav"), &el, 0.6).unwrap();
             println!("WAV : {}/v34_{{appelant,appele,ligne}}.wav (CONNECT {c:?}, {:.1} s)", dir.display(), ec.len() as f32 / 8000.0);
         }
     }
