@@ -17,8 +17,8 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use v34_core::{
-    EchoPath, LineParams, LineSim, LinkParams, LogLevel, Modem, ModemCommand, ModemConfig, ModemEvent, ModemStatus, Role,
-    SAMPLE_RATE,
+    EchoPath, LineParams, LineSim, LinkParams, LogLevel, Modem, ModemCommand, ModemConfig, ModemEvent, ModemStatus, Phase,
+    Role, SAMPLE_RATE,
 };
 use v34_net::central::{CentralClient, CentralConfig, CentralEvent, DEFAULT_SERVER};
 use v34_net::tunnel::{ClientConfig, ModemPipe, TunnelClient, TunnelEvent, DEFAULT_PROXY};
@@ -52,7 +52,10 @@ Via le central téléphonique (v34-server, défaut dialup.tinyverse.fr:3434) :
         0800000000 : ligne de test (écho des octets).
         --chat \"question 1|question 2\" : parle comme l'appli (messages de
         chat), un message après chaque silence de 3 s, puis raccroche ;
-        affiche ce qui revient (ex. 0836672253, 3615 ORACLE).
+        affiche ce qui revient. Sur un serveur Minitel (V.23 : 3615 ORACLE
+        au 0836672253, les numéros cachés), les questions partent au
+        clavier du Minitel (puis ENVOI), l'écran 40 × 25 s'affiche après
+        chaque silence, et l'appel finit par CONNEXION/FIN.
         Sans --password, le mot de passe est lu dans V34_PASSWORD ou
         demandé au clavier (il n'apparaît alors pas dans `ps`).
 
@@ -474,12 +477,15 @@ struct CentralCall {
 }
 
 /// `--chat` : parle comme l'appli (trames de chat de `v34_net::bbs`), un
-/// message après chaque silence de la ligne, puis raccroche.
+/// message après chaque silence de la ligne, puis raccroche. Sur un
+/// serveur Minitel, joue le Minitel : l'écran Vidéotex, le clavier.
 struct ChatScript {
     questions: std::collections::VecDeque<String>,
     dec: v34_net::bbs::Decoder,
     last_rx: Instant,
     done: bool,
+    /// Appel Minitel (CONNECT 1200/75) : son écran
+    minitel: Option<v34_net::videotex::Ecran>,
 }
 
 impl ChatScript {
@@ -490,6 +496,11 @@ impl ChatScript {
         use std::io::Write;
         use v34_net::bbs::{Frame, Item};
         self.last_rx = Instant::now();
+        if let Some(e) = self.minitel.as_mut() {
+            // (l'écran s'affiche après chaque silence)
+            e.recevoir(bytes);
+            return;
+        }
         for it in self.dec.push(bytes) {
             match it {
                 Item::Frame(Frame::Chat(t)) => print!("{t}"),
@@ -506,6 +517,29 @@ impl ChatScript {
             return None;
         }
         self.last_rx = Instant::now();
+        if let Some(e) = self.minitel.as_ref() {
+            println!("\n┌{}┐", "─".repeat(40));
+            for r in 0..v34_net::videotex::RANGEES {
+                let t = e.texte_rangee(r);
+                println!("│{t}{}│", " ".repeat(40usize.saturating_sub(t.chars().count())));
+            }
+            println!("└{}┘", "─".repeat(40));
+            // au clavier du Minitel : la question, puis ENVOI ; à la fin, CONNEXION/FIN
+            let touche = |t: v34_net::videotex::Touche| t.octets().to_vec();
+            return Some(ModemCommand::Send(match self.questions.pop_front() {
+                Some(q) => {
+                    println!("(Minitel) {q} [ENVOI]");
+                    let mut b = v34_net::videotex::encoder(&q);
+                    b.extend(touche(v34_net::videotex::Touche::Envoi));
+                    b
+                }
+                None => {
+                    self.done = true;
+                    println!("(Minitel) [CONNEXION/FIN]");
+                    touche(v34_net::videotex::Touche::ConnexionFin)
+                }
+            }));
+        }
         match self.questions.pop_front() {
             Some(q) => {
                 println!("\n<moi> {q}");
@@ -594,6 +628,7 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
         dec: v34_net::bbs::Decoder::default(),
         last_rx: Instant::now(),
         done: false,
+        minitel: None,
     });
     let mut call: Option<CentralCall> = None;
     let mut ring_at: Option<Instant> = None;
@@ -682,16 +717,28 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
                             p.on_modem_data(d);
                         }
                     }
+                    // Minitel sans script : le texte des pages Vidéotex
+                    ModemEvent::Data(d) if chat.is_none() && c.modem.status().phase == Phase::Minitel => {
+                        use std::io::Write;
+                        print!("{}", v34_net::videotex::transcrire(&d));
+                        let _ = std::io::stdout().flush();
+                    }
                     ModemEvent::Data(d) if chat.is_some() => {
                         if let Some(s) = chat.as_mut() {
                             s.receive(&d);
                         }
                     }
-                    ModemEvent::Connected { tx_rate, .. } => {
+                    ModemEvent::Connected { tx_rate, rx_rate } => {
                         print_event(t, role, &ev);
                         c.connected = true;
                         if let Some(s) = chat.as_mut() {
                             s.last_rx = Instant::now(); // le silence se compte après CONNECT
+                            // V.23 : un serveur Minitel
+                            if (tx_rate, rx_rate) == (75, 1200) {
+                                let mut e = v34_net::videotex::Ecran::new();
+                                e.connexion(true);
+                                s.minitel = Some(e);
+                            }
                         }
                         if let Some(listener) = proxy.take() {
                             let (pipe, tin, tout) = ModemPipe::new(tx_rate);
