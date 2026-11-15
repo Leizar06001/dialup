@@ -567,16 +567,20 @@ function annoncerOnglet() {
 function faxNouveau(oui) {
   fax.nouveau = oui;
   annoncerOnglet();
+  pupitre();
 }
 function vueChat(v) {
-  // pendant (et après) un appel Minitel, la conversation, c'est son écran
-  if (v === "chat" && minitelEnCours) v = "minitel";
+  // pendant un appel Minitel, la conversation, c'est son écran (après, le
+  // bouton MINITEL du navigateur y revient)
+  if (v === "chat" && minitelEnCours && state && state.call_state === "minitel") v = "minitel";
   fax.vue = v;
+  // la mise en page suit : pas de visiophone pour un fax ni pour un Minitel
+  document.querySelector(".msgr").dataset.vue = v;
   $("vue-chat").hidden = v !== "chat";
   document.querySelector(".filebar").hidden = v !== "chat";
   $("vue-fax").hidden = v !== "fax";
   $("vue-minitel").hidden = v !== "minitel";
-  if (v === "fax") fax.nouveau = false;
+  if (v === "fax") { fax.nouveau = false; pupitre(); }
   if (v === "minitel" && minitel) minitel.focus();
   titreBoite();
   annoncerOnglet();
@@ -591,7 +595,9 @@ try {
 } catch (_) { /* stockage indisponible */ }
 listen("messagerie:onglet", (v) => {
   try { localStorage.removeItem("messagerie-onglet"); } catch (_) { /* rien */ }
-  vueChat(v === "fax" ? "fax" : "chat");
+  // MINITEL hors ligne : le Minitel s'allume sur sa page d'accueil
+  if (v === "minitel" && minitel) minitel.accueil();
+  vueChat(v === "fax" || v === "minitel" ? v : "chat");
 });
 
 /* ---------------------------------------------------------------- Minitel
@@ -737,6 +743,9 @@ $("fax-envoyer").addEventListener("click", () => {
   // on coupe le blanc du bas (sauf une marge), mais pas sous 400 lignes
   const hauteur = Math.min(FAX_H, Math.max(400, derniere + 80));
   faxEtat(`Numérotation du ${fmtNum(numero)}… (${hauteur} lignes à envoyer)`);
+  fax.bis = numero;
+  fax.lcdFin = null;
+  try { localStorage.setItem("fax-bis", numero); } catch (_) { /* rien */ }
   invoke("fax_envoyer", { numero, hauteur, octets: Array.from(octets.subarray(0, (FAX_L / 8) * hauteur)), fine: true })
     .catch((err) => faxEtat("Envoi impossible : " + err));
 });
@@ -746,8 +755,58 @@ $("dir-list").addEventListener("click", (e) => {
   if (!b || fax.vue !== "fax") return;
   e.stopImmediatePropagation();
   $("fax-numero").value = fmtNum(b.dataset.num);
-  faxEtat(`Numéro du fax : ${fmtNum(b.dataset.num)}. Envoyer quand la page est prête.`);
+  faxEtat(`Numéro du fax : ${fmtNum(b.dataset.num)}. DÉPART quand la page est prête.`);
 }, true);
+
+/* Le pupitre du télécopieur (à la place du visiophone) : l'afficheur à
+   cristaux liquides (l'état en haut, le numéro dessous), les voyants, le
+   pavé numérique, BIS (le dernier numéro), DÉPART et STOP. */
+try { fax.bis = localStorage.getItem("fax-bis") || ""; } catch (_) { fax.bis = ""; }
+function pupitre() {
+  const cs = state ? state.call_state : "idle";
+  const deux = (n) => String(n).padStart(2, "0"), d = new Date();
+  const horloge = `${deux(d.getDate())}/${deux(d.getMonth() + 1)} ${deux(d.getHours())}:${deux(d.getMinutes())}`;
+  let l1;
+  if (cs === "dialing" || cs === "ringing") l1 = "NUMÉROTATION…";
+  else if (cs === "connecting") l1 = "LIAISON…";
+  else if (cs === "fax") l1 = fax.lcd || "TÉLÉCOPIE";
+  else if (cs !== "idle") l1 = "LIGNE OCCUPÉE";
+  else if (fax.lcdFin && Date.now() - fax.lcdFin.t < 30000) l1 = fax.lcdFin.texte;
+  else l1 = "PRÊT".padEnd(8) + horloge;
+  setText("tc-lcd1", l1);
+  $("tc-led-ligne").classList.toggle("on", cs !== "idle");
+  $("tc-led-ligne").classList.toggle("clignote", cs === "fax");
+  $("tc-led-recu").classList.toggle("on", fax.nouveau || (cs === "fax" && !!fax.lcd && fax.lcd.startsWith("RÉCEPTION")));
+  $("tc-led-recu").classList.toggle("clignote", fax.nouveau);
+  $("tc-led-erreur").classList.toggle("on", !!fax.erreur);
+}
+$("tc-pave").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-k]");
+  if (!b) return;
+  const champ = $("fax-numero"), chiffres = champ.value.replace(/\D/g, "");
+  const k = b.dataset.k;
+  const n = k === "c" ? chiffres.slice(0, -1) : k === "bis" ? fax.bis || chiffres : (chiffres + k).slice(0, 10);
+  champ.value = fmtNum(n);
+});
+$("fax-numero").addEventListener("input", () => {
+  const champ = $("fax-numero"), n = champ.value.replace(/\D/g, "").slice(0, 10);
+  if (champ.value !== fmtNum(n)) champ.value = fmtNum(n);
+});
+$("tc-stop").addEventListener("click", () => {
+  const cs = state ? state.call_state : "idle";
+  if (cs !== "idle") {
+    invoke("at_command", { line: "ATH" }).catch(() => {});
+    faxEtat("STOP : on raccroche.");
+  } else {
+    $("fax-numero").value = "";
+    fax.erreur = false;
+    fax.lcdFin = null;
+    pupitre();
+  }
+});
+listen("v34:state", pupitre);
+setInterval(pupitre, 15000);
+pupitre();
 
 /* Ce que dit le télécopieur (étapes T.30, lignes reçues, fin) */
 listen("v34:fax", (m) => {
@@ -760,6 +819,8 @@ listen("v34:fax", (m) => {
       break;
     case "debut":
       // une page arrive : on l'imprime sur le papier thermique
+      fax.lcd = "RÉCEPTION";
+      fax.lcdFin = null;
       fax.y = 0;
       fax.fine = m.fine;
       frx.fillStyle = "#f3efe2";
@@ -789,10 +850,16 @@ listen("v34:fax", (m) => {
     }
     case "progression":
       faxEtat(`FAX · page : ${m.faites}/${m.total} lignes envoyées`);
+      fax.lcd = `ENVOI ${m.total ? Math.round((100 * m.faites) / m.total) : 0} %`;
       break;
     case "fin":
       faxEtat((m.ok ? "✓ " : "✗ ") + m.raison + (m.fichier ? " — enregistré : " + m.fichier : ""));
       if (m.recu && fax.vue !== "fax") faxNouveau(true);
+      fax.lcd = null;
+      fax.lcdFin = { texte: m.ok ? (m.recu ? "PAGE REÇUE  OK" : "ENVOI OK") : "ERREUR", t: Date.now() };
+      fax.erreur = !m.ok;
       break;
   }
+  if (m.type === "ligne" && m.y % 32 === 0) fax.lcd = `RÉCEPTION L.${m.y}`;
+  pupitre();
 });

@@ -72,6 +72,10 @@
     #m-fax .voyant { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 6px; vertical-align: middle;
       background: #600; box-shadow: inset 1px 1px 1px #000; }
     #m-fax.nouveau .voyant { background: #ff2a2a; box-shadow: 0 0 4px #ff2a2a; animation: clignote 0.9s steps(2, jump-none) infinite; }
+    /* MINITEL : voyant vert qui clignote quand un Minitel est en ligne ailleurs que sous les yeux */
+    #m-minitel .voyant { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 6px; vertical-align: middle;
+      background: #060; box-shadow: inset 1px 1px 1px #000; }
+    #m-minitel.nouveau .voyant { background: #2aff2a; box-shadow: 0 0 4px #2aff2a; animation: clignote 0.9s steps(2, jump-none) infinite; }
     /* Ligne de l'appel (mode MESSAGERIE), à la place de l'adresse */
     .callinfo { flex: 1; display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 6px; background: #fff;
       border: 2px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo); white-space: nowrap; overflow: hidden; }
@@ -92,6 +96,7 @@
       <button id="m-mod" title="Le vrai web, tel quel… à 56 kbit/s au mieux">MODERNE</button>
       <button id="m-msg" title="Chat, visiophone, fichiers et contacts : l'appel en cours, sans le web"><span class="rec">●</span>MESSAGERIE</button>
       <button id="m-fax" title="Le télécopieur : écrire, dessiner ou importer une page et la faxer à un abonné (hors appel)">TÉLÉCOPIE<i class="voyant"></i></button>
+      <button id="m-minitel" title="Le Minitel : 3615 ORACLE en V.23 1200/75, sur un écran Vidéotex de 40 × 25 (Connexion/Fin pour composer)">MINITEL<i class="voyant"></i></button>
     </div>
     <div class="throbber" id="throbber" title="Tinyverse Navigator"><b>T</b><i></i><i></i><i></i></div>
   </div>
@@ -120,15 +125,18 @@
     // Vue : la page web ("web") ou la messagerie ("messagerie", décidée par
     // l'appli : touche MESSAGERIE du modem, appel entre abonnés…)
     let vue = "web", webOk = true;
-    // Dans la messagerie : la conversation ("chat") ou le télécopieur ("fax")
-    let onglet = "chat", faxNouveau = false;
+    // Dans la messagerie : la conversation ("chat"), le télécopieur ("fax")
+    // ou le Minitel ("minitel")
+    let onglet = "chat", faxNouveau = false, minitelEnLigne = false;
     function render() {
       const msg = vue === "messagerie";
       $("m-1998").classList.toggle("on", !msg && mode === "1998");
       $("m-mod").classList.toggle("on", !msg && mode === "moderne");
-      $("m-msg").classList.toggle("on", msg && onglet !== "fax");
+      $("m-msg").classList.toggle("on", msg && onglet === "chat");
       $("m-fax").classList.toggle("on", msg && onglet === "fax");
       $("m-fax").classList.toggle("nouveau", faxNouveau && !(msg && onglet === "fax"));
+      $("m-minitel").classList.toggle("on", msg && onglet === "minitel");
+      $("m-minitel").classList.toggle("nouveau", minitelEnLigne && !(msg && onglet === "minitel"));
       $("f-go").hidden = msg;
       $("r-msg").hidden = !msg;
       for (const id of ["b-back", "b-fwd", "b-reload", "b-home", "b-blog"]) $(id).disabled = msg;
@@ -166,6 +174,7 @@
     };
     $("m-msg").onclick = () => messagerie("chat");
     $("m-fax").onclick = () => messagerie("fax");
+    $("m-minitel").onclick = () => messagerie("minitel");
     T.event.listen("messagerie:onglet-actuel", (e) => { onglet = e.payload.vue; faxNouveau = e.payload.nouveau; render(); })
       .then(() => T.event.emit("messagerie:onglet-demande")).catch(() => {});
     $("b-hang").onclick = () => T.core.invoke("at_command", { line: "ATH" });
@@ -222,13 +231,16 @@
       else if (s.call_state === "dialing" || s.call_state === "ringing") call = "Numérotation…";
       else if (s.call_state === "connecting") call = "Les modems négocient…";
       else if (s.call_state === "fax") call = "Télécopie en cours : les deux télécopieurs se parlent en T.30, la page passe en V.29";
+      else if (s.call_state === "minitel") call = st.leds.cd ? "Minitel en ligne · V.23 1200/75 bit/s · son écran est sous le bouton MINITEL" : "Le serveur siffle : le Minitel se connecte…";
       else if (s.call_state === "morse") call = `En morse${st.morse ? ` à ${st.morse.mpm} mots/minute` : ""} : du texte, lettre par lettre${s.net ? "" : " · boucle locale : l'écho te répond"}`;
       else if (s.call_state === "online" && !bbs) call = "En ligne avec le FAI : la conversation, c'est son salon";
       else if (s.call_state === "online" && s.oracle) call = `En ligne avec 3615 ORACLE${debits} · 2,23 F la minute (pour de rire)${s.net ? "" : " · boucle locale : les cartes répondent"}`;
       else if (s.call_state === "online") call = `En ligne d'abonné à abonné${debits}${s.net ? "" : " · boucle locale : l'écho te répond"}`;
       else call = "Pas d'appel : choisis un abonné dans les contacts (ou l'annuaire du modem)";
       if ($("call-text").textContent !== call) $("call-text").textContent = call;
-      $("dot2").classList.toggle("on", s.call_state === "online" || s.call_state === "morse");
+      const mt = s.call_state === "minitel" && !!st.leds.cd;
+      $("dot2").classList.toggle("on", s.call_state === "online" || s.call_state === "morse" || mt);
+      if (mt !== minitelEnLigne) { minitelEnLigne = mt; render(); }
       $("b-hang").disabled = s.call_state === "idle" && !s.incoming;
       $("m-msg").classList.toggle("rec", !!v.camera);
       if (online && !wasOnline) go($("addr").value);
