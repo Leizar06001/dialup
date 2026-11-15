@@ -504,6 +504,11 @@ Pas de mot de passe à retenir : le FAI sait déjà qui vous êtes.</p>
 <h3>Numéros cachés</h3>
 <p>Il paraît que certains numéros ne figurent dans aucun annuaire. L'oracle en connaîtrait au moins un… Chaque numéro trouvé rapporte un succès, et parfois une belle facture.
 Les plus patients balaieront une plage entière depuis le TERMINAL, avec la commande <code>AT*B</code> (voir l'aide du logiciel). Attention : chaque porteuse trouvée est taxée.</p>
+<h3>Le morse</h3>
+<p>Un mode « maison », comme les modems bricolés des années 90 : avec l'interrupteur <b>DIP 4 « MORSE »</b> du panneau <b>CONFIG</b> sur ON, votre modem le propose pendant la négociation V.8, dans un « service non normalisé » (code pays de la France, fournisseur TINYVERSE).
+Si le modem d'en face sait faire et accepte, plus de V.34 : <b>CONNECT 20 MPM MORSE</b>, et du vrai code morse international, 20 mots par minute (environ deux lettres par seconde), lettres accentuées comprises.
+Les deux parlent en même temps : 800 Hz pour l'appelant, 1600 Hz pour l'appelé. Vos messages partent entre KA et AR, la réponse s'écrit lettre par lettre dans la MESSAGERIE ; texte seulement, ni fichiers ni visiophone.
+Sinon, rien ne change : V.34 ou 56K comme d'habitude (le FAI et 3615 ORACLE ne parlent pas morse). Pour vous entraîner seul, appelez la ligne de test, le <b>08 00 00 00 00</b> : elle répond en morse et vous renvoie ce qu'elle entend.</p>
 <h3>Je n'arrive pas à me connecter</h3>
 <ul><li>Vérifiez le nom d'abonné (sensible aux majuscules) et le mot de passe. Changé sur ce site ? Changez-le aussi dans le logiciel s'il était mémorisé.</li>
 <li>Le central utilise le port <b>UDP 3434</b> : certains réseaux d'entreprise le bloquent.</li></ul>
