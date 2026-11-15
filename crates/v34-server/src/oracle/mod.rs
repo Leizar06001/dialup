@@ -1,18 +1,14 @@
 //! 3615 ORACLE : une IA qu'on ne joint qu'en composant le 08 36 67 22 53
 //! avec son modem, et qui est persuadée qu'on est en 1998.
 //!
-//! Le modem du central décroche comme pour la ligne de test, puis l'oracle
-//! parle le protocole des appels entre abonnés ([`v34_net::bbs`]) : il
-//! reçoit les questions en trames de chat et répond en trames de chat. Une
-//! appli 0.1.2 sans modification s'en sert donc comme d'un correspondant
-//! ordinaire : la MESSAGERIE s'ouvre à CONNECT, on y tape ses questions.
-//!
-//! Affichage : chaque ligne commence par un retour à la ligne et le texte
-//! ne finit jamais par un retour à la ligne. La messagerie, qui assemble le
-//! texte distant jusqu'au retour à la ligne, affiche ainsi chaque ligne une
-//! seule fois, au bon endroit, et voit les réponses s'écrire au fil de
-//! l'eau : elles partent par petits morceaux, à la cadence d'un Minitel
-//! (1200 bit/s par défaut, 10 bits par caractère).
+//! C'est un vrai service Minitel : le modem du central décroche en V.23
+//! (l'ANS, puis le sifflement à 1300 Hz), l'appli de l'abonné joue le
+//! Minitel. Les pages sont en Vidéotex ([`page`] : la boule de cristal en
+//! mosaïques, le titre en double taille), les questions se tapent au clavier
+//! du Minitel (75 bit/s, avec l'écho du serveur) et partent avec ENVOI ; les
+//! réponses s'écrivent à 1200 bit/s. GUIDE, SOMMAIRE, RÉPÉTITION et
+//! CONNEXION/FIN font ce qu'on attend d'elles ; « /aide » et « /fin » tapés
+//! à l'ancienne marchent aussi.
 //!
 //! Les réponses viennent d'OpenRouter ([`ia`]) ; sans clé, au-delà des
 //! quotas, en cas de panne ou de délai dépassé, ce sont les cartes
@@ -25,6 +21,7 @@
 //! questions est en mémoire, sans nom d'abonné, et expire en quelques heures).
 
 pub mod ia;
+pub mod page;
 pub mod persona;
 pub mod texte;
 
@@ -33,14 +30,15 @@ mod tests;
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 
 use crate::config::{self, Annuaire};
 pub use crate::ecran::{Ecran, Raccroche};
-use crate::ecran::Entree;
+use crate::ecran::Saisie;
+use v34_net::videotex::Touche;
 use crate::{debug, info, warn};
 
 /// Échanges gardés en mémoire pendant un appel : au-delà de `MEMOIRE_MAX`,
@@ -434,6 +432,8 @@ enum Commande {
     Inconnue,
 }
 
+/// Les commandes tapées à l'ancienne (« /fin », « /aide »…), en plus des
+/// touches du Minitel.
 fn commande(q: &str) -> Option<Commande> {
     let t = q.trim().to_lowercase();
     let mot = t.strip_prefix('/').unwrap_or(&t);
@@ -469,13 +469,15 @@ impl Bilan {
 }
 
 /// Une consultation, du CONNECT au raccroché : `from_modem` / `to_modem`
-/// sont les deux bouts d'un [`v34_net::tunnel::ModemPipe`]. Renvoie la
-/// raison de la fin (journalisée par l'appelant).
+/// sont les deux bouts d'un [`v34_net::tunnel::ModemPipe`], branché sur le
+/// modem V.23 du central (le Minitel de l'abonné au bout du fil). Renvoie
+/// la raison de la fin (journalisée par l'appelant).
 pub fn session(oracle: Arc<Oracle>, label: &str, abonne: &str, from_modem: Receiver<Vec<u8>>, to_modem: SyncSender<Vec<u8>>) -> String {
     oracle.compter(|c| c.appels += 1);
     let debut = Instant::now();
     let mut bilan = Bilan::default();
-    let fin = consultation(&oracle, label, abonne, &from_modem, to_modem, debut, &mut bilan);
+    let mut ecran = Ecran::new(to_modem, from_modem, oracle.cfg.debit_affichage);
+    let fin = consultation(&oracle, label, abonne, &mut ecran, debut, &mut bilan);
     info!(
         "{label} : oracle, {} question(s) : {} de l'IA, {} du cache, {} des cartes ; {} s",
         bilan.questions,
@@ -487,15 +489,7 @@ pub fn session(oracle: Arc<Oracle>, label: &str, abonne: &str, from_modem: Recei
     fin
 }
 
-fn consultation(
-    oracle: &Arc<Oracle>,
-    label: &str,
-    abonne: &str,
-    rx: &Receiver<Vec<u8>>,
-    tx: SyncSender<Vec<u8>>,
-    debut: Instant,
-    bilan: &mut Bilan,
-) -> String {
+fn consultation(oracle: &Arc<Oracle>, label: &str, abonne: &str, ecran: &mut Ecran, debut: Instant, bilan: &mut Bilan) -> String {
     const RACCROCHE: &str = "raccroché par l'appelant";
     let cle = match oracle.cle() {
         Ok(c) => Some(c),
@@ -504,115 +498,119 @@ fn consultation(
             None
         }
     };
-    let mut ecran = Ecran::new(tx, oracle.cfg.debit_affichage);
     let mut conv = Conversation::new(abonne);
     let restantes = cle.as_ref().map(|_| oracle.restantes(abonne));
-    if ecran.lignes(&persona::accueil(abonne, restantes)).is_err() {
+    if page::accueil(ecran, abonne, restantes).is_err() {
         return RACCROCHE.into();
     }
     if restantes == Some(0) {
         oracle.compter(|c| c.refus += 1);
-        let _ = ecran.lignes(persona::QUOTA_ABONNE);
+        let _ = ecran.sans_champ();
+        let _ = ecran.dire(persona::QUOTA_ABONNE);
         return "quota du jour épuisé".into();
     }
-    let mut entree = Entree::default();
-    let mut fichier_dit = false;
     let mut actif = Instant::now();
     let inactivite = Duration::from_secs(oracle.cfg.inactivite_s);
     let au_revoir = |ecran: &mut Ecran| {
-        let _ = ecran.lignes(&persona::au_revoir(debut.elapsed().as_secs()));
+        let _ = ecran.sans_champ();
+        let _ = ecran.vider_zone();
+        let _ = ecran.dire(&persona::au_revoir(debut.elapsed().as_secs()));
     };
+    // la dernière consultation (RÉPÉTITION la remontre)
+    let mut derniere: Option<(String, String)> = None;
     loop {
-        match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(b) => entree.pousser(&b),
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return RACCROCHE.into(),
-        }
-        if !entree.relever(rx) {
-            return RACCROCHE.into();
-        }
-        if entree.fichier && !fichier_dit {
-            fichier_dit = true;
-            if ecran.lignes(persona::FICHIER).is_err() {
-                return RACCROCHE.into();
-            }
-        }
-        let Some(brute) = entree.file.pop_front() else {
-            if actif.elapsed() > inactivite {
-                let _ = ecran.lignes(persona::INACTIVITE);
-                au_revoir(&mut ecran);
-                return "raccroché par l'oracle (inactivité)".into();
-            }
-            continue;
+        let saisie = match ecran.lire(Duration::from_millis(100)) {
+            Ok(s) => s,
+            Err(Raccroche) => return RACCROCHE.into(),
         };
-        actif = Instant::now();
-        let r = match commande(&brute) {
-            Some(Commande::Fin) => {
-                au_revoir(&mut ecran);
-                return "consultation terminée (/fin)".into();
-            }
-            Some(Commande::Aide) => ecran.lignes(persona::GUIDE),
-            Some(Commande::Sommaire) => ecran.lignes(&persona::accueil(abonne, cle.as_ref().map(|_| oracle.restantes(abonne)))),
-            Some(Commande::Inconnue) => ecran.lignes(persona::COMMANDE_INCONNUE),
+        if ecran.dernier_clavier > actif {
+            actif = ecran.dernier_clavier;
+        }
+        let r = match saisie {
             None => {
-                let q = texte::assainir_question(&brute);
-                if q.is_empty() {
-                    continue;
+                if actif.elapsed() > inactivite {
+                    let _ = ecran.dire(persona::INACTIVITE);
+                    au_revoir(ecran);
+                    return "raccroché par l'oracle (inactivité)".into();
                 }
-                match consulter(oracle, &mut conv, &q, cle.as_deref(), &mut ecran, rx, &mut entree) {
-                    Ok(rep) => {
-                        bilan.noter(rep.source);
-                        debug!("{label} : question n° {} ({:?})", bilan.questions, rep.source);
-                        if rep.source == Source::Refus {
-                            return "quota du jour épuisé".into();
-                        }
-                        ecran.lignes(&persona::compteur(debut.elapsed().as_secs()))
-                    }
-                    Err(Raccroche) => return RACCROCHE.into(),
-                }
+                continue;
             }
+            Some(Saisie::Touche(Touche::ConnexionFin)) => {
+                au_revoir(ecran);
+                return "consultation terminée (CONNEXION/FIN)".into();
+            }
+            Some(Saisie::Touche(Touche::Guide)) => guide(ecran),
+            Some(Saisie::Touche(Touche::Sommaire)) => page::accueil(ecran, abonne, cle.as_ref().map(|_| oracle.restantes(abonne))),
+            Some(Saisie::Touche(Touche::Repetition)) => match &derniere {
+                Some((q, rep)) => page::entete(ecran).and_then(|()| page::question(ecran, q)).and_then(|()| ecran.dire(rep)),
+                None => page::accueil(ecran, abonne, cle.as_ref().map(|_| oracle.restantes(abonne))),
+            },
+            Some(Saisie::Touche(_)) => ecran.bip().and_then(|()| ecran.service(persona::PAS_DE_SUITE)),
+            Some(Saisie::Ligne(brute)) => match commande(&brute) {
+                Some(Commande::Fin) => {
+                    au_revoir(ecran);
+                    return "consultation terminée (/fin)".into();
+                }
+                Some(Commande::Aide) => guide(ecran),
+                Some(Commande::Sommaire) => page::accueil(ecran, abonne, cle.as_ref().map(|_| oracle.restantes(abonne))),
+                Some(Commande::Inconnue) => ecran.dire(persona::COMMANDE_INCONNUE),
+                None => {
+                    let q = texte::assainir_question(&brute);
+                    if q.is_empty() {
+                        continue;
+                    }
+                    match consulter(oracle, &mut conv, &q, cle.as_deref(), ecran) {
+                        Ok(rep) => {
+                            bilan.noter(rep.source);
+                            debug!("{label} : question n° {} ({:?})", bilan.questions, rep.source);
+                            if rep.source == Source::Refus {
+                                let _ = ecran.sans_champ();
+                                return "quota du jour épuisé".into();
+                            }
+                            derniere = Some((q, rep.texte));
+                            ecran.dire_style(&persona::compteur(debut.elapsed().as_secs()), page::COMPTEUR)
+                        }
+                        Err(Raccroche) => return RACCROCHE.into(),
+                    }
+                }
+            },
         };
         if r.is_err() {
             return RACCROCHE.into();
         }
         actif = Instant::now();
-        if entree.file.len() > FILE_MAX {
-            entree.file.truncate(FILE_MAX);
-            if ecran.lignes(persona::UNE_A_LA_FOIS).is_err() {
+        if ecran.en_attente() > FILE_MAX {
+            ecran.garder(FILE_MAX);
+            if ecran.dire(persona::UNE_A_LA_FOIS).is_err() {
                 return RACCROCHE.into();
             }
         }
     }
 }
 
-/// Pose une question et affiche la réponse ; les questions qui arrivent
-/// pendant l'attente vont dans la file d'`entree`.
-fn consulter(
-    oracle: &Arc<Oracle>,
-    conv: &mut Conversation,
-    question: &str,
-    cle: Option<&str>,
-    ecran: &mut Ecran,
-    rx: &Receiver<Vec<u8>>,
-    entree: &mut Entree,
-) -> Result<Reponse, Raccroche> {
+fn guide(ecran: &mut Ecran) -> Result<(), Raccroche> {
+    ecran.vider_zone()?;
+    ecran.dire(persona::GUIDE)
+}
+
+/// Pose une question et affiche la réponse ; ce que l'appelant tape
+/// pendant l'attente a son écho, et attend son tour.
+fn consulter(oracle: &Arc<Oracle>, conv: &mut Conversation, question: &str, cle: Option<&str>, ecran: &mut Ecran) -> Result<Reponse, Raccroche> {
+    page::question(ecran, question)?;
     let rep = match oracle.preparer(conv, question, cle) {
         Preparation::Immediate(rep) => {
             if rep.source == Source::Cartes && !oracle.attente_cartes.is_zero() {
-                ecran.lignes(persona::ATTENTE_CARTES)?;
+                ecran.dire_style(persona::ATTENTE_CARTES, page::ATTENTE)?;
                 let fin = Instant::now() + oracle.attente_cartes;
                 while Instant::now() < fin {
-                    std::thread::sleep(POINTILLES.min(oracle.attente_cartes));
-                    if !entree.relever(rx) {
-                        return Err(Raccroche);
-                    }
+                    ecran.pause(POINTILLES.min(oracle.attente_cartes))?;
                     ecran.suite(".")?;
                 }
             }
             rep
         }
         Preparation::Requete(req) => {
-            ecran.lignes(persona::ATTENTE_ASTRES)?;
+            ecran.dire_style(persona::ATTENTE_ASTRES, page::ATTENTE)?;
             let (rtx, rrx) = mpsc::channel();
             let o = oracle.clone();
             let corps = req.corps.clone();
@@ -627,17 +625,15 @@ fn consulter(
                     let limite = Instant::now() + oracle.delai() + Duration::from_secs(2);
                     let mut points = 0;
                     loop {
-                        match rrx.recv_timeout(POINTILLES) {
+                        match rrx.try_recv() {
                             Ok(r) => break r,
-                            Err(RecvTimeoutError::Disconnected) => break Err(ia::Erreur::Reseau("thread".into())),
-                            Err(RecvTimeoutError::Timeout) => {}
-                        }
-                        if !entree.relever(rx) {
-                            return Err(Raccroche);
+                            Err(TryRecvError::Disconnected) => break Err(ia::Erreur::Reseau("thread".into())),
+                            Err(TryRecvError::Empty) => {}
                         }
                         if Instant::now() > limite {
                             break Err(ia::Erreur::Delai);
                         }
+                        ecran.pause(POINTILLES)?;
                         if points < POINTS_MAX {
                             points += 1;
                             ecran.suite(".")?;
@@ -648,6 +644,6 @@ fn consulter(
             oracle.conclure(conv, req, res)
         }
     };
-    ecran.lignes(&rep.texte)?;
+    ecran.dire_style(&rep.texte, page::REPONSE)?;
     Ok(rep)
 }

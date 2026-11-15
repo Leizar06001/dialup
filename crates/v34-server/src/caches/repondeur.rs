@@ -6,7 +6,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{modifier, unix_now, Fin, Ligne};
+use v34_net::videotex::{Touche, BLANC, JAUNE, ROUGE};
+
+use super::{modifier, unix_now, Cadre, Fin, Ligne, Style};
 
 const FICHIER: &str = "repondeur.json";
 const GARDES: usize = 50;
@@ -41,19 +43,31 @@ fn ecouter(l: &mut Ligne) -> Result<(), Fin> {
 }
 
 pub fn lancer(l: &mut Ligne) -> Result<(), Fin> {
+    l.cadre(&Cadre {
+        titre: "REPONDEUR DE GERARD",
+        sous_titre: "01 43 33 12 12 · laissez un message".into(),
+        fg: BLANC,
+        fond: ROUGE,
+        touches: "message   SUITE : la bande",
+        invite: "Message :",
+    })?;
+    l.touches(&[(Touche::Suite, "/ecouter"), (Touche::Repetition, "/ecouter")]);
+    l.guide("Le répondeur de Gérard enregistre votre message (ENVOI). SUITE : écouter la bande. CONNEXION/FIN : raccrocher.");
     // (plus le vieux message du chef, toujours là)
     let n = super::lire::<Vec<Message>>(l.donnees, FICHIER).len() + 1;
+    l.dire("*clic* Bonjour, vous êtes bien chez Gérard. Je ne suis pas là pour le moment : sûrement parti chercher du pain, ou alors je suis sous la douche. Laissez-moi un message après le bip, je vous rappellerai. Peut-être.")?;
+    l.dire_style("BIIIIIIP", Style::fg(JAUNE).clignotant())?;
+    l.ecran.bip()?;
     l.dire(&format!(
-        "*clic* Bonjour, vous êtes bien chez Gérard. Je ne suis pas là pour le moment : sûrement parti chercher du pain, ou alors je suis sous la douche. Laissez-moi un message après le bip, je vous rappellerai. Peut-être.\n\
-         BIIIIIIP\n\
-         (La bande contient {n} message{}. Tapez le vôtre, ou /ecouter pour écouter la bande : Gérard ne l'a jamais fait.)",
+        "(La bande contient {n} message{}. Tapez le vôtre, puis ENVOI. SUITE pour écouter la bande : Gérard ne l'a jamais fait.)",
         if n > 1 { "s" } else { "" }
     ))?;
     loop {
         let s = l.attendre()?;
         if s.to_lowercase().trim_start_matches('/').starts_with("ecout") || s.to_lowercase().trim_start_matches('/').starts_with("écout") {
             ecouter(l)?;
-            l.dire("Votre message après le bip, ou /fin pour raccrocher. BIIIP")?;
+            l.dire("Votre message après le bip, ou CONNEXION/FIN pour raccrocher. BIIIP")?;
+            l.ecran.bip()?;
             continue;
         }
         let texte: String = s.chars().take(MESSAGE_MAX).collect();

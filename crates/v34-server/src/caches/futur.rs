@@ -5,7 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{modifier, unix_now, Fin, Ligne};
+use v34_net::videotex::{BLANC, CYAN, JAUNE, NOIR};
+
+use super::{modifier, unix_now, Cadre, Fin, Ligne, Style};
 
 const FICHIER: &str = "futur.json";
 const GARDES: usize = 30;
@@ -29,17 +31,27 @@ Et vous, là-bas ? Vous êtes sur un modem logiciel qui imite ceux de votre épo
 pour retrouver ce bruit-là. Oui, c'est compliqué. Le temps, c'est toujours compliqué.";
 
 pub fn lancer(l: &mut Ligne) -> Result<(), Fin> {
+    l.cadre(&Cadre {
+        titre: "LIGNE DE 2026",
+        sous_titre: "*grésillements* · secret d'État".into(),
+        fg: JAUNE,
+        fond: NOIR,
+        touches: "message pour 1998",
+        invite: "Pour 1998 :",
+    })?;
+    l.guide("Une ligne venue de 2026. Laissez un message pour 1998 (ENVOI), il partira.");
     l.succes("cache-futur");
     l.dire(NOUVELLES)?;
     let boite: Vec<Message> = super::lire(l.donnees, FICHIER);
     if !boite.is_empty() {
-        let mut t = String::from("Derniers messages partis vers 1998 :");
+        l.dire_style("Derniers messages partis vers 1998 :", Style::fg(CYAN))?;
+        let mut t = String::new();
         for m in boite.iter().rev().take(MONTRES) {
             t.push_str(&format!("\n· {} : {}", m.de, m.texte));
         }
-        l.dire(&t)?;
+        l.dire(t.trim_start())?;
     }
-    l.dire("Laissez un message pour 1998, je le ferai suivre. (ou /fin pour raccrocher)")?;
+    l.dire_style("Laissez un message pour 1998, je le ferai suivre. (ou CONNEXION/FIN pour raccrocher)", Style::fg(BLANC))?;
     let s = l.attendre()?;
     let texte: String = s.chars().take(MESSAGE_MAX).collect();
     let m = Message { de: l.abonne.to_string(), quand: unix_now(), texte };

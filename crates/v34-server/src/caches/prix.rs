@@ -7,7 +7,9 @@
 
 use std::collections::BTreeMap;
 
-use super::{hasard, modifier, Fin, Ligne};
+use v34_net::videotex::{Touche, BLANC, CYAN, JAUNE, MAGENTA};
+
+use super::{hasard, modifier, Cadre, Fin, Ligne, Style};
 
 const FICHIER: &str = "prix.json";
 const MANCHES: usize = 5;
@@ -49,11 +51,18 @@ pub fn points(prix: u32, meilleure: u32, exact_du_premier_coup: bool) -> u32 {
 }
 
 pub fn lancer(l: &mut Ligne) -> Result<(), Fin> {
-    l.dire(
-        "★ LE PRIX EN FRANCS ★\n\
-         Le jeu où l'on devine ce que coûtaient les choses cette année. Cinq objets, trois essais chacun : je vous dirai si c'est plus ou moins.\n\
-         Tapez vos prix en francs, sans les centimes. C'est parti !",
-    )?;
+    l.cadre(&Cadre {
+        titre: "LE PRIX EN FRANCS",
+        sous_titre: "le jeu télématique des prix de 1998".into(),
+        fg: BLANC,
+        fond: MAGENTA,
+        touches: "votre prix   SUITE : catalogue",
+        invite: "Prix :",
+    })?;
+    l.touches(&[(Touche::Suite, "/catalogue")]);
+    l.guide("Devinez le prix de cinq objets de 1998, en francs, sans les centimes : trois essais chacun. Après la partie, SUITE donne le catalogue.");
+    l.dire_style("★ LE PRIX EN FRANCS ★", Style::fg(JAUNE))?;
+    l.dire("Le jeu où l'on devine ce que coûtaient les choses cette année. Cinq objets, trois essais chacun : je vous dirai si c'est plus ou moins.\nTapez vos prix en francs, sans les centimes, puis ENVOI. C'est parti !")?;
     let mut tirage: Vec<usize> = (0..OBJETS.len()).collect();
     for i in (1..tirage.len()).rev() {
         tirage.swap(i, hasard(i + 1));
@@ -61,7 +70,7 @@ pub fn lancer(l: &mut Ligne) -> Result<(), Fin> {
     let mut total = 0;
     for (manche, &k) in tirage.iter().take(MANCHES).enumerate() {
         let (objet, prix) = OBJETS[k];
-        l.dire(&format!("Objet n° {} : combien coûte {objet} ?", manche + 1))?;
+        l.dire_style(&format!("Objet n° {} : combien coûte {objet} ?", manche + 1), Style::fg(CYAN))?;
         let mut meilleure: Option<u32> = None;
         let mut essai = 0;
         let mut trouve_premier = false;
@@ -104,7 +113,7 @@ pub fn lancer(l: &mut Ligne) -> Result<(), Fin> {
     for (i, (n, s)) in tableau.iter().take(5).enumerate() {
         fin.push_str(&format!("\n{}. {n} : {s} points", i + 1));
     }
-    fin.push_str("\nMerci d'avoir joué ! Tapez /catalogue pour tous les prix de la saison, ou /fin pour raccrocher.");
+    fin.push_str("\nMerci d'avoir joué ! SUITE (ou /catalogue) : tous les prix de la saison. CONNEXION/FIN : raccrocher.");
     l.dire(&fin)?;
     loop {
         let s = l.attendre()?;
@@ -115,7 +124,7 @@ pub fn lancer(l: &mut Ligne) -> Result<(), Fin> {
             }
             l.dire(&t)?;
         } else {
-            l.dire("Le jeu est fini pour aujourd'hui : /catalogue pour les prix, /fin pour raccrocher.")?;
+            l.dire("Le jeu est fini pour aujourd'hui : SUITE pour les prix, CONNEXION/FIN pour raccrocher.")?;
         }
     }
 }

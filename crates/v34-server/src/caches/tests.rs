@@ -1,12 +1,20 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, sync_channel};
 
-use v34_net::bbs::{self, Decoder, Frame, Item};
+use v34_net::videotex::{self as vt, Touche};
 
 use super::*;
 
+/// Ce que tape l'appelant au clavier du Minitel : le texte, puis ENVOI.
+fn clavier(ligne: &str) -> Vec<u8> {
+    let mut b = vt::encoder(ligne);
+    b.extend(Touche::Envoi.octets());
+    b
+}
+
 /// Joue un service avec ces lignes tapées (puis l'appelant raccroche) ;
-/// rend tout ce qui s'est affiché et la fin.
+/// rend tout ce qui s'est affiché (le texte du flot Vidéotex, espaces
+/// resserrés : la mise en page coupe les phrases) et la fin.
 fn jouer(service: &str, entrees: &[&str], donnees: Option<&Path>) -> (String, Result<(), Fin>) {
     jouer_avec(service, entrees, donnees, &Default::default())
 }
@@ -16,23 +24,16 @@ fn jouer_avec(service: &str, entrees: &[&str], donnees: Option<&Path>, exploits:
     let (to_modem, sortie) = sync_channel(10_000);
     let (entree, from_modem) = channel();
     for e in entrees {
-        entree.send(bbs::encode(&Frame::Chat(e.to_string()))).unwrap();
+        entree.send(clavier(e)).unwrap();
     }
     drop(entree);
-    let mut l = Ligne::new(to_modem, &from_modem, "testeur", donnees, 10_000_000);
+    let mut l = Ligne::new(to_modem, from_modem, "testeur", donnees, 10_000_000);
+    l.ecran.attente_suite = std::time::Duration::ZERO;
     l.exploits = Some(exploits);
     let r = (n.lancer)(&mut l);
     drop(l);
-    let mut dec = Decoder::default();
-    let mut texte = String::new();
-    while let Ok(b) = sortie.try_recv() {
-        for it in dec.push(&b) {
-            if let Item::Frame(Frame::Chat(t)) = it {
-                texte.push_str(&t);
-            }
-        }
-    }
-    (texte, r)
+    let octets: Vec<u8> = sortie.try_iter().flatten().collect();
+    (vt::transcrire(&octets).split_whitespace().collect::<Vec<_>>().join(" "), r)
 }
 
 fn dossier(nom: &str) -> PathBuf {
@@ -75,7 +76,8 @@ fn meteo() {
     let (t, _) = jouer("cache-meteo", &["/bulletin"], Some(&d));
     assert!(t.contains("2 abonnés sur le réseau et 1 communication en cours"), "{t}");
     assert!(t.contains("mer d'huile") && t.contains("Ligne Orage : avis de grand frais"));
-    assert_eq!(t.matches("MÉTÉO DES LIGNES").count(), 2, "bulletin réécouté");
+    assert!(t.contains("METEO DES LIGNES"), "le titre, en capitales sans accents (Minitel)");
+    assert_eq!(t.matches("Bulletin de").count(), 2, "bulletin réécouté");
     let _ = std::fs::remove_dir_all(d);
 }
 
@@ -83,7 +85,8 @@ fn meteo() {
 fn an2000_souffle_le_mot_de_passe() {
     let (t, r) = jouer("cache-an2000", &["3", "/fin"], None);
     assert_eq!(r, Err(Fin::Demande));
-    assert!(t.contains("jours avant l'an 2000") && t.contains("« bogue »"), "{t}");
+    // (pas de guillemets français sur un Minitel)
+    assert!(t.contains("jours avant l'an 2000") && t.contains("\" bogue \""), "{t}");
 }
 
 #[test]
@@ -99,7 +102,8 @@ fn ministere() {
     }
     let (t, r) = jouer("cache-ministere", &["x", "a", "b", "c"], None);
     assert_eq!(r, Ok(()));
-    assert!(t.contains("ACCÈS REFUSÉ") && t.contains("terme officiel"));
+    // (les capitales du Minitel n'ont pas d'accents)
+    assert!(t.contains("ACCES REFUSE") && t.contains("terme officiel"), "{t}");
 }
 
 /// Le piratage complet : agent, fouille, chef (mot de passe du répondeur),
@@ -119,10 +123,10 @@ fn piratage_du_ministere() {
     );
     assert_eq!(r, Ok(()));
     for attendu in [
-        "DIRECTION/   [niveau 3]",
-        "ACCÈS REFUSÉ : DIRECTION demande une habilitation de niveau 3",
+        "DIRECTION/ [niveau 3]",
+        "ACCES REFUSE : DIRECTION demande une habilitation de niveau 3",
         "Il a encore sur son répondeur",
-        "ACCÈS REFUSÉ : habilitation de niveau 2 requise",
+        "ACCES REFUSE : habilitation de niveau 2 requise",
         "BIENVENUE, CHEF DE SERVICE CHEF",
         "un Tamagotchi",
         "MOT DE PASSE INCORRECT.",
@@ -180,4 +184,33 @@ fn prix_en_francs() {
     assert_eq!(r, Err(Fin::Raccroche));
     assert_eq!(t.matches("C'est plus !").count(), 10, "{t}");
     assert!(t.contains("Score final : 0 points") && t.contains("TABLEAU D'HONNEUR"));
+}
+
+/// Aperçu des écrans (à l'œil) : `cargo test -p v34-server apercu -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn apercu() {
+    for (service, entrees) in [("cache-ministere", &["raziel", "bogue", "LISTE"][..]), ("cache-an2000", &["3"][..]), ("cache-prix", &["100"][..]), ("cache-horloge", &[][..])] {
+        let n = LISTE.iter().find(|n| n.service == service).expect("service");
+        let (to_modem, sortie) = sync_channel(10_000);
+        let (entree, from_modem) = channel();
+        for e in entrees {
+            entree.send(clavier(e)).unwrap();
+        }
+        let mut l = Ligne::new(to_modem, from_modem, "testeur", None, 10_000_000);
+        l.ecran.attente_suite = std::time::Duration::ZERO;
+        let h = std::thread::spawn(move || {
+            let _ = (n.lancer)(&mut l);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(if service == "cache-horloge" { 12_000 } else { 300 }));
+        drop(entree);
+        let _ = h.join();
+        let mut m = vt::Ecran::new();
+        m.recevoir(&sortie.try_iter().flatten().collect::<Vec<u8>>());
+        println!("┌{}┐", "─".repeat(40));
+        for r in 0..25 {
+            println!("│{:<40}│", m.texte_rangee(r));
+        }
+        println!("└{}┘", "─".repeat(40));
+    }
 }

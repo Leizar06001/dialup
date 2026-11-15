@@ -250,7 +250,8 @@ fn compose(accent: u8, base: u8) -> char {
     COMPOSEES.iter().find(|(_, a, b)| *a == accent && *b as u8 == base).map_or(base as char, |(l, _, _)| *l)
 }
 
-fn signe(code: u8) -> char {
+/// Signe du jeu G2 (SS2 + code).
+pub fn signe(code: u8) -> char {
     match code {
         0x24 => '$',
         0x26 => '#',
@@ -394,7 +395,8 @@ impl Ecran {
         let mut s: String = (0..COLONNES)
             .map(|c| {
                 let x = self.cellule(r, c);
-                if x.attr & A_MOSAIQUE != 0 {
+                // (mosaïques et moitiés droites des doubles largeurs : des blancs)
+                if x.attr & (A_MOSAIQUE | A_DROITE) != 0 {
                     ' '
                 } else {
                     x.c
@@ -731,29 +733,62 @@ impl Ecran {
 
 /// Le texte d'un flot Vidéotex, pour les tests et les journaux : ce qui
 /// s'affiche, accents recomposés, mosaïques et attributs omis ; chaque
-/// positionnement, effacement ou changement de rangée devient un saut de
-/// ligne (jamais deux de suite).
+/// positionnement ailleurs qu'à la suite de ce qui vient de s'écrire,
+/// effacement ou changement de rangée devient un saut de ligne (jamais deux
+/// de suite).
 pub fn transcrire(octets: &[u8]) -> String {
     let mut s = String::new();
     let mut i = 0;
     let mut mosaique = false;
     let mut dernier: Option<char> = None;
+    // où en est le curseur (rangée, colonne), la largeur des caractères, et
+    // où s'est arrêté le dernier texte écrit
+    let (mut r, mut c, mut largeur) = (1u8, 1u8, 1u8);
+    let mut fin_texte = (1u8, 1u8);
+    let mut saut_attendu = false;
     let saut = |s: &mut String| {
         if !s.is_empty() && !s.ends_with('\n') {
             s.push('\n');
         }
+    };
+    let ecrire = |s: &mut String, ch: char, r: u8, c: &mut u8, largeur: u8, saut_attendu: &mut bool, fin_texte: &mut (u8, u8)| {
+        if std::mem::take(saut_attendu) && !s.is_empty() && !s.ends_with('\n') {
+            s.push('\n');
+        }
+        s.push(ch);
+        *c = c.saturating_add(largeur);
+        *fin_texte = (r, *c);
     };
     while i < octets.len() {
         let b = octets[i] & 0x7F;
         i += 1;
         match b {
             US => {
+                let (r2, c2) = (octets.get(i).copied().unwrap_or(0x40).wrapping_sub(0x40), octets.get(i + 1).copied().unwrap_or(0x41).wrapping_sub(0x40));
                 i += 2;
-                saut(&mut s);
+                // (un positionnement juste après le dernier texte écrit continue
+                // la ligne, même si le curseur est passé ailleurs entre-temps)
+                saut_attendu = (r2, c2) != fin_texte;
+                (r, c, largeur) = (r2, c2, 1);
+                mosaique = false;
             }
-            FF | RS | LF | CR | VT => saut(&mut s),
+            FF | RS => {
+                saut(&mut s);
+                (r, c, largeur) = (1, 1, 1);
+                mosaique = false;
+            }
+            LF | CR | VT => {
+                saut(&mut s);
+                r = r.wrapping_add(1);
+                c = 1;
+            }
             ESC => {
                 let n = octets.get(i).copied().unwrap_or(0);
+                match n {
+                    0x4C | 0x4D => largeur = 1,
+                    0x4E | 0x4F => largeur = 2,
+                    _ => {}
+                }
                 i += match n {
                     0x39 => 2,
                     0x3A | 0x23 => 3,
@@ -766,35 +801,35 @@ pub fn transcrire(octets: &[u8]) -> String {
             REP => {
                 let n = octets.get(i).copied().unwrap_or(0x40).saturating_sub(0x40);
                 i += 1;
-                if let Some(c) = dernier {
-                    s.extend(std::iter::repeat_n(c, n as usize));
+                if let Some(ch) = dernier {
+                    for _ in 0..n {
+                        ecrire(&mut s, ch, r, &mut c, largeur, &mut saut_attendu, &mut fin_texte);
+                    }
                 }
             }
             SS2 => {
                 let a = octets.get(i).copied().unwrap_or(0);
-                if est_accent(a) {
+                let ch = if est_accent(a) {
                     let base = octets.get(i + 1).copied().unwrap_or(b' ');
                     i += 2;
-                    let c = compose(a, base);
-                    s.push(c);
-                    dernier = Some(c);
+                    compose(a, base)
                 } else {
                     i += 1;
-                    let c = signe(a);
-                    s.push(c);
-                    dernier = Some(c);
-                }
+                    signe(a)
+                };
+                ecrire(&mut s, ch, r, &mut c, largeur, &mut saut_attendu, &mut fin_texte);
+                dernier = Some(ch);
             }
             0x20..=0x7F => {
-                let c = if mosaique && !(0x40..=0x5F).contains(&b) {
+                let ch = if mosaique && !(0x40..=0x5F).contains(&b) {
                     ' '
                 } else if b == 0x7F {
                     '█'
                 } else {
                     b as char
                 };
-                s.push(c);
-                dernier = Some(c);
+                ecrire(&mut s, ch, r, &mut c, if mosaique { 1 } else { largeur }, &mut saut_attendu, &mut fin_texte);
+                dernier = Some(ch);
             }
             _ => {}
         }

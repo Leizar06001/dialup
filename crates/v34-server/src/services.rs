@@ -7,8 +7,10 @@
 //! [`ModemPipe`] au service :
 //! - [`Service::Fai`] : bout serveur du tunnel ([`crate::tunnel`]) ;
 //! - [`Service::Echo`] : ligne de test, renvoie tout ce qu'elle reçoit ;
-//! - [`Service::Oracle`] : 3615 ORACLE ([`crate::oracle`]), questions et
-//!   réponses en trames de chat, comme un abonné.
+//! - [`Service::Oracle`] : 3615 ORACLE ([`crate::oracle`]) et les numéros
+//!   cachés ([`crate::caches`]) : de vrais services Minitel. Leur modem
+//!   répond en V.23 (ANS pur, sifflement à 1300 Hz, 1200/75 bit/s) et ils
+//!   écrivent en Vidéotex ([`crate::ecran`]).
 //!
 //! Pour ajouter un service (BBS…) : une variante de [`Service`] dans la
 //! configuration et un thread qui consomme/produit des octets ici.
@@ -98,7 +100,9 @@ fn run(call: ModemCall, rx: Receiver<ModemInput>) -> (HangupReason, String) {
     let label = format!("{} {:08x} ({} / {})", call.service.name().to_uppercase(), call.call_id, call.caller, call.caller_number);
     // Le FAI est raccordé en numérique : il peut jouer le modem numérique
     // du 56k (V.90) si l'abonné le demande.
-    let cfg = ModemConfig { max_rate: call.max_rate, v90: call.v90, digital: true, max_rate_pcm: call.max_rate_pcm, ..ModemConfig::default() };
+    // L'oracle et les numéros cachés sont des serveurs Minitel (V.23).
+    let minitel = matches!(call.service, Service::Oracle | Service::Cache(_));
+    let cfg = ModemConfig { max_rate: call.max_rate, v90: call.v90, digital: true, max_rate_pcm: call.max_rate_pcm, minitel, ..ModemConfig::default() };
     let mut modem = Modem::new(Role::Answer, cfg);
     modem.command(ModemCommand::Answer);
     info!("{label} : décroché");
@@ -171,7 +175,8 @@ fn run(call: ModemCall, rx: Receiver<ModemInput>) -> (HangupReason, String) {
                 ModemEvent::Connected { tx_rate, rx_rate } => {
                     info!("{label} : CONNECT {tx_rate}/{rx_rate} bit/s");
                     connected = true;
-                    let (p, tin, tout) = ModemPipe::new(tx_rate);
+                    // (en V.23, dix bits par caractère, sans LAPM)
+                    let (p, tin, tout) = if minitel { ModemPipe::asynchrone(tx_rate, 10) } else { ModemPipe::new(tx_rate) };
                     let policy = call.policy.clone();
                     let orc = call.oracle.clone();
                     let l = label.clone();
