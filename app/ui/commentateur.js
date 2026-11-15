@@ -1062,7 +1062,8 @@ const Commentateur = (() => {
       if (/^ANSam détecté/.test(msg)) {
         if (premiere("ansam")) dire("ansam_rx", {}, { prio: 1 });
       } else if ((m = /^JM reçu ×2 : modes communs (.*)$/.exec(msg))) {
-        if (premiere("jm")) dire("jm_rx", { modes: modes(m[1]) }, { prio: 1, groupe: "v8" });
+        // (morse proposé : c'est la réponse au morse qu'on commente, juste après)
+        if (!appel.morsePropose && premiere("jm")) dire("jm_rx", { modes: modes(m[1]) }, { prio: 1, groupe: "v8" });
       } else if ((m = /^CM reçu ×2 : l'appelant propose (.*)$/.exec(msg))) {
         if (premiere("cmrx")) dire("cm_rx", { modes: modes(m[1]) }, { groupe: "v8" });
       } else if ((m = /^Envoi JM \(V\.21 haut\) : (.*)$/.exec(msg))) {
@@ -1136,6 +1137,7 @@ const Commentateur = (() => {
       } else if (/^Inversion de A non détectée/.test(msg)) {
         if (premiere("inversion", "manche")) dire("inversion_ratee", {}, { libre: true });
       } else if ((m = /^CM : service non normalisé .*morse à (\d+)/.exec(msg))) {
+        appel.morsePropose = true;
         if (premiere("nsf")) dire("nsf_cm", { mpm: m[1] }, { prio: 1, groupe: "v8" });
       } else if ((m = /^CM : l'appelant propose le morse .*accepté, (\d+)/.exec(msg))) {
         if (premiere("nsf")) dire("nsf_cm_rx", { mpm: m[1] }, { prio: 1, groupe: "v8" });
