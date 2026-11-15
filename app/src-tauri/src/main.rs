@@ -19,6 +19,7 @@ mod engine;
 mod fax;
 mod fft;
 mod link;
+mod minitel;
 #[cfg(target_os = "linux")]
 mod linux;
 mod tones;
@@ -295,6 +296,25 @@ fn fax_envoyer(state: State<AppState>, numero: String, hauteur: usize, octets: V
     state.send(EngineCmd::EnvoyerFax { numero, lignes, fine })
 }
 
+/// Minitel : du texte tapé au clavier (il part à 75 bit/s ; l'écho revient
+/// du serveur).
+#[tauri::command]
+fn minitel_texte(state: State<AppState>, texte: String) -> Result<(), String> {
+    state.send(EngineCmd::MinitelTexte(texte))
+}
+
+/// Minitel : une touche de fonction (« ENVOI », « SUITE », « CONNEXION/FIN »…).
+#[tauri::command]
+fn minitel_touche(state: State<AppState>, touche: String) -> Result<(), String> {
+    state.send(EngineCmd::MinitelTouche(touche))
+}
+
+/// Minitel : l'écran complet (il arrive par l'événement `v34:minitel`).
+#[tauri::command]
+fn minitel_ecran(state: State<AppState>) -> Result<(), String> {
+    state.send(EngineCmd::MinitelEcran)
+}
+
 /// La liste des succès (titres, descriptions, cachés ou non).
 #[tauri::command]
 fn succes_liste() -> &'static [v34_net::succes::Succes] {
@@ -413,6 +433,9 @@ fn main() {
             nav_initial,
             succes_liste,
             fax_envoyer,
+            minitel_texte,
+            minitel_touche,
+            minitel_ecran,
             app_info
         ])
         .run(tauri::generate_context!())

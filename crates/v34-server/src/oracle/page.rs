@@ -6,7 +6,7 @@
 //!  1 │ (boule)  3615 ORACLE      ← double taille
 //!  2 │ (boule)
 //!  3 │ (boule)  l'avenir en direct depuis 1998
-//!  4 │ (boule)  2,23 F la minute · Kiosque Télétel
+//!  4 │ (boule)  2,23 F la minute · Télétel
 //!  5 │ ────────────────────────────────────────
 //!  6 │ zone des réponses
 //!    │ …
@@ -26,16 +26,16 @@ use crate::ecran::{Ecran, Raccroche, Style, Taille};
 const BOULE: &[&str] = &[
     ".....######.....",
     "...##########...",
-    "..####....####..",
-    ".####.##...####.",
-    ".####.#....####.",
+    "..############..",
+    ".###..#########.",
+    ".##..##########.",
     ".##############.",
     "..############..",
     "...##########...",
     ".....######.....",
+    "......####......",
     "....########....",
     "..############..",
-    ".##############.",
 ];
 
 pub const ZONE: (u8, u8) = (6, 18);
@@ -56,7 +56,7 @@ pub fn entete(e: &mut Ecran) -> Result<(), Raccroche> {
     e.ecrire(2, 11, Style::fg(BLANC).taille(Taille::Double), "3615")?;
     e.ecrire(2, 20, Style::fg(JAUNE).taille(Taille::Double), "ORACLE")?;
     e.ecrire(3, 11, Style::fg(CYAN), "l'avenir en direct depuis 1998")?;
-    e.ecrire(4, 11, Style::fg(VERT), "2,23 F la minute · Kiosque Télétel")?;
+    e.ecrire(4, 11, Style::fg(VERT), "2,23 F la minute · Télétel")?;
     e.filet(ZONE.0 - 1, BLEU)?;
     e.filet(ZONE.1 + 1, BLEU)?;
     e.ecrire(20, 1, Style::fg(CYAN), "Votre question :")?;

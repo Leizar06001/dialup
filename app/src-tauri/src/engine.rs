@@ -168,6 +168,11 @@ pub enum EngineCmd {
     /// Télécopie : compose ce numéro et envoie cette page (lignes de 1728
     /// points, vrai = noir ; fine : 7,7 lignes par mm)
     EnvoyerFax { numero: String, lignes: Vec<Vec<bool>>, fine: bool },
+    /// Minitel : du texte tapé au clavier, une touche de fonction (par son
+    /// nom : « ENVOI »…), l'écran complet (pour une messagerie qui s'ouvre)
+    MinitelTexte(String),
+    MinitelTouche(String),
+    MinitelEcran,
 }
 
 /// Débit le plus bas du V.90 (sens descendant), en bit/s : en dessous, le
@@ -373,6 +378,8 @@ pub struct Engine {
     fax_y: usize,
     /// Balayage de numéros en cours (AT*B)
     balayage: Option<Balayage>,
+    /// L'écran et le clavier du Minitel (appels V.23)
+    minitel: crate::minitel::Minitel,
 }
 
 /// Balayage de numéros (AT*B) : chaque numéro d'une plage est composé à son
@@ -438,7 +445,8 @@ fn fmt_speed(x: f64) -> String {
 /// Le haut-parleur joue-t-il ? ATM0 jamais, ATM2 toujours (décroché), ATM1
 /// (AUTO) jusqu'à la porteuse… sauf une télécopie, qu'on entend jusqu'au
 /// bout : la porteuse s'y allume dès le CNG, et le sifflement de la page,
-/// c'est tout l'intérêt.
+/// c'est tout l'intérêt. (Le Minitel suit la règle : son sifflement
+/// s'entend jusqu'au CONNECT 1200/75.)
 fn hp_actif(mode: u8, offhook: bool, cd: bool, phase: Phase) -> bool {
     offhook
         && match mode {
@@ -515,6 +523,7 @@ impl Engine {
             fax_de: None,
             fax_y: 0,
             balayage: None,
+            minitel: crate::minitel::Minitel::new(),
         }
     }
 
@@ -641,6 +650,29 @@ impl Engine {
                     "Les fichiers vont d'abonné à abonné : appelle quelqu'un de l'ANNUAIRE pour lui en envoyer un.".into(),
                 );
             }
+            EngineCmd::Chat(text) if self.status.phase == Phase::Minitel => {
+                let mut b = self.minitel.texte(&text);
+                b.extend(self.minitel.touche("ENVOI").unwrap_or_default());
+                self.link.command_local(ModemCommand::Send(b));
+            }
+            EngineCmd::MinitelTexte(t) => {
+                if self.status.phase == Phase::Minitel {
+                    let b = self.minitel.texte(&t);
+                    self.link.command_local(ModemCommand::Send(b));
+                }
+            }
+            EngineCmd::MinitelTouche(nom) => {
+                if self.status.phase == Phase::Minitel {
+                    if let Some(b) = self.minitel.touche(&nom) {
+                        self.link.command_local(ModemCommand::Send(b));
+                    }
+                }
+            }
+            EngineCmd::MinitelEcran => {
+                if let Some(m) = self.minitel.message(true) {
+                    let _ = self.app.emit("v34:minitel", m);
+                }
+            }
             EngineCmd::Chat(text) => {
                 if self.status.phase == Phase::Data {
                     let bytes = crate::bbs::encode(&crate::bbs::Frame::Chat(text.clone()));
@@ -690,6 +722,9 @@ impl Engine {
             EngineCmd::SetConfig(cfg, auto) => {
                 self.cfg = cfg;
                 self.auto_answer = auto;
+            }
+            EngineCmd::SendFile(..) if self.status.phase == Phase::Minitel => {
+                self.chat("system", "Un Minitel n'envoie pas de fichiers : il affiche des pages.".into());
             }
             EngineCmd::SendFile(name, data) => {
                 if !matches!(self.status.phase, Phase::Data | Phase::Retrain) {
@@ -840,6 +875,7 @@ impl Engine {
                             } else {
                                 "V.90 (56K) désactivé (panneau CONFIG)".into()
                             },
+                            "V.23 1200/75 (Minitel), reconnu au sifflement".into(),
                         ],
                         _ => vec!["OK".into()],
                     };
@@ -902,6 +938,7 @@ impl Engine {
         self.outgoing.clear();
         self.incoming = None;
         self.visio.reset();
+        self.minitel.nouvel_appel();
     }
 
     /// Signalisation du central (mode réseau).
@@ -1012,7 +1049,7 @@ impl Engine {
                     return;
                 }
                 self.user_hangup = true;
-                let connected = matches!(self.status.phase, Phase::Data | Phase::Phase2 | Phase::Phase3 | Phase::Phase4 | Phase::Retrain | Phase::Cleardown);
+                let connected = matches!(self.status.phase, Phase::Data | Phase::Phase2 | Phase::Phase3 | Phase::Phase4 | Phase::Retrain | Phase::Cleardown | Phase::Minitel);
                 match reason {
                     // FAI non activé : il « sonne occupé » (comme le dit le site)
                     H::Forbidden if !connected => {
@@ -1573,6 +1610,11 @@ impl Engine {
     }
 
     fn tick(&mut self) {
+        // CONNEXION/FIN : le serveur raccroche ; sinon, on raccroche nous-mêmes
+        if self.minitel.fin_sans_reponse() && self.status.phase == Phase::Minitel {
+            self.minitel.nouvel_appel();
+            self.hangup();
+        }
         self.update_transfers();
         self.suivre_balayage();
         self.pump_tunnel();
@@ -1629,6 +1671,9 @@ impl Engine {
 
         for (side, ev) in self.link.drain_events() {
             self.on_event(side, ev);
+        }
+        if let Some(m) = self.minitel.message(false) {
+            let _ = self.app.emit("v34:minitel", m);
         }
         self.status = self.link.local_status();
         self.remote_phase = self.link.remote_phase();
@@ -1697,6 +1742,13 @@ impl Engine {
                     self.counters.recoveries += 1;
                     self.retrains += 1;
                 }
+                ModemEvent::PhaseChanged(Phase::Minitel) => self.minitel.debut(),
+                ModemEvent::Connected { tx_rate, rx_rate } if self.minitel.actif() => {
+                    // V.23 : 1200 bit/s vers l'écran, 75 depuis le clavier
+                    self.console(&format!("CONNECT {rx_rate}/{tx_rate} (V.23, Minitel)"), "result");
+                    self.minitel.connexion(true);
+                    self.console("Minitel en ligne : l'écran est dans la MESSAGERIE (sa LED clignote). Entrée = ENVOI.", "info");
+                }
                 ModemEvent::Connected { tx_rate, rx_rate } => {
                     self.console(&format!("CONNECT {rx_rate}/V34 (TX {tx_rate})"), "result");
                     if *rx_rate > 33_600 {
@@ -1714,11 +1766,15 @@ impl Engine {
                 }
                 ModemEvent::Disconnected { .. } | ModemEvent::PhaseChanged(Phase::Failed) => {
                     self.stop_tunnel();
+                    if self.minitel.connecte() {
+                        self.minitel.connexion(false);
+                    }
                     if !self.user_hangup {
                         self.console("NO CARRIER", "result");
                         self.user_hangup = true;
                     }
                 }
+                ModemEvent::Data(bytes) if self.minitel.actif() => self.minitel.recevoir(bytes),
                 ModemEvent::Data(bytes) => {
                     if let Some(t) = self.tunnel.as_mut() {
                         t.pipe.on_modem_data(bytes.clone());
@@ -1865,6 +1921,7 @@ impl Engine {
         match self.status.phase {
             Phase::Data => "online",
             Phase::Fax => "fax",
+            Phase::Minitel => "minitel",
             p if in_call(p) => "connecting",
             _ => "idle",
         }
@@ -1930,6 +1987,9 @@ mod tests {
         assert!(!hp_actif(0, true, true, Phase::Fax));
         assert!(!hp_actif(1, false, false, Phase::Fax));
         assert!(hp_actif(2, true, true, Phase::Data));
+        // Minitel : le sifflement jusqu'au CONNECT 1200/75, puis le silence
+        assert!(hp_actif(1, true, false, Phase::Minitel));
+        assert!(!hp_actif(1, true, true, Phase::Minitel));
     }
 
     #[test]

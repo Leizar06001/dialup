@@ -50,6 +50,30 @@
           <input id="bbs-input" spellcheck="false" aria-label="Message" placeholder="tape ton message…">
         </form>
       </div>
+      <!-- Minitel : quand l'appel aboutit sur un serveur Minitel (V.23), son
+           écran Vidéotex de 40 × 25 et ses touches de fonction remplacent le
+           chat. Le moteur tient l'écran (v34:minitel) ; le clavier part à
+           75 bit/s, l'écho revient du serveur. -->
+      <div class="minitel" id="vue-minitel" hidden>
+        <div class="mt-boitier">
+          <div class="mt-ecran" id="mt-ecran" tabindex="0" title="Clique sur l'écran puis tape : Entrée = ENVOI, ⌫ = CORRECTION, Échap = ANNULATION, F1 = GUIDE, Page suivante = SUITE, F10 = CONNEXION/FIN">
+            <canvas id="mt-canvas" width="640" height="500"></canvas>
+          </div>
+          <div class="mt-marque">Minitel <i>1 · Tinyverse</i></div>
+        </div>
+        <div class="mt-touches" id="mt-touches" role="group" aria-label="Touches de fonction du Minitel">
+          <button data-t="SOMMAIRE" title="Début">Sommaire</button>
+          <button data-t="ANNULATION" title="Échap">Annulation</button>
+          <button data-t="RETOUR" title="Page précédente">Retour</button>
+          <button data-t="RÉPÉTITION" title="F5">Répétition</button>
+          <button data-t="GUIDE" title="F1">Guide</button>
+          <button data-t="CORRECTION" title="Retour arrière">Correction</button>
+          <button data-t="SUITE" title="Page suivante">Suite</button>
+          <button data-t="ENVOI" class="envoi" title="Entrée">Envoi</button>
+          <button data-t="CONNEXION/FIN" class="fin" title="F10">Connexion/Fin</button>
+        </div>
+        <div class="cell mt-etat" id="mt-etat">Minitel hors ligne (F)</div>
+      </div>
       <div class="filebar">
         <label class="btn" for="file-input">Envoyer un fichier…</label>
         <input type="file" id="file-input" hidden>
@@ -90,6 +114,7 @@
       <div class="dir-list" id="dir-list"></div>
     </section>
   </main>
+  <script src="minitel.js"></script>
   <script src="messagerie.js"></script>
 </body>
 </html>
