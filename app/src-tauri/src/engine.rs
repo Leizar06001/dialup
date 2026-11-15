@@ -851,12 +851,21 @@ impl Engine {
                             } else {
                                 "V.90 (56K) désactivé (panneau CONFIG)".into()
                             },
+                            if self.cfg.morse {
+                                format!("Morse {} mots/minute (V.8 non normalisé TINYVERSE, DIP 4)", v34_core::morse::MPM)
+                            } else {
+                                "Morse désactivé (DIP 4)".into()
+                            },
                         ],
                         _ => vec!["OK".into()],
                     };
                     for l in &lines {
                         self.console(l, "resp");
                     }
+                }
+                'O' if self.morse.is_some() => {
+                    self.console(&format!("CONNECT {} MPM MORSE", self.morse.unwrap_or(v34_core::morse::MPM)), "result");
+                    responded = true;
                 }
                 'O' => {
                     if self.status.phase != Phase::Data {

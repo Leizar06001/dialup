@@ -14,6 +14,10 @@ use crate::v8::{Menu, NonNormalise};
 const DELAI_SK: u64 = 4000 * MS;
 /// SK reçu : on raccroche un peu après (le temps que l'autre finisse).
 const APRES_SK: u64 = 300 * MS;
+/// Un mot sans espace ni procédure derrière part quand même au bout de 60
+/// points (3,6 s à 20 mots/minute) : plus que l'attente d'un « + » ou d'un
+/// AR (l'écoute ne sait qu'au signe suivant), même suivi d'un long signe.
+const MOT_ABANDONNE: u64 = 60;
 
 pub struct Morse {
     pub mpm: u8,
@@ -29,6 +33,12 @@ pub struct Morse {
     evenements: Vec<MorseEvenement>,
     /// Dernier signe reconnu (texte, code), pour l'afficheur
     dernier: (String, String),
+    /// Le texte reconnu, en flux d'octets, mot par mot (voir [`Morse::donnees`]),
+    /// et le mot en cours (depuis quand)
+    donnees: Vec<Vec<u8>>,
+    mot: Vec<u8>,
+    mot_depuis: u64,
+    point: u64,
 }
 
 /// Fréquences (émission, écoute) d'un rôle.
@@ -56,7 +66,20 @@ impl Morse {
             sk_recu: None,
             evenements: Vec::new(),
             dernier: (String::new(), String::new()),
+            donnees: Vec::new(),
+            mot: Vec::new(),
+            mot_depuis: 0,
+            point: cadence.point as u64,
         }
+    }
+
+    /// Le texte reconnu en octets, mot par mot : celui qui le renvoie (la
+    /// ligne de test) manipule alors un mot entier d'un coup, avec les bons
+    /// silences entre les lettres. Lettre par lettre, chacune ne repartait
+    /// qu'une fois finie : derrière un E, un « ' » de six éléments laissait
+    /// assez de silence pour un faux espace. SK n'y est pas (on raccroche).
+    pub fn donnees(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.donnees)
     }
 
     /// Du texte à émettre (UTF-8 ; procédures entre chevrons : `<KA>`, `<AR>`…).
@@ -94,7 +117,18 @@ impl Morse {
             if !code.is_empty() {
                 self.dernier = (texte.clone(), code.clone());
             }
+            if texte != "<SK>" {
+                self.mot.extend(texte.as_bytes());
+                self.mot_depuis = self.n;
+                // (KA reste avec le mot qui le suit)
+                if texte == " " || (texte.starts_with('<') && texte != "<KA>") {
+                    self.donnees.push(std::mem::take(&mut self.mot));
+                }
+            }
             self.evenements.push(MorseEvenement::Recu { texte, code });
+        }
+        if !self.mot.is_empty() && self.n - self.mot_depuis > MOT_ABANDONNE * self.point {
+            self.donnees.push(std::mem::take(&mut self.mot));
         }
     }
 
@@ -237,6 +271,7 @@ impl Modem {
         m.process(rx, tx);
         self.n += rx.len() as u64;
         let evs = m.evenements();
+        let donnees = m.donnees();
         let vue = m.vue();
         let fini = m.fini();
         // SD : touche baissée ; RD : le ton d'en face ; CD : la liaison
@@ -247,16 +282,12 @@ impl Modem {
         self.status.tx_signal = if vue.tx_texte.is_empty() { "silence".into() } else { format!("Morse {} {}", vue.tx_texte, joli(&vue.tx_code)) };
         self.status.rx_signal = if vue.rx_cle || !vue.rx_code.is_empty() { format!("Morse {}", joli(&vue.rx_code)) } else { "silence".into() };
         for e in evs {
-            let donnees = match &e {
-                // le texte reçu est aussi un flux d'octets (ligne de test, terminal)
-                MorseEvenement::Recu { texte, .. } if texte != "<SK>" => Some(texte.clone().into_bytes()),
-                _ => None,
-            };
             self.events.push(ModemEvent::Morse(e));
-            if let Some(d) = donnees {
-                self.status.bytes_rx += d.len() as u64;
-                self.events.push(ModemEvent::Data(d));
-            }
+        }
+        // le texte reçu est aussi un flux d'octets, mot par mot (ligne de test, terminal)
+        for d in donnees {
+            self.status.bytes_rx += d.len() as u64;
+            self.events.push(ModemEvent::Data(d));
         }
         self.status.morse = Some(vue);
         if let Some(raison) = fini {
@@ -279,6 +310,7 @@ mod tests {
         let (mut ta, mut tb) = ([0.0f32; 160], [0.0f32; 160]);
         let (mut ra, mut rb) = ([0.0f32; 160], [0.0f32; 160]);
         let (mut lu_a, mut lu_b) = (String::new(), String::new());
+        let mut mots_a: Vec<String> = Vec::new();
         for _ in 0..(20 * 50) {
             a.process(&ra, &mut ta);
             b.process(&rb, &mut tb);
@@ -294,7 +326,10 @@ mod tests {
                     }
                 }
             }
+            mots_a.extend(a.donnees().iter().map(|d| String::from_utf8_lossy(d).into_owned()));
         }
+        // le flux d'octets arrive mot par mot (KA avec le premier)
+        assert_eq!(mots_a, ["<KA>SALUT ", "À ", "TOI<AR>"]);
         assert_eq!(lu_b, "<KA>BONJOUR<AR>");
         assert_eq!(lu_a, "<KA>SALUT À TOI<AR>");
         assert_eq!(a.vue().f_tx, 800.0);

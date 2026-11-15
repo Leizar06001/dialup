@@ -120,6 +120,8 @@ pub struct Ecoute {
     mot_fait: bool,
     /// AR reconnu, en attente : fin de message ou « + » ? (vrai : un espace a suivi)
     ar: Option<bool>,
+    /// Silence de mot entendu : l'espace sortira devant le signe suivant
+    espace_attente: bool,
     sortie: Vec<(String, String)>,
 }
 
@@ -147,6 +149,7 @@ impl Ecoute {
             a_ecrit: false,
             mot_fait: false,
             ar: None,
+            espace_attente: false,
             sortie: Vec::new(),
         }
     }
@@ -290,6 +293,7 @@ impl Ecoute {
         if self.ar.is_some() && g >= fin_message {
             self.ar = None;
             self.a_ecrit = false;
+            self.espace_attente = false;
             self.sortir("<AR>", ".-.-.");
         }
     }
@@ -298,12 +302,12 @@ impl Ecoute {
         let texte = code::lire(&code).unwrap_or("*");
         if let Some(espace) = self.ar.take() {
             if texte == "<KA>" {
+                self.espace_attente = false;
                 self.sortir("<AR>", ".-.-.");
             } else {
+                self.sortir_espace();
                 self.sortir("+", ".-.-.");
-                if espace {
-                    self.sortir(" ", "");
-                }
+                self.espace_attente = espace;
             }
         }
         // (pas d'espace après SK : c'est fini)
@@ -312,16 +316,30 @@ impl Ecoute {
             self.ar = Some(false);
             return;
         }
+        // l'espace d'avant ne sort que devant du texte (pas devant KA ou SK)
+        if texte == "<KA>" || texte == "<SK>" {
+            self.espace_attente = false;
+        } else {
+            self.sortir_espace();
+        }
         self.sortir(texte, &code);
     }
 
+    /// Silence de mot : l'espace attend le signe suivant (un AR qui arrive
+    /// en retard, après une pause, ne laisse pas d'espace avant lui).
     fn espace(&mut self) {
         if let Some(e) = self.ar.as_mut() {
             *e = true;
             return;
         }
         self.a_ecrit = false;
-        self.sortir(" ", "");
+        self.espace_attente = true;
+    }
+
+    fn sortir_espace(&mut self) {
+        if std::mem::take(&mut self.espace_attente) {
+            self.sortir(" ", "");
+        }
     }
 
     fn sortir(&mut self, texte: &str, code: &str) {
@@ -389,6 +407,14 @@ mod tests {
         // « + » au milieu d'un message, AR à la fin, KA juste derrière
         let t = "<KA>C++ ET 2+2<AR><KA>OK<AR>";
         assert_eq!(ecouter(t, "Parfaite", 1600.0, 4), t);
+    }
+
+    #[test]
+    fn pas_d_espace_devant_un_ar_en_retard() {
+        // la ligne de test renvoie AR après une pause (elle attend de savoir
+        // si c'était un « + ») : pas d'espace parasite devant
+        assert_eq!(ecouter("<KA>SOS DE TEST <AR>", "Parfaite", 1600.0, 6), "<KA>SOS DE TEST<AR>");
+        assert_eq!(ecouter("<KA>A B <KA>C<AR>", "Parfaite", 1600.0, 7), "<KA>A B<KA>C<AR>");
     }
 
     #[test]

@@ -540,7 +540,10 @@ impl ChatScript {
 
     /// Prochain ordre au modem : un message après un silence, puis raccrocher.
     fn next(&mut self) -> Option<ModemCommand> {
-        if self.done || self.last_rx.elapsed() < Self::SILENCE {
+        // (en morse, le texte arrive mot par mot, à deux lettres par seconde :
+        // le premier mot de l'écho revient une dizaine de secondes après)
+        let silence = if self.morse { Duration::from_secs(20) } else { Self::SILENCE };
+        if self.done || self.last_rx.elapsed() < silence {
             return None;
         }
         self.last_rx = Instant::now();
