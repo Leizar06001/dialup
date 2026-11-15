@@ -547,6 +547,9 @@ input[type=range]::-moz-range-thumb {
 .badge-btn:hover { filter: brightness(1.3); }
 .badge-btn.net-on { color: var(--led-green); text-shadow: 0 0 6px rgba(73,255,106,0.6); }
 .badge-btn.net-wait { color: var(--amber); }
+/* MAJ : une version plus récente est publiée (clic : sa page, dans le navigateur du système) */
+.maj-badge { color: var(--amber); animation: led-blink 1.2s steps(2, jump-none) infinite; }
+.maj-badge.vu { animation: none; }
 .badge-btn.net-err { color: var(--red, #ff5a4f); }
 .modal { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(0,0,0,0.55); }
 .modal[hidden] { display: none; }

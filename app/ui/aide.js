@@ -60,6 +60,7 @@
         [["AT&F"], "Réglages d'usine du haut-parleur (ATM1, ATL2), sans raccrocher."],
         [["ATI0", "ATI1", "ATI3"], "Nom du modem, somme de contrôle (255, pour la forme) et version."],
         [["ATI4"], "Capacités : débits V.34 et état du 56K, d'après le panneau CONFIG."],
+        [["AT*V"], "Y a-t-il une version plus récente du logiciel ? (Le modem le vérifie aussi tout seul au démarrage, puis chaque jour : le badge MAJ clignote en haut ; un clic ouvre sa page.)"],
         [["ATO"], "Retour en ligne : CONNECT si la porteuse est là, sinon NO CARRIER."],
         [["ATS0=1", "ATS7?"], "Registres S : acceptés… et poliment ignorés."],
         [["ATE", "ATV", "ATQ", "ATX", "ATB", "ATN", "ATW"], "Acceptés (OK), sans effet : souvenirs d'un autre siècle."],

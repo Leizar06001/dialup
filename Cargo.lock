@@ -4308,6 +4308,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "ureq",
  "v34-core",
  "v34-net",
  "v34-server",

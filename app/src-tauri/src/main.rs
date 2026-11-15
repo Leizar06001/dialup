@@ -19,6 +19,7 @@ mod engine;
 mod fax;
 mod fft;
 mod link;
+mod maj;
 mod minitel;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -359,6 +360,12 @@ fn fit_to_screen(win: &tauri::WebviewWindow) {
     let _ = win.set_position(tauri::LogicalPosition::new(x, y));
 }
 
+/// Badge MAJ : ouvre la page de la nouvelle version dans le navigateur du système.
+#[tauri::command]
+fn maj_ouvrir() -> Result<(), String> {
+    maj::ouvrir()
+}
+
 fn main() {
     let speaker = Speaker::start();
     let (tx, rx) = channel::<EngineCmd>();
@@ -369,6 +376,7 @@ fn main() {
         .manage(Mutex::new(Journal::default()))
         .setup(move |app| {
             tenir_journal(app.handle());
+            maj::surveiller(app.handle().clone());
             let handle = app.handle().clone();
             std::thread::Builder::new()
                 .name("v34-engine".into())
@@ -438,6 +446,7 @@ fn main() {
             minitel_texte,
             minitel_touche,
             minitel_ecran,
+            maj_ouvrir,
             app_info
         ])
         .run(tauri::generate_context!())

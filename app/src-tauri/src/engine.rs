@@ -804,6 +804,13 @@ impl Engine {
         if let Some(arg) = up.strip_prefix("AT*B") {
             return self.commande_balayage(arg.trim());
         }
+        if up == "AT*V" {
+            // Mise à jour ? (GitHub, hors du thread temps réel ; réponse par `v34:maj`)
+            self.console(&format!("Version {} — recherche d'une version plus récente…", env!("CARGO_PKG_VERSION")), "info");
+            let app = self.app.clone();
+            std::thread::spawn(move || crate::maj::annoncer(&app, true));
+            return;
+        }
         let body: Vec<char> = up[2..].chars().collect();
         let mut i = 0;
         let mut responded = false;

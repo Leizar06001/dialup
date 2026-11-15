@@ -26,6 +26,8 @@ v34-server = { path = "../../crates/v34-server" }
 cpal = "0.15"
 # Télécopies reçues, enregistrées en PNG (déjà amené par Tauri)
 png = "0.18"
+# Vérification des mises à jour (API GitHub) ; déjà amené par v34-server
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
 
 # Linux : les vues web de Tauri sont des widgets WebKitGTK, rangés dans une
 # boîte GTK (mise en page du navigateur, caméra du visiophone). Mêmes

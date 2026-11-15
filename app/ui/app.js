@@ -120,6 +120,27 @@ const PHASE_NAMES = {
 };
 
 bridge.listen("v34:console", (c) => crt(c.text, c.kind));
+
+/* ---------------------------------------------------------------- mises à jour
+   Rien ne s'ouvre tout seul : le badge MAJ clignote ; un clic ouvre la page
+   de la nouvelle version dans le navigateur du système. */
+bridge.listen("v34:maj", (m) => {
+  if (m.nouvelle) {
+    const b = $("maj-badge");
+    b.textContent = "MAJ " + m.derniere;
+    b.hidden = false;
+    crt(`Nouvelle version ${m.derniere}${m.date ? " du " + m.date.split("-").reverse().join("/") : ""} disponible (tu as la ${m.actuelle}) : clique sur le badge MAJ en haut.`, "info");
+    if (m.notes) crt("  " + m.notes, "info");
+  } else {
+    crt(`Logiciel à jour : version ${m.actuelle} (dernière publiée : ${m.derniere}).`, "resp");
+  }
+  if (m.manuelle) crt("OK", "result");
+});
+bridge.listen("v34:maj-erreur", (e) => { crt("Mise à jour : " + e, "info"); crt("ERROR", "result"); });
+$("maj-badge").addEventListener("click", () => {
+  $("maj-badge").classList.add("vu");
+  invoke("maj_ouvrir").then(() => crt("Page de la nouvelle version ouverte dans ton navigateur.", "info")).catch((e) => crt("Mise à jour : " + e, "info"));
+});
 bridge.listen("v34:event", ({ side, event }) => {
   const who = side === "remote" ? "    [distant] " : "";
   const cls = "ev" + (side === "remote" ? " remote" : "");
@@ -869,6 +890,7 @@ function frame() {
 
 /* ---------------------------------------------------------------- infobulles LEDs et phases */
 const TIPS = {
+  maj: ["MAJ · Mise à jour", "Une version plus récente du logiciel est publiée (vérifié au démarrage puis chaque jour, ou avec AT*V). Un clic ouvre sa page dans le navigateur du système : télécharge, installe par-dessus, tes réglages restent."],
   hs: ["HS · High Speed", "Allumée quand la liaison dépasse 14 400 bit/s (V.32bis, V.34). Sur un vrai modem, c'était la LED des frimeurs."],
   aa: ["AA · Auto Answer", "Au repos : allumée quand le modem décrochera tout seul si on l'appelle (interrupteur DIP 2 « RÉP. AUTO », le registre S0 d'un vrai modem). En appel : allumée quand c'est lui qui a répondu."],
   cd: ["CD · Carrier Detect", "La porteuse du modem distant est détectée : la liaison de données est établie. Quand elle s'éteint : NO CARRIER."],
