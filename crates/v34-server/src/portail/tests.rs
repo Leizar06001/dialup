@@ -467,7 +467,7 @@ fn livre_d_or_avec_moderation() {
 
     // Modération dans /admin : Publier (CSRF).
     let admin = cookie(&post(p, "/admin/connexion", &[("mdp", "mdp-raziel")], None));
-    let page = texte(&get_avec(p, "/admin", &admin));
+    let page = texte(&get_avec(p, "/admin/livre", &admin));
     assert!(page.contains("messages à relire (1)") && page.contains("&lt;script&gt;") && !page.contains("<script>"), "{page}");
     let id = page.split("name=\"id\" value=\"").nth(1).unwrap().split('"').next().unwrap().to_string();
     assert_eq!(post(p, "/admin/livre/publier", &[("csrf", "faux"), ("id", &id)], Some(&admin)).statut, 403);
@@ -493,7 +493,7 @@ fn livre_d_or_avec_moderation() {
     assert!(i1 < i2, "le plus récent d'abord");
 
     // Suppression (CSRF).
-    let page = texte(&get_avec(p, "/admin", &admin));
+    let page = texte(&get_avec(p, "/admin/livre", &admin));
     let r = post(p, "/admin/livre/supprimer", &[("csrf", &csrf(&page)), ("id", &id)], Some(&admin));
     assert!(r.statut == 200 && texte(&r).contains("supprimé"));
     assert!(!texte(&get(p, "/livre")).contains("Super site"));
@@ -557,7 +557,7 @@ fn pages_legales_presentes_et_liees_partout() {
         assert!(c.contains(attendu), "conditions : {attendu} absent");
     }
     let v = texte(&get(p, "/confidentialite"));
-    for attendu in ["empreinte", "48 heures", "jusqu'à sa suppression", "durée de rétention", "débogage", "CNIL", "v34abo", "strictement nécessaires", "GitHub", "serveur d'envoi d'e-mails", "effacement", "3615 ORACLE", "OpenRouter", "DeepSeek", "le temps de l'appel"] {
+    for attendu in ["empreinte", "48 heures", "jusqu'à sa suppression", "durée de rétention", "débogage", "CNIL", "v34abo", "strictement nécessaires", "GitHub", "serveur d'envoi d'e-mails", "effacement", "3615 ORACLE", "OpenRouter", "DeepSeek", "le temps de l'appel", "suspension éventuelle", "qui est en ligne"] {
         assert!(v.contains(attendu), "confidentialité : {attendu} absent");
     }
     // 3615 ORACLE dans le tableau des services et dans l'aide
@@ -589,7 +589,7 @@ fn quoi_de_neuf_d_apres_github() {
     assert_eq!(n.len(), 3, "{n:?}");
     assert_eq!(n[0].titre, "Nouvelle version du logiciel : V34 Modem 0.2.0 (préversion)");
     assert_eq!((n[1].titre.as_str(), n[1].lien.as_str()), ("Nouvelle version du logiciel : v0.1.1", ""), "lien hors de GitHub ignoré");
-    let q = quoi_de_neuf(&n);
+    let q = quoi_de_neuf(&n, &[]);
     assert_eq!(q.len(), 3 + NOUVELLES.len() + 1);
     assert_eq!(q.iter().map(|n| n.date.as_str()).collect::<Vec<_>>(), ["2026-11-20", "2026-11-15", "2026-11-15", "2026-11-14", "2026-11-14", "2026-11-14", "2026-11-10"]);
     assert!(q[2].titre.contains("Télécopie") && q[3].titre.contains("56K") && q[4].titre.contains("08 36 15 42 86") && q[5].titre.starts_with("Ouverture du site"), "à date égale : les nouvelles, puis l'ouverture : {q:?}");
@@ -661,4 +661,413 @@ fn facture_succes_et_classement_dans_l_espace_abonne() {
     // Sans session : le formulaire de connexion ; mois absurde : le mois en cours
     assert!(texte(&get(p, "/compte/facture")).contains("action=\"/compte/connexion\""));
     assert!(texte(&get_avec(p, "/compte/facture?mois=999999", &session)).contains("23,04 F"));
+}
+
+// ───────────────────────── administration ─────────────────────────
+
+/// Session d'administration : (cookie, jeton CSRF).
+fn admin(p: &Portail) -> (String, String) {
+    let c = cookie(&post(p, "/admin/connexion", &[("mdp", "mdp-raziel")], None));
+    let page = texte(&get_avec(p, "/admin", &c));
+    let j = csrf(&page);
+    (c, j)
+}
+
+/// Action d'administration (jeton CSRF ajouté).
+fn action(p: &Portail, a: &(String, String), chemin: &str, champs: &[(&str, &str)]) -> Reponse {
+    let mut v = champs.to_vec();
+    v.push(("csrf", &a.1));
+    post(p, chemin, &v, Some(&a.0))
+}
+
+/// Écrit l'état du central (frais).
+fn etat_central(b: &Banc, en_ligne: &str, communications: &str) {
+    let now = maintenant();
+    std::fs::write(
+        b.dir.join("etat.json"),
+        format!(r#"{{"version":"0.1.7","depuis":{},"maj":{now},"abonnes":4,"connectes":2,"appels":1,"modems":{{"occupes":1,"max":4}},"salon":0,"en_ligne":{en_ligne},"communications":{communications}}}"#, now - 3600),
+    )
+    .unwrap();
+}
+
+#[test]
+fn admin_tableau_de_bord_et_pages() {
+    use crate::facturation::{Facturation, Ticket};
+    let b = banc();
+    let p = &b.p;
+    compte(&b, "gaston", "0612345678", "gaston@example.org", "motdepasse");
+    compte(&b, "lagaffe", "0699999999", "lagaffe@example.org", "motdepasse");
+    b.comptes.regler_fai("lagaffe", true).unwrap();
+    b.comptes.inscrire("jeanne", "0611111111", "h", "jeanne@example.org").unwrap();
+    let now = maintenant();
+    etat_central(&b, r#"["gaston","raziel"]"#, &format!(r#"[{{"de":"gaston","numero":"0836154286","vers":"fai","decroche":{}}}]"#, now - 150));
+    let mut f = Facturation::ouvrir(b.dir.clone(), now);
+    let meme_mois = v34_net::tarif::mois(now - 700) == v34_net::tarif::mois(now);
+    f.appel(Ticket::nouveau(now - 700, 300, ("lagaffe", "0699999999"), "0612345678", "gaston", None));
+
+    let a = admin(p);
+    let page = texte(&get_avec(p, "/admin", &a.0));
+    for attendu in [
+        "PUPITRE DU CENTRAL",
+        "EN SERVICE",
+        "version 0.1.7",
+        "<a href=\"/admin/abonne?nom=gaston\">gaston</a>, <a href=\"/admin/abonne?nom=raziel\">raziel</a>",
+        "→ TINYVERSE (accès Internet) (08 36 15 42 86), depuis 2 min",
+        "1 à décider",
+        "Inscriptions en attente",
+        "Derniers inscrits",
+        "Accorder",
+        "Refuser",
+        "href=\"/admin/abonnes\"",
+        "href=\"/admin/inscriptions\"",
+        "href=\"/admin/factures\"",
+        "href=\"/admin/tinyblog\"",
+        "href=\"/admin/caches\"",
+        "href=\"/admin/livre\"",
+        "href=\"/admin/site\"",
+        "Se déconnecter",
+    ] {
+        assert!(page.contains(attendu), "{attendu} absent du tableau de bord : {page}");
+    }
+    if meme_mois {
+        assert!(page.contains("1 appel (5 min)"), "appels du mois : {page}");
+    }
+    // Toutes les pages : le menu, et rien en cache
+    for chemin in [
+        "/admin/abonnes",
+        "/admin/abonne?nom=gaston",
+        "/admin/abonne?nom=raziel",
+        "/admin/inscriptions",
+        "/admin/factures",
+        "/admin/facture?nom=lagaffe",
+        "/admin/tinyblog",
+        "/admin/caches",
+        "/admin/livre",
+        "/admin/site",
+    ] {
+        let r = get_avec(p, chemin, &a.0);
+        assert_eq!(r.statut, 200, "{chemin} : {}", texte(&r));
+        assert!(texte(&r).contains("class=\"adm-menu\""), "{chemin} : menu absent");
+        assert_eq!(entete(&r, "Cache-Control"), Some("no-store"), "{chemin}");
+    }
+    // Liste : config.toml et site, recherche par numéro (espaces permis)
+    let l = texte(&get_avec(p, "/admin/abonnes", &a.0));
+    assert!(l.contains("Tous les abonnés (4)") && l.contains("prunelle") && !l.contains("jeanne"), "{l}");
+    let l = texte(&get_avec(p, "/admin/abonnes?q=06+99", &a.0));
+    assert!(l.contains("abonne?nom=lagaffe") && !l.contains("abonne?nom=gaston"), "{l}");
+    let l = texte(&get_avec(p, "/admin/abonnes?q=GASTON%40example", &a.0));
+    assert!(l.contains("abonne?nom=gaston") && !l.contains("abonne?nom=lagaffe"), "par adresse : {l}");
+    // Introuvables
+    assert_eq!(get_avec(p, "/admin/abonne?nom=personne", &a.0).statut, 404);
+    assert_eq!(get_avec(p, "/admin/inexistante", &a.0).statut, 404);
+    // Sans session : le formulaire de connexion partout
+    for chemin in ["/admin/abonnes", "/admin/site", "/admin/tinyblog/img?f=gaston-1.gif"] {
+        assert!(texte(&get(p, chemin)).contains("action=\"/admin/connexion\""), "{chemin}");
+    }
+    // Actions : session et jeton CSRF exigés
+    assert_eq!(post(p, "/admin/numero", &[("nom", "gaston"), ("numero", "0655555555"), ("csrf", &a.1)], None).statut, 303);
+    assert_eq!(post(p, "/admin/numero", &[("nom", "gaston"), ("numero", "0655555555"), ("csrf", "faux")], Some(&a.0)).statut, 403);
+    assert_eq!(action(p, &a, "/admin/inconnue", &[]).statut, 404);
+    assert_eq!(b.comptes.compte("gaston").unwrap().numero, "0612345678");
+    // Accès Internet depuis le tableau de bord : on y revient
+    let r = action(p, &a, "/admin/fai", &[("nom", "gaston"), ("d", "non"), ("retour", "tableau")]);
+    assert!(r.statut == 200 && texte(&r).contains("Accès Internet de gaston : refusé.") && texte(&r).contains("PUPITRE"), "{}", texte(&r));
+    // Central muet : le pupitre le dit
+    std::fs::remove_file(b.dir.join("etat.json")).unwrap();
+    assert!(texte(&get_avec(p, "/admin", &a.0)).contains("HORS SERVICE ou muet"));
+}
+
+#[test]
+fn admin_fiche_numero_suspension_mot_de_passe_suppression() {
+    let b = banc();
+    let p = &b.p;
+    compte(&b, "gaston", "0612345678", "gaston@example.org", "motdepasse");
+    b.comptes.inscrire("lagaffe", "0699999999", "h", "lagaffe@example.org").unwrap();
+    let session = connexion(p, "gaston", "motdepasse", "192.0.2.3");
+    let a = admin(p);
+    let fiche = texte(&get_avec(p, "/admin/abonne?nom=gaston", &a.0));
+    for attendu in ["Fiche de l'abonné gaston", "06 12 34 56 78", "mailto:gaston@example.org", "action=\"/admin/numero\"", "/admin/mdp/lien", "/admin/mdp/provisoire", "Suspendre", "Supprimer le compte", "ne publie pas son état", "Facture de", "Pas de Tinyblog"] {
+        assert!(fiche.contains(attendu), "{attendu} absent de la fiche : {fiche}");
+    }
+
+    // Numéro : format, numéros spéciaux et cachés, configuration, inscriptions en attente, le sien
+    for faux in ["12345", "0836154286", "0143331212", "0142424242", "0699999999", "06 12 34 56 78"] {
+        let r = action(p, &a, "/admin/numero", &[("nom", "gaston"), ("numero", faux)]);
+        assert_eq!(r.statut, 400, "{faux} accepté : {}", texte(&r));
+        assert!(texte(&r).contains("class=\"erreur\""));
+    }
+    assert_eq!(b.comptes.compte("gaston").unwrap().numero, "0612345678");
+    let r = action(p, &a, "/admin/numero", &[("nom", "gaston"), ("numero", "06.55.55.55.55")]);
+    assert_eq!(r.statut, 200, "{}", texte(&r));
+    assert!(texte(&r).contains("nouveau numéro 06 55 55 55 55"));
+    assert_eq!(b.comptes.compte("gaston").unwrap().numero, "0655555555");
+    let l = lettres(p);
+    assert!(l.len() == 1 && l[0].a == "gaston@example.org" && l[0].sujet.contains("nouveau numéro") && l[0].corps.contains("06 55 55 55 55"), "{l:?}");
+
+    // Suspension : « sûr » exigé ; l'abonné le voit dans son espace
+    let r = action(p, &a, "/admin/suspendre", &[("nom", "gaston"), ("d", "oui")]);
+    assert_eq!(r.statut, 400);
+    assert!(!b.comptes.compte("gaston").unwrap().suspendu);
+    let r = action(p, &a, "/admin/suspendre", &[("nom", "gaston"), ("d", "oui"), ("sur", "1")]);
+    assert!(r.statut == 200 && texte(&r).contains("suspendu"), "{}", texte(&r));
+    assert!(b.comptes.compte("gaston").unwrap().suspendu);
+    assert!(crate::comptes::lire_comptes(&b.dir.join("comptes.toml")).unwrap()[0].suspendu, "le central le lit");
+    assert!(texte(&get_avec(p, "/compte", &session)).contains("Abonnement suspendu"));
+    assert!(texte(&get_avec(p, "/admin/abonnes", &a.0)).contains("<b>suspendu</b>"));
+    let r = action(p, &a, "/admin/suspendre", &[("nom", "gaston"), ("d", "non")]);
+    assert!(r.statut == 200 && texte(&r).contains("réactivé"));
+    assert!(!b.comptes.compte("gaston").unwrap().suspendu);
+    assert!(!texte(&get_avec(p, "/compte", &session)).contains("Abonnement suspendu"));
+
+    // Lien de réinitialisation, comme « mot de passe oublié »
+    let r = action(p, &a, "/admin/mdp/lien", &[("nom", "gaston")]);
+    assert!(r.statut == 200 && texte(&r).contains("Lien de réinitialisation envoyé à gaston@example.org"), "{}", texte(&r));
+    let l = lettres(p);
+    assert!(l[1].a == "gaston@example.org" && l[1].corps.contains("L'opérateur du central vous invite à changer le mot de passe"), "{:?}", l[1]);
+    let j = lien(&l[1].corps, "https://dialup.example.org/reinitialiser?t=").split("t=").nth(1).unwrap().to_string();
+    assert_eq!(get(p, &format!("/reinitialiser?t={j}")).statut, 200);
+
+    // Mot de passe provisoire : « sûr » exigé, affiché une fois, sessions fermées, titulaire prévenu
+    assert_eq!(action(p, &a, "/admin/mdp/provisoire", &[("nom", "gaston")]).statut, 400);
+    assert!(mdp_est(&b, "gaston", "motdepasse"));
+    let r = action(p, &a, "/admin/mdp/provisoire", &[("nom", "gaston"), ("sur", "1")]);
+    assert_eq!(r.statut, 200);
+    let t = texte(&r);
+    let mdp: String = t.split("Mot de passe provisoire de gaston : ").nth(1).expect("mot de passe affiché").chars().take(14).collect();
+    assert!(mdp.len() == 14 && mdp.matches('-').count() == 2, "{mdp}");
+    assert!(mdp_est(&b, "gaston", &mdp));
+    assert_eq!(get(p, &format!("/reinitialiser?t={j}")).statut, 404, "le lien en cours ne marche plus");
+    assert!(texte(&get_avec(p, "/compte", &session)).contains("action=\"/compte/connexion\""), "session fermée");
+    let l = lettres(p);
+    assert!(l[2].sujet.contains("mot de passe provisoire") && !l[2].corps.contains(&mdp), "le mot de passe ne part pas par e-mail : {:?}", l[2]);
+    assert_eq!(entete(&r, "Cache-Control"), Some("no-store"));
+
+    // Abonné de la configuration : lecture seule
+    let fiche = texte(&get_avec(p, "/admin/abonne?nom=raziel", &a.0));
+    assert!(fiche.contains("config.toml") && !fiche.contains("action=\"/admin/numero\"") && !fiche.contains("Supprimer le compte"), "{fiche}");
+    assert_eq!(action(p, &a, "/admin/numero", &[("nom", "raziel"), ("numero", "0655555556")]).statut, 404);
+
+    // Suppression : « sûr » exigé ; avec « tout », son Tinyblog et ses messages partent aussi
+    crate::tinyblog::store::Store::new(b.dir.join("tinyblog")).modifier("gaston", |bl| bl.titre = "Chez Gaston".into());
+    std::fs::write(b.dir.join("repondeur.json"), r#"[{"de":"gaston","quand":1,"texte":"Allô ?"},{"de":"lagaffe","quand":2,"texte":"M'enfin"}]"#).unwrap();
+    assert!(texte(&get_avec(p, "/admin/abonne?nom=gaston", &a.0)).contains("Chez Gaston"));
+    assert_eq!(action(p, &a, "/admin/supprimer", &[("nom", "gaston"), ("tout", "1")]).statut, 400);
+    assert!(b.comptes.compte("gaston").is_some());
+    let r = action(p, &a, "/admin/supprimer", &[("nom", "gaston"), ("tout", "1"), ("sur", "1")]);
+    assert!(r.statut == 200 && texte(&r).contains("Compte gaston supprimé") && texte(&r).contains("Tinyblog est effacé") && texte(&r).contains("1 message"), "{}", texte(&r));
+    assert!(b.comptes.compte("gaston").is_none());
+    assert!(!b.dir.join("tinyblog/gaston.json").exists());
+    let rep = std::fs::read_to_string(b.dir.join("repondeur.json")).unwrap();
+    assert!(!rep.contains("gaston") && rep.contains("lagaffe"), "{rep}");
+}
+
+#[test]
+fn admin_inscriptions_en_attente() {
+    let b = banc();
+    let p = &b.p;
+    let t = jeton_formulaire(p);
+    let r = post(p, "/inscription", &[("t", &t), ("nom", "lagaffe"), ("numero", "0699999999"), ("courriel", "lagaffe@example.org"), ("mdp", "motdepasse"), ("mdp2", "motdepasse"), ("cgu", "1")], None);
+    assert_eq!(r.statut, 200);
+    let j1 = lien(&lettres(p)[0].corps, "https://dialup.example.org/valider?t=").split("t=").nth(1).unwrap().to_string();
+    let a = admin(p);
+    let page = texte(&get_avec(p, "/admin/inscriptions", &a.0));
+    assert!(page.contains("lagaffe") && page.contains("lagaffe@example.org") && page.contains("Renvoyer le lien") && page.contains("Expire le"), "{page}");
+    assert!(texte(&get_avec(p, "/admin", &a.0)).contains("Inscriptions (1)"), "compteur du menu");
+
+    // Renvoyer : un nouveau lien, l'ancien ne marche plus
+    let r = action(p, &a, "/admin/inscription/renvoyer", &[("nom", "lagaffe")]);
+    assert!(r.statut == 200 && texte(&r).contains("Nouveau lien d&#39;activation envoyé à lagaffe@example.org"), "{}", texte(&r));
+    let l = lettres(p);
+    assert_eq!(l.len(), 2);
+    let j2 = lien(&l[1].corps, "https://dialup.example.org/valider?t=").split("t=").nth(1).unwrap().to_string();
+    assert_ne!(j1, j2);
+    assert_eq!(get(p, &format!("/valider?t={j1}")).statut, 404);
+    assert_eq!(get(p, &format!("/valider?t={j2}")).statut, 200);
+    assert_eq!(action(p, &a, "/admin/inscription/renvoyer", &[("nom", "personne")]).statut, 400);
+
+    // Supprimer : « sûr » exigé, puis nom, numéro et adresse libérés
+    assert_eq!(action(p, &a, "/admin/inscription/supprimer", &[("nom", "lagaffe")]).statut, 400);
+    assert_eq!(b.comptes.en_attente().len(), 1);
+    let r = action(p, &a, "/admin/inscription/supprimer", &[("nom", "lagaffe"), ("sur", "1")]);
+    assert!(r.statut == 200 && texte(&r).contains("Inscription de lagaffe supprimée"));
+    assert!(b.comptes.en_attente().is_empty());
+    assert_eq!(get(p, &format!("/valider?t={j2}")).statut, 404);
+    assert_eq!(b.comptes.conflit("lagaffe", "0699999999", "lagaffe@example.org"), None);
+}
+
+#[test]
+fn admin_factures_de_tous_les_abonnes() {
+    use crate::facturation::{Facturation, Ticket};
+    let b = banc();
+    let p = &b.p;
+    let now = maintenant();
+    let debut = now - 7200;
+    if v34_net::tarif::mois(debut) != v34_net::tarif::mois(now) {
+        return; // tout début de mois : les appels seraient sur le relevé précédent
+    }
+    let mut f = Facturation::ouvrir(b.dir.clone(), now);
+    f.appel(Ticket::nouveau(debut, 600, ("raziel", "0142424242"), "0836672253", "oracle", Some("oracle")));
+    f.appel(Ticket::nouveau(debut + 1000, 120, ("raziel", "0142424242"), "0143434343", "prunelle", None));
+    f.appel(Ticket::nouveau(debut + 2000, 60, ("prunelle", "0143434343"), "0142424242", "raziel", None));
+    let a = admin(p);
+    let mois = v34_net::tarif::mois(now);
+    let page = texte(&get_avec(p, "/admin/factures", &a.0));
+    let lien_releve = format!("/admin/facture?nom=raziel&amp;mois={mois}");
+    for attendu in ["3 appels", "23,78 F", "23,04 F", "0,74 F", "Journal des communications", "3615 ORACLE", lien_releve.as_str()] {
+        assert!(page.contains(attendu), "{attendu} absent des factures : {page}");
+    }
+    assert!(page.contains("abonne?nom=raziel"));
+    let (i_raziel, i_prunelle) = (page.find(">raziel</a></td><td class=\"n\">2").unwrap(), page.find(">prunelle</a></td><td class=\"n\">1").unwrap());
+    assert!(i_raziel < i_prunelle, "la plus grosse facture d'abord");
+    // Le relevé d'un abonné, avec les liens de l'administration
+    let r = texte(&get_avec(p, &format!("/admin/facture?nom=raziel&mois={mois}"), &a.0));
+    assert!(r.contains("Relevé de communications") && r.contains("23,04 F") && r.contains("/admin/abonne?nom=raziel") && !r.contains("/compte/facture"), "{r}");
+    // Fiche : la facture du mois et les succès
+    let fiche = texte(&get_avec(p, "/admin/abonne?nom=raziel", &a.0));
+    assert!(fiche.contains("23,04 F") && fiche.contains("Succès (") && fiche.contains("Consultation"), "{fiche}");
+    // Un mois sans rien
+    assert!(texte(&get_avec(p, "/admin/factures?mois=199812", &a.0)).contains("Aucune communication"));
+}
+
+#[test]
+fn admin_moderation_des_tinyblogs() {
+    use crate::tinyblog::store::{Article, Com, Store};
+    let b = banc();
+    let p = &b.p;
+    let now = maintenant();
+    let store = Store::new(b.dir.join("tinyblog"));
+    let com = |de: &str, date: u64, texte: &str| Com { de: de.into(), date, texte: texte.into() };
+    store.modifier("gaston", |bl| {
+        bl.titre = "Le blog <b>de Gaston</b>".into();
+        bl.description = "Gaffes en tout genre".into();
+        bl.cree = now - 1000;
+        bl.articles.push(Article { id: 1, date: now - 500, titre: "Premier".into(), texte: "Bonjour <script>alert(1)</script>".into(), image: Some("gaston-1.gif".into()), kiffs: vec![], coms: vec![com("lagaffe", now - 50, "M'enfin <i>"), com("prunelle", now - 40, "Rogntudju")] });
+        bl.articles.push(Article { id: 2, date: now - 100, titre: "Deuxième".into(), texte: "Encore".into(), image: None, kiffs: vec!["lagaffe".into()], coms: vec![] });
+        bl.suivant = 2;
+    });
+    store.modifier("gaston-x", |bl| bl.articles.push(Article { id: 1, date: now - 10, titre: "Voisin".into(), image: Some("gaston-x-1.gif".into()), ..Default::default() }));
+    for f in ["gaston-1.gif", "gaston-7.gif", "gaston-x-1.gif"] {
+        assert!(store.enregistrer_image(f, b"GIF89a"));
+    }
+    let a = admin(p);
+    let page = texte(&get_avec(p, "/admin/tinyblog", &a.0));
+    for attendu in ["Les Tinyblogs (2)", "/admin/tinyblog?nom=gaston", "Premier", "Derniers articles", "Derniers commentaires", "M&#39;enfin &lt;i&gt;", "/admin/tinyblog/img?f=gaston-1.gif"] {
+        assert!(page.contains(attendu), "{attendu} absent : {page}");
+    }
+    assert!(!page.contains("<script>") && !page.contains("<b>de Gaston"), "tout est échappé");
+    let blog = texte(&get_avec(p, "/admin/tinyblog?nom=gaston", &a.0));
+    assert!(blog.contains("Le blog &lt;b&gt;de Gaston&lt;/b&gt;") && blog.contains("Supprimer l'article") && blog.contains("Rogntudju"), "{blog}");
+    assert_eq!(get_avec(p, "/admin/tinyblog?nom=personne", &a.0).statut, 404);
+    // Les images, derrière la session seulement
+    let r = get_avec(p, "/admin/tinyblog/img?f=gaston-1.gif", &a.0);
+    assert!(r.statut == 200 && r.type_contenu == "image/gif" && r.corps == b"GIF89a");
+    assert!(entete(&r, "Cache-Control").unwrap().starts_with("private"));
+    assert_eq!(get_avec(p, "/admin/tinyblog/img?f=../comptes.toml", &a.0).statut, 404);
+
+    // Commentaire : l'empreinte doit correspondre (la liste a pu bouger)
+    let e = admin::empreinte_com(&com("prunelle", now - 40, "Rogntudju"));
+    assert_eq!(action(p, &a, "/admin/tinyblog/com/supprimer", &[("nom", "gaston"), ("id", "1"), ("k", "0"), ("e", &e)]).statut, 404);
+    let r = action(p, &a, "/admin/tinyblog/com/supprimer", &[("nom", "gaston"), ("id", "1"), ("k", "1"), ("e", &e), ("retour", "blog")]);
+    assert!(r.statut == 200 && texte(&r).contains("Commentaire de prunelle supprimé") && texte(&r).contains("Tinyblog de gaston"), "{}", texte(&r));
+    let coms = &store.lire("gaston").unwrap().articles[0].coms;
+    assert!(coms.len() == 1 && coms[0].de == "lagaffe");
+
+    // Article : « sûr » exigé, l'image part avec
+    assert_eq!(action(p, &a, "/admin/tinyblog/article/supprimer", &[("nom", "gaston"), ("id", "1")]).statut, 400);
+    let r = action(p, &a, "/admin/tinyblog/article/supprimer", &[("nom", "gaston"), ("id", "1"), ("sur", "1")]);
+    assert!(r.statut == 200 && texte(&r).contains("Article « Premier »"), "{}", texte(&r));
+    assert_eq!(store.lire("gaston").unwrap().articles.len(), 1);
+    assert!(!b.dir.join("tinyblog/img/gaston-1.gif").exists());
+    assert_eq!(action(p, &a, "/admin/tinyblog/article/supprimer", &[("nom", "gaston"), ("id", "1"), ("sur", "1")]).statut, 404);
+
+    // Titre et présentation effacés ; la modération ne crée pas de blog
+    assert_eq!(action(p, &a, "/admin/tinyblog/vider", &[("nom", "gaston")]).statut, 200);
+    let g = store.lire("gaston").unwrap();
+    assert!(g.titre.is_empty() && g.description.is_empty() && g.articles.len() == 1);
+    assert_eq!(action(p, &a, "/admin/tinyblog/vider", &[("nom", "personne")]).statut, 404);
+    assert!(!b.dir.join("tinyblog/personne.json").exists());
+
+    // Tout le blog : ses images (même orphelines), pas celles du voisin « gaston-x »
+    assert_eq!(action(p, &a, "/admin/tinyblog/supprimer", &[("nom", "gaston")]).statut, 400);
+    let r = action(p, &a, "/admin/tinyblog/supprimer", &[("nom", "gaston"), ("sur", "1")]);
+    assert!(r.statut == 200 && texte(&r).contains("Tinyblog de gaston supprimé"), "{}", texte(&r));
+    assert!(store.lire("gaston").is_none() && !b.dir.join("tinyblog/img/gaston-7.gif").exists());
+    assert!(store.lire("gaston-x").is_some() && b.dir.join("tinyblog/img/gaston-x-1.gif").exists());
+}
+
+#[test]
+fn admin_moderation_des_numeros_caches() {
+    let b = banc();
+    let p = &b.p;
+    std::fs::write(b.dir.join("repondeur.json"), r#"[{"de":"gaston","quand":1794315600,"texte":"Allô <b>Gérard</b> ?"},{"de":"lagaffe","quand":1794315700,"texte":"M'enfin"}]"#).unwrap();
+    std::fs::write(b.dir.join("prix.json"), r#"{"gaston":1200,"lagaffe":800}"#).unwrap();
+    let a = admin(p);
+    let page = texte(&get_avec(p, "/admin/caches", &a.0));
+    for attendu in ["répondeur de Gérard (01 43 33 12 12)", "Allô &lt;b&gt;Gérard&lt;/b&gt; ?", "M&#39;enfin", "1200", "/admin/caches/supprimer"] {
+        assert!(page.contains(attendu), "{attendu} absent : {page}");
+    }
+    let depots = admin::depots::lister(&b.dir);
+    let e = depots[0].entrees.iter().find(|e| e.de.as_deref() == Some("gaston")).unwrap().clone();
+    // Empreinte périmée : rien n'est effacé
+    let r = action(p, &a, "/admin/caches/supprimer", &[("fichier", "repondeur.json"), ("cle", &e.cle), ("e", "0123456789abcdef")]);
+    assert_eq!(r.statut, 400);
+    assert_eq!(action(p, &a, "/admin/caches/supprimer", &[("fichier", "comptes.toml"), ("cle", "0"), ("e", &e.empreinte)]).statut, 400);
+    let r = action(p, &a, "/admin/caches/supprimer", &[("fichier", "repondeur.json"), ("cle", &e.cle), ("e", &e.empreinte)]);
+    assert!(r.statut == 200 && texte(&r).contains("Entrée de gaston retirée"), "{}", texte(&r));
+    assert!(!std::fs::read_to_string(b.dir.join("repondeur.json")).unwrap().contains("Gérard"));
+    // Tout ce qu'un abonné a laissé (depuis sa fiche)
+    assert!(texte(&get_avec(p, "/admin/abonne?nom=raziel", &a.0)).contains("0 message"));
+    assert_eq!(action(p, &a, "/admin/caches/supprimer-de", &[("nom", "lagaffe")]).statut, 400);
+    let r = action(p, &a, "/admin/caches/supprimer-de", &[("nom", "lagaffe"), ("sur", "1")]);
+    assert!(r.statut == 200 && texte(&r).contains("2 message(s) ou score(s) de lagaffe"), "{}", texte(&r));
+    assert_eq!(std::fs::read_to_string(b.dir.join("prix.json")).unwrap(), r#"{"gaston":1200}"#);
+    assert_eq!(std::fs::read_to_string(b.dir.join("repondeur.json")).unwrap(), "[]");
+}
+
+#[test]
+fn admin_le_site_nouvelles_et_inscriptions() {
+    let b = banc();
+    let p = &b.p;
+    let bouton = "href=\"/inscription\">» Je m'inscris";
+    assert!(texte(&get(p, "/")).contains(bouton));
+    let a = admin(p);
+    let page = texte(&get_avec(p, "/admin/site", &a.0));
+    assert!(page.contains("Ouvertes de votre côté") && page.contains("Ouverture du site") && page.contains("écrite dans le code"), "{page}");
+
+    // Nouvelles : ajoutée, affichée (échappée) sur l'accueil, puis retirée
+    assert_eq!(action(p, &a, "/admin/site/nouvelle", &[("date", "16/11/2026"), ("titre", "x")]).statut, 400);
+    assert_eq!(action(p, &a, "/admin/site/nouvelle", &[("date", "2026-11-16"), ("titre", "  ")]).statut, 400);
+    let r = action(p, &a, "/admin/site/nouvelle", &[("date", "2099-01-01"), ("titre", "Le <b>Morse</b> arrive")]);
+    assert!(r.statut == 200 && texte(&r).contains("ajoutée"), "{}", texte(&r));
+    let accueil = texte(&get(p, "/"));
+    assert!(accueil.contains("<b>01/01/2099</b> — Le &lt;b&gt;Morse&lt;/b&gt; arrive <span class=\"nouveau\">NOUVEAU !</span>"), "{accueil}");
+    assert!(b.dir.join("portail.toml").exists());
+    let id = p.site.lire().nouvelle[0].id.clone();
+    assert!(texte(&get_avec(p, "/admin/site", &a.0)).contains(&format!("name=\"id\" value=\"{id}\"")));
+    let r = action(p, &a, "/admin/site/nouvelle/supprimer", &[("id", &id)]);
+    assert!(r.statut == 200 && texte(&r).contains("retirée"));
+    assert!(!texte(&get(p, "/")).contains("Morse"));
+
+    // Inscriptions fermées : plus de bouton, formulaire refusé, les inscriptions en attente se confirment encore
+    let t = jeton_formulaire(p);
+    let champs = |nom: &'static str, num: &'static str| [("t", t.clone()), ("nom", nom.into()), ("numero", num.into()), ("courriel", format!("{nom}@example.org")), ("mdp", "motdepasse".into()), ("mdp2", "motdepasse".into()), ("cgu", "1".into())];
+    let c = champs("lagaffe", "0699999999");
+    let c: Vec<(&str, &str)> = c.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    assert_eq!(post(p, "/inscription", &c, None).statut, 200);
+    let j = lien(&lettres(p)[0].corps, "https://dialup.example.org/valider?t=").split("t=").nth(1).unwrap().to_string();
+    let r = action(p, &a, "/admin/site/inscriptions", &[("d", "fermer")]);
+    assert!(r.statut == 200 && texte(&r).contains("Inscriptions fermées."));
+    assert!(!texte(&get(p, "/")).contains(bouton));
+    assert_eq!(get(p, "/inscription").statut, 503);
+    let c = champs("jeanne", "0611111111");
+    let c: Vec<(&str, &str)> = c.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    assert_eq!(post(p, "/inscription", &c, None).statut, 503);
+    assert!(texte(&get_avec(p, "/admin", &a.0)).contains("<b>fermées</b> (par vous)"));
+    assert_eq!(post(p, "/valider", &[("t", &j)], None).statut, 200, "l'inscription en attente se confirme");
+    // Relu au redémarrage du site
+    assert!(admin::site::Site::ouvrir(&b.dir.join("portail.toml")).lire().inscriptions_fermees);
+    let r = action(p, &a, "/admin/site/inscriptions", &[("d", "ouvrir")]);
+    assert!(r.statut == 200 && texte(&r).contains("rouvertes"));
+    assert!(texte(&get(p, "/")).contains(bouton));
+    assert_eq!(get(p, "/inscription").statut, 200);
 }

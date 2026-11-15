@@ -92,7 +92,7 @@ impl Portail {
 
     /// Ferme les sessions d'un abonné (sauf, éventuellement, la session en
     /// cours).
-    fn fermer_sessions(&self, nom: &str, sauf: Option<&str>) {
+    pub(super) fn fermer_sessions(&self, nom: &str, sauf: Option<&str>) {
         let garder = sauf.map(empreinte);
         self.sessions_abonnes.lock().unwrap().retain(|e, (n, _)| n != nom || garder.as_deref() == Some(e.as_str()));
     }
@@ -104,7 +104,7 @@ impl Portail {
 
     /// E-mail de notification au titulaire, dans la limite du plafond global
     /// (au-delà, il est abandonné et noté dans le journal).
-    fn notifier(&self, l: Lettre) {
+    pub(super) fn notifier(&self, l: Lettre) {
         if self.autoriser("courriels", COURRIELS_PAR_HEURE, 3600) {
             self.postier.poster(l);
         } else {
@@ -112,7 +112,7 @@ impl Portail {
         }
     }
 
-    fn signature(&self) -> String {
+    pub(super) fn signature(&self) -> String {
         format!("-- \n{}\n{}\n", self.r.nom, self.r.url)
     }
 
@@ -146,6 +146,7 @@ impl Portail {
                 } else {
                     pages::Acces::EnAttente
                 },
+                suspendu: c.suspendu,
             },
             Abonne::Config { nom, numero, fai } => pages::VueCompte {
                 nom,
@@ -153,6 +154,7 @@ impl Portail {
                 courriel: None,
                 cree: None,
                 acces: if *fai { pages::Acces::Accorde } else { pages::Acces::Refuse },
+                suspendu: false,
             },
         };
         let suite = self.donnees().map(|d| super::facture::resume(&d, v.nom, maintenant())).unwrap_or_default();
@@ -162,7 +164,7 @@ impl Portail {
     }
 
     /// Dossier des données du central (tickets, succès) : celui des comptes.
-    fn donnees(&self) -> Option<std::path::PathBuf> {
+    pub(super) fn donnees(&self) -> Option<std::path::PathBuf> {
         self.r.comptes.parent().filter(|d| !d.as_os_str().is_empty()).map(Into::into)
     }
 
@@ -277,7 +279,7 @@ impl Portail {
         self.compte_vue(&jeton, &a, Some("Mot de passe changé. Pensez à le changer aussi dans le logiciel si vous l'aviez mémorisé."), None, 200)
     }
 
-    fn lettre_mot_de_passe_change(&self, c: &Compte, comment: &str) -> Lettre {
+    pub(super) fn lettre_mot_de_passe_change(&self, c: &Compte, comment: &str) -> Lettre {
         let contact = if self.r.contact.is_empty() { String::new() } else { format!(", et prévenez l'opérateur ({})", self.r.contact) };
         Lettre {
             a: c.courriel.clone(),
@@ -292,6 +294,30 @@ impl Portail {
     }
 
     // ───────────────────────── mot de passe oublié ─────────────────────────
+
+    /// Ouvre une demande de réinitialisation et envoie le lien (valable
+    /// 1 h) au titulaire ; `qui` commence la phrase de l'e-mail (« Quelqu'un
+    /// … a demandé », « L'opérateur a demandé »…). Le plafond d'e-mails du
+    /// site est vérifié par l'appelant.
+    pub(super) fn lien_reinitialisation(&self, c: &Compte, qui: &str) -> Result<(), String> {
+        let jeton = self.comptes.demander_reinitialisation(&c.nom)?;
+        let poste = self.postier.poster(Lettre {
+            a: c.courriel.clone(),
+            sujet: format!("{} : choisir un nouveau mot de passe", self.r.nom),
+            corps: format!(
+                "Bonjour {nom},\n\n{qui} à changer le mot de passe de l'abonnement « {nom} » (numéro {num}).\n\nPour choisir un nouveau mot de passe, ouvrez ce lien dans l'heure :\n\n{url}/reinitialiser?t={jeton}\n\nSi vous n'avez rien demandé, ignorez ce message : votre mot de passe actuel reste valable.\n\n{sig}",
+                nom = c.nom,
+                num = numero_lisible(&c.numero),
+                url = self.r.url,
+                sig = self.signature()
+            ),
+        });
+        if poste {
+            Ok(())
+        } else {
+            Err("e-mail non envoyé (envoi désactivé ou file pleine)".into())
+        }
+    }
 
     fn oubli_formulaire(&self, courriel: &str, erreur: Option<&str>, statut: u16) -> Reponse {
         if !self.postier.actif() {
@@ -328,21 +354,8 @@ impl Portail {
             Some(c) if !self.autoriser("courriels", COURRIELS_PAR_HEURE, 3600) => {
                 warn!("plafond des e-mails atteint : lien de réinitialisation pour {} non envoyé", c.nom);
             }
-            Some(c) => match self.comptes.demander_reinitialisation(&c.nom) {
-                Ok(jeton) => {
-                    info!("mot de passe oublié : lien envoyé à {} depuis {}", c.nom, q.ip);
-                    self.postier.poster(Lettre {
-                        a: c.courriel.clone(),
-                        sujet: format!("{} : choisir un nouveau mot de passe", self.r.nom),
-                        corps: format!(
-                            "Bonjour {nom},\n\nQuelqu'un (vous, espérons-le) a demandé à changer le mot de passe de l'abonnement « {nom} » (numéro {num}).\n\nPour choisir un nouveau mot de passe, ouvrez ce lien dans l'heure :\n\n{url}/reinitialiser?t={jeton}\n\nSi vous n'avez rien demandé, ignorez ce message : votre mot de passe actuel reste valable.\n\n{sig}",
-                            nom = c.nom,
-                            num = numero_lisible(&c.numero),
-                            url = self.r.url,
-                            sig = self.signature()
-                        ),
-                    });
-                }
+            Some(c) => match self.lien_reinitialisation(&c, "Quelqu'un (vous, espérons-le) a demandé") {
+                Ok(()) => info!("mot de passe oublié : lien envoyé à {} depuis {}", c.nom, q.ip),
                 Err(e) => warn!("mot de passe oublié pour {} : {e}", c.nom),
             },
             None => debug!("mot de passe oublié : aucune inscription pour l'adresse saisie (depuis {})", q.ip),

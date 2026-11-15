@@ -147,11 +147,32 @@ leur compte :
 | `/livre` | **livre d'or** : messages publiés après relecture dans `/admin` (Publier / Supprimer) ; 3 messages par IP et par heure, 500 messages au plus (`/var/lib/v34-server/livre-dor.toml`) |
 | `/mentions`, `/conditions`, `/confidentialite` | pages légales (LCEN, CGU, RGPD), liées en bas de toutes les pages |
 | `/telechargement`, `/aide`, `/webring` | logiciel, aide, membres du « Webring du Web rétro » (`/webring/hasard` : un membre au hasard) |
-| `/admin` | administration : accès Internet, comptes, modération du livre d'or |
+| `/admin` | **administration** (mot de passe d'abonné de `PORTAIL_ADMIN`), pour faire tourner le réseau sans SSH : voir ci-dessous |
+
+L'administration, en quelques pages reliées par un menu :
+
+| Page | Contenu |
+|---|---|
+| `/admin` | tableau de bord : pupitre du central (en service, **qui est en ligne, qui appelle qui**), chiffres, appels et francs du mois, accès Internet à décider, derniers inscrits |
+| `/admin/abonnes`, `/admin/abonne?nom=` | tous les abonnés (site et `config.toml`, recherche) ; fiche : accès Internet, **changer de numéro**, lien de réinitialisation par e-mail ou **mot de passe provisoire**, **suspendre** / réactiver, facture et succès, Tinyblog, suppression (avec, au choix, son Tinyblog et ses messages) |
+| `/admin/inscriptions` | inscriptions en attente : renvoyer le lien d'activation, supprimer |
+| `/admin/factures` | factures de tous les abonnés, mois par mois, et journal des communications |
+| `/admin/tinyblog` | modération des Tinyblogs : articles (et leurs images), commentaires, titre, blog entier |
+| `/admin/caches` | ce que les abonnés laissent sur les numéros cachés (répondeur, messages pour 1998, tableau d'honneur…) |
+| `/admin/livre` | modération du livre d'or |
+| `/admin/site` | ouvrir ou fermer les inscriptions, ajouter des nouvelles à « Quoi de neuf ? » (`/var/lib/v34-server/portail.toml`) |
+
+Pas de JavaScript : des formulaires avec jeton anti-CSRF, et une case
+« sûr » à cocher pour ce qui efface, coupe ou remplace. Les abonnés de
+`config.toml` y sont en lecture seule (le site ne touche jamais ce fichier).
 
 Le site tourne dans un conteneur, derrière Caddy :
 - il écrit les comptes dans `/var/lib/v34-server/comptes.toml` (et le livre
-  d'or à côté, en 0640) ;
+  d'or et ses réglages `portail.toml` à côté, en 0640) ;
+- il modère les Tinyblogs (`tinyblog/`) et les messages des numéros cachés
+  (`repondeur.json`…), que le central écrit aussi : les deux prennent le
+  verrou `/var/lib/v34-server/.verrou` (et `tinyblog/.verrou`) le temps
+  d'une modification ;
 - le central lit ce fichier (clé `comptes` de la section `[serveur]`) et le
   relit dès qu'il change ; il publie son état dans
   `/var/lib/v34-server/etat.json`, que le site lit ;
@@ -195,7 +216,12 @@ jour le central en même temps (section 5) : un central plus ancien ne
 connaît ni le fichier d'état ni la section `[[reinitialisation]]` que le
 site ajoute au fichier des comptes pendant une demande de mot de passe
 oublié (il garderait alors son annuaire précédent jusqu'à la fin de la
-demande).
+demande). **Mettez à jour le central avant de suspendre un compte** depuis
+`/admin` : un central plus ancien refuse le champ `suspendu` du fichier des
+comptes, et garderait son annuaire précédent (avec un avertissement toutes
+les 2 secondes) tant qu'un compte est suspendu. Il ne publie pas non plus
+les noms des abonnés en ligne : le pupitre de `/admin` n'affiche alors que
+les nombres.
 
 ## 5. Mettre à jour
 

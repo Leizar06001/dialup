@@ -4,7 +4,8 @@
 //! - inscription avec choix du numéro, validation de l'adresse e-mail ;
 //! - le compte est créé SANS accès Internet : l'administrateur reçoit un
 //!   e-mail avec deux liens signés [Accorder] / [Refuser], et dispose d'une
-//!   page /admin (connexion avec son mot de passe d'abonné) ;
+//!   administration /admin (connexion avec son mot de passe d'abonné) pour
+//!   faire tourner le réseau sans SSH ([`admin`]) ;
 //! - page de téléchargement d'après la dernière version publiée sur GitHub ;
 //! - espace abonné (/compte) et mot de passe oublié ([`abonne`]) ;
 //! - état du réseau d'après le fichier publié par le central ([`etat`]) ;
@@ -21,6 +22,7 @@
 //! ne déclenche rien.
 
 pub mod abonne;
+pub mod admin;
 pub mod courriel;
 pub mod etat;
 pub mod facture;
@@ -261,6 +263,8 @@ pub struct Portail {
     comptes: Arc<Comptes>,
     livre: Livre,
     postier: Postier,
+    /// Réglages modifiables depuis l'administration (nouvelles, inscriptions)
+    site: admin::site::Site,
     config: Mutex<CacheConfig>,
     /// Horodatages des actions limitées, par clé (« inscription:IP »…)
     limites: Mutex<HashMap<String, Vec<u64>>>,
@@ -281,10 +285,16 @@ fn empreinte(s: &str) -> String {
 
 impl Portail {
     pub fn new(r: Reglages, comptes: Arc<Comptes>, livre: Livre, smtp: Option<SmtpConfig>) -> Arc<Portail> {
+        // à côté des comptes, comme les autres données partagées
+        let site = match r.comptes.parent().filter(|d| !d.as_os_str().is_empty()) {
+            Some(d) => admin::site::Site::ouvrir(&d.join(admin::site::FICHIER)),
+            None => admin::site::Site::en_memoire(),
+        };
         Arc::new(Portail {
             r,
             comptes,
             livre,
+            site,
             postier: Postier::new(smtp),
             config: Mutex::new(CacheConfig { modifie: None, verifie: Instant::now() - Duration::from_secs(60), cfg: None }),
             limites: Mutex::new(HashMap::new()),
@@ -320,9 +330,10 @@ impl Portail {
         c.cfg.clone()
     }
 
-    /// Les inscriptions sont-elles possibles (e-mails et configuration) ?
+    /// Les inscriptions sont-elles possibles (e-mails et configuration), et
+    /// ouvertes par l'administrateur ?
     fn inscriptions_ouvertes(&self) -> bool {
-        self.postier.actif() && self.config().is_some()
+        self.postier.actif() && self.config().is_some() && !self.site.lire().inscriptions_fermees
     }
 
     /// Action limitée : au plus `max` par `fenetre_s` pour cette clé.
@@ -426,9 +437,9 @@ impl Portail {
                 r.entetes.push(("Cache-Control", "no-store".into()));
                 r
             }
-            ("GET" | "HEAD", "/admin") => self.admin(q, None),
-            ("POST", "/admin/connexion") => self.admin_connexion(q),
-            ("POST", "/admin/fai" | "/admin/supprimer" | "/admin/deconnexion" | "/admin/livre/publier" | "/admin/livre/supprimer") => self.admin_action(q),
+            // Administration : pages (GET) et actions (POST), voir `admin`
+            ("GET" | "HEAD", c) if c == "/admin" || c.starts_with("/admin/") => self.admin_page(q),
+            ("POST", c) if c.starts_with("/admin/") => self.admin_post(q),
             ("GET" | "HEAD", "/construction.gif") => gif(crate::web1998::images::construction_gif()),
             ("GET" | "HEAD", "/compteur.gif") => {
                 let n: String = q.param("n").chars().filter(char::is_ascii_digit).take(9).collect();
@@ -475,8 +486,37 @@ impl Portail {
         self.page(if erreurs.is_empty() { 200 } else { 400 }, "Inscription", &pages::inscription(f, erreurs, &self.suggestions(cfg.as_deref(), 4), &jeton))
     }
 
+    /// Le numéro peut-il être attribué à un abonné ? Format (10 chiffres,
+    /// 01 à 07 ou 09), numéros spéciaux et cachés, annuaire de la
+    /// configuration. (Les comptes du site sont vérifiés à part.)
+    fn numero_attribuable(&self, cfg: &Config, numero: &str) -> Result<(), String> {
+        let b = numero.as_bytes();
+        if numero.len() != 10 || !numero.bytes().all(|c| c.is_ascii_digit()) || b[0] != b'0' || !matches!(b[1], b'1'..=b'7' | b'9') {
+            Err("Numéro : 10 chiffres commençant par 01 à 07 ou 09.".into())
+        } else if cfg.service_for(numero).is_some() || cfg.annuaire().is_ok_and(|a| a.numero_pris(numero)) {
+            Err(format!("Le numéro {} est déjà attribué : choisissez-en un autre.", numero_lisible(numero)))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// L'e-mail qui contient le lien d'activation d'une inscription.
+    fn lettre_activation(&self, nom: &str, numero: &str, courriel: &str, jeton: &str) -> Lettre {
+        let lien = format!("{}/valider?t={jeton}", self.r.url);
+        Lettre {
+            a: courriel.to_string(),
+            sujet: format!("{} : activez votre abonnement", self.r.nom),
+            corps: format!(
+                "Bonjour {nom},\n\nPour activer votre abonnement {fai} et obtenir le numéro {num}, ouvrez ce lien dans les 48 heures :\n\n{lien}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez simplement ce message : rien ne sera créé.\n\n-- \n{fai}\n{url}\n",
+                fai = self.r.nom,
+                num = numero_lisible(numero),
+                url = self.r.url
+            ),
+        }
+    }
+
     fn inscrire(&self, q: &Requete) -> Reponse {
-        let Some(cfg) = self.config().filter(|_| self.postier.actif()) else {
+        let Some(cfg) = self.config().filter(|_| self.inscriptions_ouvertes()) else {
             return self.message(503, "Inscriptions fermées", "Les inscriptions sont momentanément fermées. Revenez plus tard !", false);
         };
         let numero: String = q.champ("numero").chars().filter(|c| !matches!(c, ' ' | '.' | '-')).collect();
@@ -492,11 +532,8 @@ impl Portail {
         } else if NOMS_RESERVES.iter().any(|r| r.eq_ignore_ascii_case(&f.nom)) || annuaire.as_ref().is_some_and(|a| a.nom_pris(&f.nom)) {
             erreurs.push(format!("Le nom « {} » est déjà pris.", f.nom));
         }
-        let b = numero.as_bytes();
-        if numero.len() != 10 || !numero.bytes().all(|c| c.is_ascii_digit()) || b[0] != b'0' || !matches!(b[1], b'1'..=b'7' | b'9') {
-            erreurs.push("Numéro : 10 chiffres commençant par 01 à 07 ou 09.".into());
-        } else if cfg.service_for(&numero).is_some() || annuaire.as_ref().is_some_and(|a| a.numero_pris(&numero)) {
-            erreurs.push(format!("Le numéro {} est déjà attribué : choisissez-en un autre.", numero_lisible(&numero)));
+        if let Err(e) = self.numero_attribuable(&cfg, &numero) {
+            erreurs.push(e);
         }
         if !courriel_valide(&f.courriel) {
             erreurs.push("Adresse électronique invalide.".into());
@@ -532,18 +569,7 @@ impl Portail {
             Ok(j) => j,
             Err(e) => return self.message(503, "Inscription impossible", &e, false),
         };
-        let lien = format!("{}/valider?t={jeton}", self.r.url);
-        self.postier.poster(Lettre {
-            a: f.courriel.clone(),
-            sujet: format!("{} : activez votre abonnement", self.r.nom),
-            corps: format!(
-                "Bonjour {nom},\n\nPour activer votre abonnement {fai} et obtenir le numéro {num}, ouvrez ce lien dans les 48 heures :\n\n{lien}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez simplement ce message : rien ne sera créé.\n\n-- \n{fai}\n{url}\n",
-                nom = f.nom,
-                fai = self.r.nom,
-                num = numero_lisible(&numero),
-                url = self.r.url
-            ),
-        });
+        self.postier.poster(self.lettre_activation(&f.nom, &numero, &f.courriel, &jeton));
         info!("inscription en attente : {} ({}) depuis {}", f.nom, numero, q.ip);
         self.page(200, "Inscription envoyée", &pages::inscription_envoyee(&f.courriel, &numero))
     }
@@ -610,14 +636,22 @@ impl Portail {
     }
 
     fn regler_acces(&self, nom: &str, oui: bool) -> Reponse {
-        let avant = self.comptes.compte(nom);
-        let c = match self.comptes.regler_fai(nom, oui) {
-            Ok(c) => c,
+        let c = match self.changer_acces(nom, oui) {
+            Ok((c, _)) => c,
             Err(e) => return self.message(400, "Impossible", &e, false),
         };
+        let t = if oui { format!("Accès Internet accordé à {} (pris en compte par le central sous 2 secondes).", c.nom) } else { format!("Accès Internet refusé à {}.", c.nom) };
+        self.message(200, "C'est fait", &t, true)
+    }
+
+    /// Accorde ou retire l'accès Internet ; l'abonné est prévenu par e-mail
+    /// si quelque chose change pour lui. Rend (compte, accès avant).
+    fn changer_acces(&self, nom: &str, oui: bool) -> Result<(crate::comptes::Compte, bool), String> {
+        let avant = self.comptes.compte(nom);
+        let c = self.comptes.regler_fai(nom, oui)?;
         info!("accès Internet de {} : {}", c.nom, if oui { "accordé" } else { "refusé" });
         // L'abonné n'est prévenu que si quelque chose change pour lui.
-        if avant.is_some_and(|a| a.fai != oui || !a.fai_decide) {
+        if avant.as_ref().is_some_and(|a| a.fai != oui || !a.fai_decide) {
             let corps = if oui {
                 format!("Bonjour {},\n\nBonne nouvelle : votre accès Internet est activé ! Dans le logiciel, appelez TINYVERSE, en tête de l'ANNUAIRE (il compose le 08 36 15 42 86), puis ouvrez le NAVIGATEUR.\n\nBon surf, jusqu'à 56 000 bit/s en 56K !\n\n-- \n{}\n{}\n", c.nom, self.r.nom, self.r.url)
             } else {
@@ -625,116 +659,7 @@ impl Portail {
             };
             self.postier.poster(Lettre { a: c.courriel.clone(), sujet: format!("{} : accès Internet {}", self.r.nom, if oui { "activé" } else { "non activé" }), corps });
         }
-        let t = if oui { format!("Accès Internet accordé à {} (pris en compte par le central sous 2 secondes).", c.nom) } else { format!("Accès Internet refusé à {}.", c.nom) };
-        self.message(200, "C'est fait", &t, true)
-    }
-
-    // ───────────────────────── administration ─────────────────────────
-
-    fn session(&self, q: &Requete) -> Option<String> {
-        let jeton = q.cookie("v34adm")?;
-        let now = maintenant();
-        let mut s = self.sessions.lock().unwrap();
-        s.retain(|_, &mut exp| exp > now);
-        s.contains_key(&empreinte(&jeton)).then_some(jeton)
-    }
-
-    fn csrf(&self, jeton: &str) -> String {
-        self.signer(&["csrf", jeton])[..32].to_string()
-    }
-
-    fn admin(&self, q: &Requete, info: Option<&str>) -> Reponse {
-        if self.r.admin.is_empty() {
-            return self.message(404, "Administration désactivée", "Aucun administrateur n'est configuré (PORTAIL_ADMIN).", false);
-        }
-        let Some(jeton) = self.session(q) else {
-            return self.page(200, "Administration", &pages::admin_connexion(&self.r.admin, None));
-        };
-        let mut comptes: Vec<pages::LigneAdmin> = self
-            .comptes
-            .liste()
-            .into_iter()
-            .map(|c| pages::LigneAdmin { nom: c.nom, numero: c.numero, courriel: c.courriel, cree: pages::date_fr(c.cree), fai: c.fai, decide: c.fai_decide })
-            .collect();
-        comptes.sort_by(|a, b| (a.decide, &a.nom).cmp(&(b.decide, &b.nom)));
-        let attente: Vec<(String, String, String)> = self.comptes.en_attente().into_iter().map(|i| (i.nom, i.numero, i.courriel)).collect();
-        let config: Vec<(String, String)> = self.config().map(|c| c.abonnes.iter().map(|a| (a.nom.clone(), a.numero.clone())).collect()).unwrap_or_default();
-        let a_relire = self.livre.en_attente();
-        let publies: Vec<livre::Message> = self.livre.publies().into_iter().take(20).collect();
-        let mut r = self.page(200, "Administration", &pages::admin_tableau(&self.csrf(&jeton), &comptes, &attente, &config, (&a_relire, &publies), info));
-        r.entetes.push(("Cache-Control", "no-store".into()));
-        r
-    }
-
-    fn admin_connexion(&self, q: &Requete) -> Reponse {
-        if self.r.admin.is_empty() {
-            return Reponse::texte(404, "");
-        }
-        if !self.autoriser(&format!("connexion:{}", q.ip), 5, 900) {
-            return self.page(429, "Administration", &pages::admin_connexion(&self.r.admin, Some("Trop d'essais : attendez un quart d'heure.")));
-        }
-        let mdp = q.champ("mdp");
-        let ok = self.config().and_then(|c| c.annuaire().ok()).and_then(|a| a.get(&self.r.admin).map(|(_, h)| h.clone())).is_some_and(|h| {
-            ct_eq(&PasswordHash::with_salt(&mdp, &h.salt, h.iterations).stored_key, &h.stored_key)
-        });
-        if !ok {
-            warn!("connexion admin refusée depuis {}", q.ip);
-            return self.page(403, "Administration", &pages::admin_connexion(&self.r.admin, Some("Mot de passe incorrect.")));
-        }
-        let jeton = to_hex(&random_bytes::<32>());
-        self.sessions.lock().unwrap().insert(empreinte(&jeton), maintenant() + SESSION_S);
-        info!("connexion admin depuis {}", q.ip);
-        let secure = if self.r.url.starts_with("https://") { "; Secure" } else { "" };
-        let mut r = Reponse::redirection("/admin");
-        r.entetes.push(("Set-Cookie", format!("v34adm={jeton}; Path=/; HttpOnly; SameSite=Strict; Max-Age={SESSION_S}{secure}")));
-        r
-    }
-
-    fn admin_action(&self, q: &Requete) -> Reponse {
-        let Some(jeton) = self.session(q) else { return Reponse::redirection("/admin") };
-        if !ct_eq(q.champ("csrf").as_bytes(), self.csrf(&jeton).as_bytes()) {
-            return self.message(403, "Refusé", "Jeton de formulaire invalide : rechargez la page d'administration.", false);
-        }
-        let nom = q.champ("nom");
-        match q.chemin.as_str() {
-            "/admin/deconnexion" => {
-                self.sessions.lock().unwrap().remove(&empreinte(&jeton));
-                let mut r = Reponse::redirection("/");
-                r.entetes.push(("Set-Cookie", "v34adm=; Path=/; Max-Age=0".into()));
-                r
-            }
-            "/admin/fai" => {
-                let r = self.regler_acces(&nom, q.champ("d") == "oui");
-                if r.statut == 200 {
-                    self.admin(q, Some(&format!("Accès Internet de {nom} : {}.", if q.champ("d") == "oui" { "accordé" } else { "retiré" })))
-                } else {
-                    r
-                }
-            }
-            "/admin/supprimer" => match self.comptes.supprimer(&nom) {
-                Ok(c) => {
-                    self.sessions_abonnes.lock().unwrap().retain(|_, (n, _)| *n != c.nom);
-                    info!("compte supprimé par l'administrateur : {} ({})", c.nom, c.numero);
-                    self.admin(q, Some(&format!("Compte {} supprimé ; le numéro {} est libéré.", c.nom, numero_lisible(&c.numero))))
-                }
-                Err(e) => self.message(400, "Impossible", &e, false),
-            },
-            "/admin/livre/publier" => match self.livre.publier(&q.champ("id")) {
-                Ok(m) => {
-                    info!("livre d'or : message de « {} » publié", m.pseudo);
-                    self.admin(q, Some(&format!("Message de {} publié dans le livre d'or.", m.pseudo)))
-                }
-                Err(e) => self.message(400, "Impossible", &e, false),
-            },
-            "/admin/livre/supprimer" => match self.livre.supprimer(&q.champ("id")) {
-                Ok(m) => {
-                    info!("livre d'or : message de « {} » supprimé", m.pseudo);
-                    self.admin(q, Some(&format!("Message de {} supprimé du livre d'or.", m.pseudo)))
-                }
-                Err(e) => self.message(400, "Impossible", &e, false),
-            },
-            _ => Reponse::texte(404, ""),
-        }
+        Ok((c, avant.is_some_and(|a| a.fai)))
     }
 
     // ───────────────────────── téléchargement ─────────────────────────
@@ -776,7 +701,7 @@ impl Portail {
             let depot = self.r.depot.clone();
             self.nouvelles.sans_attendre(format!("dernières versions de {depot}"), move || recuperer_nouvelles(&depot))
         };
-        quoi_de_neuf(publiees.as_deref().map(|v| &v[..]).unwrap_or(&[]))
+        quoi_de_neuf(publiees.as_deref().map(|v| &v[..]).unwrap_or(&[]), &self.site.lire().nouvelle)
     }
 
     // ───────────────────────── serveur HTTP ─────────────────────────
@@ -902,13 +827,19 @@ fn analyser_nouvelles(v: &serde_json::Value) -> Vec<pages::Nouvelle> {
     n
 }
 
-/// Versions publiées + nouvelles du FAI + ouverture du site, de la plus
-/// récente à la plus ancienne.
-fn quoi_de_neuf(publiees: &[pages::Nouvelle]) -> Vec<pages::Nouvelle> {
+/// Nouvelles affichées au plus dans « Quoi de neuf ? »
+const QUOI_DE_NEUF_MAX: usize = 12;
+
+/// Versions publiées + nouvelles ajoutées depuis l'administration +
+/// nouvelles du FAI + ouverture du site, de la plus récente à la plus
+/// ancienne (à date égale, dans cet ordre).
+fn quoi_de_neuf(publiees: &[pages::Nouvelle], ajoutees: &[admin::site::NouvelleAjoutee]) -> Vec<pages::Nouvelle> {
     let mut n: Vec<pages::Nouvelle> = publiees.iter().take(3).cloned().collect();
+    n.extend(ajoutees.iter().map(|a| pages::Nouvelle { titre: a.titre.clone(), date: a.date.clone(), lien: String::new() }));
     n.extend(NOUVELLES.iter().map(|(date, titre)| pages::Nouvelle { titre: (*titre).into(), date: (*date).into(), lien: String::new() }));
     n.push(pages::Nouvelle { titre: "Ouverture du site : les premiers modems chantent !".into(), date: OUVERTURE.into(), lien: String::new() });
     n.sort_by(|a, b| b.date.cmp(&a.date));
+    n.truncate(QUOI_DE_NEUF_MAX);
     n
 }
 

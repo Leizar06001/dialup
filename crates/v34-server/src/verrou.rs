@@ -38,7 +38,9 @@ pub fn exclusif(dossier: &Path) -> Verrou {
             use std::os::unix::fs::OpenOptionsExt;
             o.mode(0o640);
         }
-        let f = o.open(dossier.join(FICHIER))?;
+        let chemin = dossier.join(FICHIER);
+        // (créé par un autre utilisateur ? flock marche aussi en lecture seule)
+        let f = o.open(&chemin).or_else(|_| File::open(&chemin))?;
         f.lock()?;
         Ok(f)
     };
