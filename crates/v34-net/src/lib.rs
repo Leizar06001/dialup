@@ -32,6 +32,7 @@ pub mod signal;
 pub mod succes;
 pub mod tarif;
 pub mod tunnel;
+pub mod videotex;
 
 pub use jitter::{Concealment, FrameKind, JitterBuffer, JitterStats};
 pub use link::{AudioLink, LinkConfig, NetStats};

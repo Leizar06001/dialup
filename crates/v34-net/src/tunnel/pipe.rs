@@ -50,6 +50,18 @@ impl ModemPipe {
         (pipe, tunnel_in, tunnel_out)
     }
 
+    /// Même chose pour un modem asynchrone (le V.23 du Minitel) :
+    /// `bits_par_caractere` bits par octet sur la ligne (10 : départ, 7 bits,
+    /// parité, arrêt), sans la marge du tramage LAPM. Le modem ne prend
+    /// ainsi jamais d'avance : l'écho des touches ne fait pas la queue
+    /// derrière des secondes de texte.
+    pub fn asynchrone(tx_rate_bps: u32, bits_par_caractere: u32) -> (ModemPipe, Receiver<Vec<u8>>, SyncSender<Vec<u8>>) {
+        let (mut pipe, a, b) = ModemPipe::new(tx_rate_bps);
+        pipe.bytes_per_s = tx_rate_bps.max(10) as f64 / bits_par_caractere.max(1) as f64;
+        pipe.tokens = (pipe.bytes_per_s * 0.05).max(4.0);
+        (pipe, a, b)
+    }
+
     /// Octets reçus par le modem (`ModemEvent::Data`).
     pub fn on_modem_data(&mut self, data: Vec<u8>) {
         if let Some(tx) = &self.to_tunnel {
