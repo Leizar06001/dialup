@@ -561,20 +561,25 @@ input[type=range]::-moz-range-thumb {
 .modal-status { min-height: 1.3em; margin: 4px 0 0; font-family: var(--screen-font); font-size: 18px; color: var(--vfd); }
 
 /* ------------------------------------------------------------------ boutons-poussoirs
-   Le module entre le terminal et l'annuaire : deux gros boutons de façade
+   Le module entre le terminal et l'annuaire : quatre gros boutons de façade
    (capuchon beige bombé dans un puits sombre, course de 3 px, étiquette
    gravée), chacun avec sa LED. NAVIGATEUR : verte quand Internet est prêt.
    MESSAGERIE : verte en ligne avec un abonné, rouge qui clignote quand un
-   message attend (comme un répondeur). */
-.keys { align-items: center; justify-content: space-evenly; padding: 18px 6px 14px; gap: 10px; }
+   message attend (comme un répondeur). FAX et MINITEL : leurs appareils.
+   Quatre boutons empilés : la LED à gauche du capuchon, l'étiquette
+   dessous ; le capuchon grandit avec la hauteur du module (unités de
+   conteneur), de 20 à 40 px. */
+.keys { container-type: size; align-items: center; justify-content: space-evenly; padding: 18px 6px 14px; gap: 6px; }
 .push {
-  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  display: grid; grid-template-columns: auto auto; grid-template-areas: "led well" "label label";
+  align-items: center; justify-content: center; column-gap: 3px; row-gap: 4px;
   padding: 0; border: 0; background: none; cursor: pointer; color: var(--engrave);
   -webkit-tap-highlight-color: transparent;
 }
 .push:focus-visible { outline: none; }
 .push:focus-visible .push-well { box-shadow: inset 0 2px 6px rgba(0,0,0,0.85), 0 0 0 2px rgba(103,247,228,0.45); }
 .push-well {
+  grid-area: well;
   display: block; padding: 4px 4px 7px; border-radius: 8px;
   background: linear-gradient(180deg, #0c0b0a, #171513);
   border: 1px solid #000;
@@ -592,9 +597,10 @@ input[type=range]::-moz-range-thumb {
     inset 0 1px 0 rgba(255,255,255,0.8), inset 0 -2px 3px rgba(0,0,0,0.18);
   transform: translateY(0);
   transition: transform 50ms linear, box-shadow 50ms linear;
+  height: clamp(20px, calc(25cqh - 32px), 40px);
 }
 .push-cap svg {
-  width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.6;
+  width: 24px; height: 24px; width: clamp(15px, calc(25cqh - 48px), 24px); height: clamp(15px, calc(25cqh - 48px), 24px); fill: none; stroke: currentColor; stroke-width: 1.6;
   stroke-linecap: round; stroke-linejoin: round;
   filter: drop-shadow(0 1px 0 rgba(255,255,255,0.6)); /* gravé dans le plastique */
 }
@@ -605,16 +611,15 @@ input[type=range]::-moz-range-thumb {
     inset 0 1px 2px rgba(0,0,0,0.25), inset 0 -1px 2px rgba(0,0,0,0.12);
 }
 .push-label {
+  grid-area: label; justify-self: center;
   font-size: 9px; font-weight: 700; letter-spacing: 1px; white-space: nowrap;
   color: var(--engrave);
   text-shadow: 0 1px 0 rgba(0,0,0,0.8), 0 -1px 0 rgba(255,255,255,0.08);
 }
-.push .led { width: 10px; height: 10px; }
-/* Fenêtre basse : trois boutons dans le module, un peu plus serrés */
+.push .led { grid-area: led; width: 8px; height: 8px; }
+/* Fenêtre basse : le module se resserre */
 @media (max-height: 820px) {
   .keys { padding: 12px 6px 10px; gap: 4px; }
-  .push { gap: 4px; }
-  .push-cap { height: 32px; }
 }
 .led.blink { animation: led-blink 0.9s steps(2, jump-none) infinite; }
 @keyframes led-blink { 50% { opacity: 0.25; } }

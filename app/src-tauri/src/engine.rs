@@ -1793,7 +1793,7 @@ impl Engine {
                     // V.23 : 1200 bit/s vers l'écran, 75 depuis le clavier
                     self.console(&format!("CONNECT {rx_rate}/{tx_rate} (V.23, Minitel)"), "result");
                     self.minitel.connexion(true);
-                    self.console("Minitel en ligne : l'écran est dans la MESSAGERIE (sa LED clignote). Entrée = ENVOI.", "info");
+                    self.console("Minitel en ligne : son écran est sous le bouton MINITEL (sa LED clignote). Entrée = ENVOI.", "info");
                 }
                 ModemEvent::Connected { tx_rate, rx_rate } => {
                     self.console(&format!("CONNECT {rx_rate}/V34 (TX {tx_rate})"), "result");

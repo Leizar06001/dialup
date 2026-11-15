@@ -197,14 +197,35 @@ function updateFax(s) {
   const libre = s.call_state === "idle";
   led("led-fax", telecopie.nouveau ? "led on blink" : s.call_state === "fax" ? "led green on blink" : libre ? "led green on" : "led green");
 }
+/* ---------------------------------------------------------------- Minitel
+   Le bouton MINITEL ouvre le navigateur sur l'écran du Minitel (page
+   d'accueil hors ligne : CONNEXION/FIN y compose le 3615 ORACLE). Sa LED :
+   verte qui clignote pendant le sifflement, puis à la connexion tant qu'on
+   n'est pas allé voir l'écran ; verte fixe en ligne ; éteinte sinon. */
+const minitelBtn = { annonce: false, nouveau: false, onglet: "chat" };
+function openMinitel() {
+  minitelBtn.nouveau = false;
+  try { localStorage.setItem("messagerie-onglet", "minitel"); } catch (_) { /* stockage indisponible */ }
+  if (bridge.emit) bridge.emit("messagerie:onglet", "minitel");
+  invoke("open_browser", { mode: "messagerie" }).catch((e) => crt("Minitel : " + e, "info"));
+}
+$("btn-minitel").addEventListener("click", openMinitel);
+// l'écran du Minitel est sous les yeux (fenêtre au premier plan, sur le Minitel)
+bridge.listen("messagerie:onglet-actuel", (o) => { minitelBtn.onglet = o && o.vue; });
+bridge.listen("navigateur:vu", (vue) => { if (vue === "messagerie" && minitelBtn.onglet === "minitel") minitelBtn.nouveau = false; });
+function updateMinitel(s) {
+  const mt = s.call_state === "minitel", enLigne = mt && s.status.leds.cd;
+  if (s.call_state === "idle") minitelBtn.annonce = minitelBtn.nouveau = false;
+  else if (enLigne && !minitelBtn.annonce) minitelBtn.annonce = minitelBtn.nouveau = true;
+  led("led-minitel", enLigne ? (minitelBtn.nouveau ? "led green on blink" : "led green on") : mt ? "led green on blink" : "led green");
+}
 // La messagerie a été lue (sa fenêtre a le focus)
 bridge.listen("messagerie:vu", () => { messagerie.unread = false; messagerie.nouvelAppel = false; });
 // Un numéro choisi dans l'annuaire s'affiche aussi dans le terminal
 bridge.listen("messagerie:compose", (num) => { $("dial-number").value = num; });
 function updateMessagerie(s) {
-  // (un Minitel en ligne aussi : son écran est dans la messagerie)
-  const minitel = s.call_state === "minitel" && s.status.leds.cd;
-  const bbs = s.session !== "internet" && (s.call_state === "online" || s.call_state === "morse" || minitel);
+  // (le Minitel a son propre bouton)
+  const bbs = s.session !== "internet" && (s.call_state === "online" || s.call_state === "morse");
   // L'appel aboutit : la LED clignote (une fois par appel : un réentraînement
   // ne la relance pas), jusqu'à ce qu'on ouvre la messagerie.
   if (s.call_state === "idle") messagerie.annonce = messagerie.nouvelAppel = false;
@@ -573,6 +594,7 @@ function onState(s) {
   dial.classList.toggle("ringing", !!s.incoming);
   updateNavigateur(s);
   updateFax(s);
+  updateMinitel(s);
   updateMessagerie(s);
   renderDir(s.net);
 
@@ -915,6 +937,7 @@ const TIPS = {
   messagerie: ["MESSAGERIE", "Ouvre la messagerie du navigateur : le chat (ou le salon du FAI), l'envoi de fichiers et le visiophone V.Hallucination, avec les contacts du central. Elle ne s'ouvre pas toute seule : quand un appel entre abonnés aboutit (ou qu'un Minitel se connecte : son écran s'y affiche), sa LED verte clignote jusqu'à ce que tu l'ouvres, puis reste allumée tant que dure l'appel ; rouge qui clignote : un message t'attend, comme sur un répondeur."],
   nav: ["NAVIGATEUR", "Ouvre Tinyverse Navigator, sur le web 1998 ou moderne : tout son trafic passe par le modem. Appelle d'abord TINYVERSE, en tête de l'ANNUAIRE ; la LED clignote quand Internet est prêt, jusqu'à ce que tu ouvres le navigateur, puis reste allumée."],
   fax: ["FAX", "Le télécopieur : ouvre la fenêtre du navigateur sur la TÉLÉCOPIE (le bouton à côté de MESSAGERIE). Écris, dessine ou importe une page, compose le numéro sur le pavé du télécopieur, DÉPART : un vrai fax du groupe 3 (CNG, T.30, V.29, T.4). Le correspondant doit décrocher tout seul (DIP RÉP. AUTO). LED verte : ligne libre, un fax peut partir (pas pendant un autre appel) ; verte qui clignote : fax en cours ; rouge qui clignote : un fax est arrivé."],
+  minitel: ["MINITEL", "Ouvre la fenêtre du navigateur sur le Minitel (le bouton MINITEL de sa barre). Hors ligne, il s'allume sur sa page d'accueil : la touche CONNEXION/FIN (F10) compose le 3615 ORACLE, et le modem passe en V.23 1200/75 au sifflement du serveur. LED verte qui clignote pendant le sifflement, puis tant que tu n'es pas allé voir l'écran ; fixe en ligne."],
   chat: ["CHAT ↗", "Le chat et l'envoi de fichiers ont déménagé dans la MESSAGERIE du navigateur, avec le visiophone : cet onglet l'ouvre. Il clignote quand un message t'y attend."],
   taxe: ["TAXES", "Le compteur de Tinyverse Télécom, en francs de 1998 (jamais facturés) : communication locale 0,74 F les 3 premières minutes, puis 0,28 F la minute (0,14 F en heures creuses : 22 h – 8 h et le week-end) ; 3615 ORACLE 2,23 F la minute ; numéro vert gratuit. Seul l'appelant paie. La facture du mois est dans l'onglet SUCCÈS et sur le site."],
   succes: ["SUCCÈS", "Tes succès d'abonné et ta facture du mois, tenus par le central. Certains sont cachés : à toi de les trouver. L'onglet clignote quand tu en gagnes un."],
@@ -944,9 +967,13 @@ function tipLive(key) {
   }
   if (key === "messagerie" || key === "chat") {
     const v = state && state.visio;
-    const l = [messagerie.unread ? "● nouveau message" : messagerie.bbsOnline && messagerie.nouvelAppel ? "● appel abouti : clique pour ouvrir !" : messagerie.bbsOnline ? (state && state.call_state === "minitel" ? "● Minitel en ligne : son écran est dans la messagerie" : "● en ligne avec un abonné") : "○ pas d'appel entre abonnés"];
+    const l = [messagerie.unread ? "● nouveau message" : messagerie.bbsOnline && messagerie.nouvelAppel ? "● appel abouti : clique pour ouvrir !" : messagerie.bbsOnline ? "● en ligne avec un abonné" : "○ pas d'appel entre abonnés"];
     if (v && v.camera) l.push("visiophone : ta caméra tourne");
     return l.join("\n");
+  }
+  if (key === "minitel") {
+    const s = state;
+    return s && s.call_state === "minitel" ? (s.status.leds.cd ? "● Minitel en ligne · 1200/75 bit/s" : "◐ le serveur siffle…") : s && s.call_state !== "idle" ? "○ ligne occupée" : "○ hors ligne : CONNEXION/FIN compose le 3615 ORACLE";
   }
   if (key === "cast") return cast.actif() ? "● micro ouvert" : "○ micro coupé : la régie a débranché le commentateur";
   if (key === "karaoke") {

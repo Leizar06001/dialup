@@ -585,12 +585,13 @@ function vueChat(v) {
   titreBoite();
   annoncerOnglet();
 }
-// Le bouton FAX de la fenêtre du modem ouvre la messagerie sur la Télécopie
+// Les boutons FAX et MINITEL de la fenêtre du modem ouvrent la messagerie sur la Télécopie ou le Minitel
 // (à l'ouverture : l'onglet noté par la fenêtre du modem ; ensuite : l'événement)
 try {
-  if (localStorage.getItem("messagerie-onglet") === "fax") {
+  const o = localStorage.getItem("messagerie-onglet");
+  if (o === "fax" || o === "minitel") {
     localStorage.removeItem("messagerie-onglet");
-    vueChat("fax");
+    vueChat(o);
   }
 } catch (_) { /* stockage indisponible */ }
 listen("messagerie:onglet", (v) => {
