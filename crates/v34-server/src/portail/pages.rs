@@ -225,26 +225,34 @@ pub fn accueil(nom_fai: &str, central: &str, inscriptions_ouvertes: bool, nouvel
         r#"<p><img src="/construction.gif" alt="En construction" width="88" height="31" style="float:right;margin:0 0 8px 8px">
 <b>Bienvenue chez {nom} !</b> Ici, pas de fibre ni de 5G : votre ordinateur se transforme en
 <b>modem V.34 et 56K</b>, le vrai, celui qui chante. Vous recevez <b>votre propre numéro de téléphone</b>,
-vous appelez les autres abonnés pour discuter, échanger des fichiers et vous voir au visiophone, et vous composez le
-<b>08 36 15 42 86</b> pour surfer sur Internet à travers votre modem, jusqu'à 56 000 bit/s.</p>
+vous appelez les autres abonnés pour discuter, échanger des fichiers et des télécopies, et vous voir au visiophone, et vous composez le
+<b>08 36 15 42 86</b> pour surfer sur Internet à travers votre modem, jusqu'à 56 000 bit/s, et tenir votre Tinyblog.
+Chaque minute est taxée en francs, comme en 1998 : la facture est pour de rire, les succès pour la gloire.</p>
 {quoi}
 <h2>Ce que comprend votre abonnement <span class="nouveau">NOUVEAU !</span></h2>
 <table class="grille">
 <tr><th>Service</th><th>Description</th></tr>
 <tr><td>☎ Votre numéro</td><td>Choisissez-le vous-même à l'inscription (10 chiffres, comme en 1998).</td></tr>
 <tr><td>💬 Messagerie &amp; fichiers</td><td>Appelez un autre abonné : négociation V.8/V.34 audible (jusqu'à 33 600 bit/s), puis la messagerie s'ouvre : discussion et transfert de fichiers.</td></tr>
-<tr><td>📹 Visiophone <span class="nouveau">NOUVEAU !</span></td><td>Pendant un appel entre abonnés, votre webcam redessinée en une quarantaine de formes géométriques, 2 à 3 images par seconde (« V.Hallucination » : ressemblant comme un rêve ressemble à la veille).</td></tr>
+<tr><td>📠 Télécopie <span class="nouveau">NOUVEAU !</span></td><td>Un vrai télécopieur du groupe 3 : écrivez, dessinez ou importez une image, composez le numéro d'un abonné, et son modem imprime la page sur papier thermique, ligne par ligne. Négociation T.30 et page en V.29 à 9 600 bit/s (7 200 ou 4 800 si la ligne crachote).</td></tr>
+<tr><td>📹 Visiophone</td><td>Pendant un appel entre abonnés, votre webcam redessinée en une quarantaine de formes géométriques, 2 à 3 images par seconde (« V.Hallucination » : ressemblant comme un rêve ressemble à la veille).</td></tr>
 <tr><td>🌐 Accès Internet</td><td>Appelez TINYVERSE, en tête de l'annuaire du logiciel : le modem du FAI décroche et vous donne accès au Web, en mode <i>moderne</i> ou <i>web 1998</i> (pages allégées, images en 256 couleurs ou « V.Hallucination »). Sur validation de l'opérateur.</td></tr>
-<tr><td>🚀 56K (V.90) <span class="nouveau">NOUVEAU !</span></td><td>Le modem du FAI est raccordé en numérique : jusqu'à 56 000 bit/s en réception sur une ligne parfaite, environ 40 000 sur une ligne urbaine (l'envoi reste en V.34). Avec la vraie poignée de main de 1999, ses sifflements et son bourdonnement.</td></tr>
+<tr><td>🚀 56K (V.90)</td><td>Le modem du FAI est raccordé en numérique : jusqu'à 56 000 bit/s en réception sur une ligne parfaite, environ 40 000 sur une ligne urbaine (l'envoi reste en V.34). Avec la vraie poignée de main de 1999, ses sifflements et son bourdonnement.</td></tr>
 <tr><td>🗨 Salon du FAI</td><td>Tous les abonnés connectés au FAI discutent ensemble.</td></tr>
-<tr><td>🔮 3615 ORACLE <span class="nouveau">NOUVEAU !</span></td><td>Au 08 36 67 22 53 : une intelligence artificielle persuadée qu'on est en 1998. Posez-lui vos questions dans la messagerie, elle répond à la vitesse d'un Minitel. Au-delà de 1998, elle ne voit que des brumes. 2,23 F la minute (pour de rire : c'est gratuit). Avec l'accès Internet, une trentaine de questions par jour.</td></tr>
+<tr><td>📝 Tinyblog <span class="nouveau">NOUVEAU !</span></td><td>Votre blog, à l'adresse <code>tinyblog</code>, lisible seulement par le modem : articles avec une image en 256 couleurs, texte en [b]gras[/b], en couleur ou qui clignote, six thèmes, des « J'kiffe » et des com's. Avec l'accès Internet.</td></tr>
+<tr><td>🧾 Facture &amp; succès <span class="nouveau">NOUVEAU !</span></td><td>Le compteur TAXES tourne pendant vos appels. Dans <a href="/compte">Mon compte</a> : votre facture détaillée du mois (jamais réclamée), le classement des plus grosses factures du réseau, et 38 succès à décrocher, dont quelques-uns bien cachés.</td></tr>
+<tr><td>🕵 Numéros cachés <span class="nouveau">NOUVEAU !</span></td><td>Certains numéros ne figurent dans aucun annuaire. L'oracle en connaît au moins un, et le modem sait balayer une plage de numéros, comme les « wardialers » de l'époque. À vous de chercher.</td></tr>
+<tr><td>🔮 3615 ORACLE</td><td>Au 08 36 67 22 53 : une intelligence artificielle persuadée qu'on est en 1998. Posez-lui vos questions dans la messagerie, elle répond à la vitesse d'un Minitel. Au-delà de 1998, elle ne voit que des brumes. 2,23 F la minute (pour de rire, comme toute la facture). Avec l'accès Internet, une trentaine de questions par jour.</td></tr>
 <tr><td>📞 Ligne de test</td><td>Le 08 00 00 00 00 vous renvoie tout ce que vous lui envoyez.</td></tr>
 </table>
 <h2>Tarifs</h2>
 <table class="grille">
 <tr><td>Abonnement mensuel</td><td><b>0 F</b> (0,00 €)</td></tr>
-<tr><td>Communication, heures pleines</td><td><b>0 F</b> la minute</td></tr>
-<tr><td>Communication, heures creuses</td><td><b>0 F</b> la minute, mais avec la satisfaction d'avoir attendu</td></tr>
+<tr><td>Communication locale (abonnés, accès Internet)</td><td><b>0,74 F</b> les 3 premières minutes, puis <b>0,28 F</b> la minute</td></tr>
+<tr><td>Heures creuses (22 h – 8 h, samedi et dimanche)</td><td><b>0,14 F</b> la minute, et la satisfaction d'avoir attendu</td></tr>
+<tr><td>Numéros verts (08 00)</td><td>Gratuit</td></tr>
+<tr><td>Kiosque (08 36), dont 3615 ORACLE</td><td><b>2,23 F</b> la minute</td></tr>
+<tr><td>Somme réellement prélevée</td><td><b>0 F</b> : Tinyverse Télécom ne vous réclamera jamais rien. Seul l'appelant « paie ».</td></tr>
 <tr><td>Frais de résiliation</td><td>Un pincement au cœur</td></tr>
 </table>
 <p style="text-align:center;margin:22px 0">"#,
@@ -473,9 +481,29 @@ La caméra reste éteinte tant que vous n'avez pas choisi CAMÉRA. Pendant une s
 Ce qui vient après, elle ne fait que l'entrevoir, comme une voyante dans le brouillard.</p>
 <ol><li>En bas de l'<b>ANNUAIRE</b>, dans les numéros spéciaux : <b>3615 ORACLE</b> ☎ APPELER (le <b>08 36 67 22 53</b>, « ORACLE » sur le clavier du téléphone).</li>
 <li>Après CONNECT, la <b>MESSAGERIE</b> s'ouvre sur l'écran d'accueil du service. Tapez votre question en bas, puis Entrée (la touche ENVOI du Minitel) : l'oracle répond en quelques phrases, à la vitesse d'un Minitel, et se souvient de la conversation jusqu'à ce que vous raccrochiez.</li>
-<li><code>/aide</code> affiche le GUIDE, <code>/fin</code> raccroche. Le compteur affiche 2,23 F la minute, mais rien n'est jamais facturé.</li></ol>
+<li><code>/aide</code> affiche le GUIDE, <code>/fin</code> raccroche. Le compteur TAXES affiche 2,23 F la minute, mais rien n'est jamais réclamé.</li></ol>
 <p>Réservé aux abonnés qui ont l'accès Internet, une trentaine de questions par jour. Si l'IA est injoignable, l'oracle tire les cartes à la place, et le dit.
 Vos questions sont transmises à OpenRouter et au fournisseur du modèle pour fabriquer la réponse (voir la <a href="/confidentialite">politique de confidentialité</a>) : n'y mettez rien de personnel.</p>
+<h3>Télécopie</h3>
+<p>Un vrai télécopieur du groupe 3, comme ceux des bureaux de 1998 (logiciel 0.1.7 ou plus récent des deux côtés).</p>
+<ol><li>Bouton <b>FAX</b> de la façade (sa LED est verte quand la ligne est libre : un fax ne part que hors appel), ou onglet <b>Télécopie</b> de la MESSAGERIE.</li>
+<li>Écrivez, dessinez au crayon ou importez une image, tapez le numéro d'un abonné (ou cliquez-le dans la liste), puis <b>Envoyer</b>.</li>
+<li>Le correspondant doit laisser son modem décrocher tout seul (<b>DIP 2 « RÉP. AUTO »</b> sur ON) : son modem reconnaît le sifflement du fax, négocie en T.30, reçoit la page en V.29 (9 600 bit/s, 7 200 ou 4 800 si la ligne est mauvaise) et l'imprime ligne par ligne sur papier thermique. Elle est aussi enregistrée en image dans le dossier <b>Téléchargements/V34 reçus</b>.</li></ol>
+<h3>Tinyblog</h3>
+<p>Les blogs des abonnés, comme en 2002, mais au modem. Avec l'accès Internet, ouvrez le <b>NAVIGATEUR</b> et cliquez sur <b>Tinyblog</b> (ou tapez l'adresse <code>tinyblog</code>).
+Pas de mot de passe à retenir : le FAI sait déjà qui vous êtes.</p>
+<ul><li><b>Gérer mon blog</b> : titre, présentation, thème (nuit étoilée, rose bonbon, flammes, océan, matrice, papier quadrillé) et nouveaux articles.</li>
+<li>Un article, c'est un titre, du texte et une image, réduite en GIF 256 couleurs. Une photo met une bonne minute à partir à 33 600 bit/s : c'était ça, 1998.</li>
+<li>Mise en forme : <code>[b]gras[/b]</code>, <code>[i]italique[/i]</code>, <code>[u]souligné[/u]</code>, <code>[grand]…[/grand]</code>, <code>[centre]…[/centre]</code>, <code>[clignote]…[/clignote]</code>, <code>[couleur=rose]…[/couleur]</code>, et les smileys <code>:)</code> <code>&lt;3</code>.</li>
+<li>Chez les autres : « J'kiffe » et « Lâche ton com's ». L'auteur d'un blog peut supprimer les commentaires qu'on y laisse.</li></ul>
+<p>Vous êtes responsable de ce que vous publiez (voir les <a href="/conditions">conditions</a>).</p>
+<h3>La facture et les succès</h3>
+<p>Le compteur <b>TAXES</b>, sous DURÉE, tourne pendant vos appels, au tarif de France Télécom en 1998 : 0,74 F les 3 premières minutes, puis 0,28 F la minute (0,14 F en heures creuses, de 22 h à 8 h et le week-end) ; 2,23 F la minute pour les 08 36, gratuit pour les 08 00. Seul l'appelant paie, et personne ne paie vraiment.</p>
+<ul><li>Onglet <b>SUCCÈS</b>, à côté de l'ANNUAIRE : votre facture du mois et vos succès (★ obtenus, ☆ à gagner, ??? cachés). Le commentateur annonce chaque nouveau succès.</li>
+<li>Sur ce site, <a href="/compte">Mon compte</a> : le détail de vos communications, mois par mois, et le classement des plus grosses factures du réseau.</li></ul>
+<h3>Numéros cachés</h3>
+<p>Il paraît que certains numéros ne figurent dans aucun annuaire. L'oracle en connaîtrait au moins un… Chaque numéro trouvé rapporte un succès, et parfois une belle facture.
+Les plus patients balaieront une plage entière depuis le TERMINAL, avec la commande <code>AT*B</code> (voir l'aide du logiciel). Attention : chaque porteuse trouvée est taxée.</p>
 <h3>Je n'arrive pas à me connecter</h3>
 <ul><li>Vérifiez le nom d'abonné (sensible aux majuscules) et le mot de passe. Changé sur ce site ? Changez-le aussi dans le logiciel s'il était mémorisé.</li>
 <li>Le central utilise le port <b>UDP 3434</b> : certains réseaux d'entreprise le bloquent.</li></ul>

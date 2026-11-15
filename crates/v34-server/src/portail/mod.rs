@@ -64,6 +64,7 @@ const OUVERTURE: &str = "2026-11-14";
 /// de la plus récente à la plus ancienne ; à date égale, elles passent
 /// avant l'ouverture du site.
 const NOUVELLES: &[(&str, &str)] = &[
+    ("2026-11-15", "Télécopie G3, Tinyblog, facture en francs et 38 succès à décrocher… et des numéros qui ne sont dans aucun annuaire (logiciel 0.1.7)"),
     ("2026-11-14", "Le 56K (V.90) est arrivé : jusqu'à 56 000 bit/s en appelant le FAI ! Et le visiophone V.Hallucination entre abonnés (logiciel 0.1.2)"),
     ("2026-11-14", "Le FAI change de numéro : composez désormais le 08 36 15 42 86 (clin d'œil au 3615)"),
 ];

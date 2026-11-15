@@ -591,8 +591,8 @@ fn quoi_de_neuf_d_apres_github() {
     assert_eq!((n[1].titre.as_str(), n[1].lien.as_str()), ("Nouvelle version du logiciel : v0.1.1", ""), "lien hors de GitHub ignoré");
     let q = quoi_de_neuf(&n);
     assert_eq!(q.len(), 3 + NOUVELLES.len() + 1);
-    assert_eq!(q.iter().map(|n| n.date.as_str()).collect::<Vec<_>>(), ["2026-11-20", "2026-11-15", "2026-11-14", "2026-11-14", "2026-11-14", "2026-11-10"]);
-    assert!(q[2].titre.contains("56K") && q[3].titre.contains("08 36 15 42 86") && q[4].titre.starts_with("Ouverture du site"), "à date égale : les nouvelles, puis l'ouverture : {q:?}");
+    assert_eq!(q.iter().map(|n| n.date.as_str()).collect::<Vec<_>>(), ["2026-11-20", "2026-11-15", "2026-11-15", "2026-11-14", "2026-11-14", "2026-11-14", "2026-11-10"]);
+    assert!(q[2].titre.contains("Télécopie") && q[3].titre.contains("56K") && q[4].titre.contains("08 36 15 42 86") && q[5].titre.starts_with("Ouverture du site"), "à date égale : les nouvelles, puis l'ouverture : {q:?}");
     let h = pages::accueil("Tinyverse Dialup", "c:3434", true, &q);
     assert!(h.contains("<b>20/11/2026</b>") && h.contains("Ouverture du site") && h.contains("NOUVEAU"));
 }
