@@ -140,6 +140,10 @@ pub struct Modem {
     pub(crate) fax_page: Option<(Vec<Vec<bool>>, bool)>,
     /// Appelé : écoute du CNG (1100 Hz) d'un télécopieur qui appelle
     pub(crate) cng: Option<(ToneDetector, PowerMeter, u64)>,
+    /// Morse convenu en V.8 (services non normalisés), vitesse en mots/minute
+    pub(crate) morse_convenu: Option<u8>,
+    /// Liaison morse en cours (à la place des phases 2 à 4 du V.34)
+    pub(crate) morse: Option<Box<crate::morse::session::Morse>>,
 }
 
 impl Modem {
@@ -156,6 +160,7 @@ impl Modem {
             bytes_tx: 0,
             bytes_rx: 0,
             link: None,
+            morse: None,
         };
         Self {
             role,
@@ -199,6 +204,8 @@ impl Modem {
             fax: None,
             fax_page: None,
             cng: None,
+            morse_convenu: None,
+            morse: None,
         }
     }
 
@@ -214,6 +221,7 @@ impl Modem {
     }
 
     pub fn command(&mut self, cmd: ModemCommand) {
+        let Some(cmd) = self.commande_morse(cmd) else { return };
         match cmd {
             ModemCommand::PreparerFax { lignes, fine } => {
                 self.fax_page = Some((lignes, fine));
@@ -293,8 +301,15 @@ impl Modem {
         if self.fax.is_some() {
             return self.process_fax(rx, tx);
         }
+        if self.morse.is_some() {
+            return self.process_morse(rx, tx);
+        }
         for (i, (r, t)) in rx.iter().zip(tx.iter_mut()).enumerate() {
             *t = self.step(*r);
+            if self.morse.is_some() {
+                // V.8 vient de finir : le reste du bloc part en morse
+                return self.process_morse(&rx[i + 1..], &mut tx[i + 1..]);
+            }
             if self.ecouter_cng(*r) {
                 // Le reste du bloc part en télécopie
                 return self.process_fax(&rx[i + 1..], &mut tx[i + 1..]);
@@ -646,7 +661,8 @@ impl Modem {
                     // Modem 56k d'époque : il écoute l'ANSam plus longtemps
                     // avant de répondre (comme ceux de 1999), dans les 5 s
                     // que l'appelé lui accorde.
-                    let te = if self.cfg.v90 && !self.cfg.express { 2300 } else { 1000 };
+                    // (morse : le CM est plus long, on ne traîne pas)
+                    let te = if self.cfg.v90 && !self.cfg.express && !self.cfg.morse { 2300 } else { 1000 };
                     self.log(LogLevel::Detail, &format!("Silence Te = {:.1} s (neutralisation des annuleurs d'écho du réseau)", te as f32 / 1000.0));
                     self.t_mark = self.n + te * MS;
                     self.goto(St::CallTe);
@@ -663,6 +679,9 @@ impl Modem {
                     self.fsk_rx = Some((FskDemod::new(V21Channel::High), V8Parser::new()));
                     self.ansam_det = None;
                     self.log(LogLevel::Info, &format!("Envoi CM (V.21 bas, 300 bit/s) : {}", menu.modes.names().join(", ")));
+                    if let Some(mpm) = menu.morse() {
+                        self.log(LogLevel::Info, &format!("CM : service non normalisé (V.8 §6.6) France, fournisseur « TV » (TINYVERSE) : on propose le morse à {mpm} mots/minute"));
+                    }
                     self.goto(St::CallCm);
                 }
             }
@@ -683,13 +702,17 @@ impl Modem {
                         self.log(LogLevel::Info, "Le FAI est raccordé en numérique : 56k (V.90) possible, nous serons le modem analogique");
                         self.status.params.v8_modes.insert(0, "V.90".into());
                     }
+                    self.morse_dans_jm(jm);
                     self.remote_menu = Some(jm.clone());
+                    // (morse : CJ trois fois, un clic d'orage n'en mange qu'un)
+                    let cj = crate::v8::cj_bits().repeat(if self.morse_convenu.is_some() { 3 } else { 1 });
                     if let TxMode::Fsk(fsk) = &mut self.tx.mode {
-                        fsk.finish_octet_then(&crate::v8::cj_bits());
+                        fsk.finish_octet_then(&cj);
                     }
                     self.tx_name("CJ");
                     self.goto(St::CallCj);
-                } else if self.elapsed() > 6000 * MS {
+                } else if self.elapsed() > if self.cfg.morse { 10_000 } else { 6000 } * MS {
+                    // (un CM et un JM qui parlent morse durent une seconde chacun)
                     self.fail("pas de JM");
                 }
             }
@@ -720,14 +743,17 @@ impl Modem {
                     self.log(LogLevel::Info, &format!("CM reçu ×2 : l'appelant propose {}{}", if cm.pcm.is_some_and(|p| p & PCM_ANALOG != 0) { "V.90, " } else { "" }, cm.modes.names().join(", ")));
                     // §9.1.1/V.90 : nous sommes numérique et l'autre analogique
                     self.v90 = ours.pcm.is_some_and(|p| p & PCM_DIGITAL != 0) && cm.pcm.is_some_and(|p| p & PCM_ANALOG != 0);
+                    self.status.params.v8_modes = common.names();
+                    // morse proposé (service non normalisé) : accepté si DIP 4
+                    let nsf = self.morse_pour_jm(cm);
                     let jm = Menu {
                         call_function: cm.call_function,
                         modes: common,
                         lapm: cm.lapm && ours.lapm,
                         access: if self.v90 { ours.access } else { None },
                         pcm: if self.v90 { Some(PCM_DIGITAL) } else { None },
+                        nsf,
                     };
-                    self.status.params.v8_modes = common.names();
                     if self.v90 {
                         self.log(LogLevel::Info, "L'abonné propose le 56k : nous serons le modem numérique (V.90)");
                         self.status.params.v8_modes.insert(0, "V.90".into());
@@ -739,7 +765,8 @@ impl Modem {
                     self.set_tx(TxMode::Fsk(fsk), "JM");
                     self.log(LogLevel::Info, &format!("Envoi JM (V.21 haut) : {}", common.names().join(", ")));
                     self.goto(St::AnsJm);
-                } else if self.elapsed() > 5000 * MS {
+                } else if self.elapsed() > if self.cfg.morse { 6000 } else { 5000 } * MS {
+                    // (5 ± 1 s, §8.2.2/V.8 : un CM qui propose le morse est long)
                     self.fail("pas de CM pendant ANSam (5 s)");
                 }
             }
@@ -758,7 +785,10 @@ impl Modem {
             }
             St::P1End => {
                 if self.n >= self.t_mark {
-                    self.start_phase2();
+                    match self.morse_convenu {
+                        Some(mpm) => self.demarrer_morse(mpm),
+                        None => self.start_phase2(),
+                    }
                 }
             }
             _ => {}
