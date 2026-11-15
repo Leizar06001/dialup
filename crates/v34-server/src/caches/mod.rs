@@ -243,12 +243,14 @@ pub fn date_1998(t: u64) -> String {
 static FICHIERS: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
 
 /// Lit, modifie et réécrit `nom` d'un coup (deux appels simultanés ne se
-/// marchent pas dessus). Rend ce que renvoie `f`.
+/// marchent pas dessus, ni la modération du site : verrou du dossier,
+/// [`crate::verrou`]). Rend ce que renvoie `f`.
 pub fn modifier<T, R>(donnees: Option<&Path>, nom: &str, f: impl FnOnce(&mut T) -> R) -> R
 where
     T: Serialize + DeserializeOwned + Default,
 {
     let mut memoire = FICHIERS.lock().unwrap_or_else(|e| e.into_inner());
+    let _verrou = donnees.map(crate::verrou::exclusif);
     let mut v: T = charger(donnees, nom, &memoire);
     let r = f(&mut v);
     let Ok(t) = serde_json::to_string(&v) else { return r };

@@ -2,6 +2,10 @@
 //! `tinyblog/<abonné>.json` (le blog, ses articles et leurs commentaires),
 //! `tinyblog/img/<abonné>-<n>.gif` (les images, déjà réduites) et
 //! `tinyblog/coms.json` (combien de commentaires chacun a laissés).
+//!
+//! Le central (les abonnés, par le modem) et le site (la modération, dans
+//! `/admin`) écrivent ces fichiers : chaque modification prend le verrou
+//! du dossier ([`crate::verrou`]), commun aux deux processus.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -95,10 +99,55 @@ impl Store {
             return None;
         }
         let _v = self.verrou.lock().unwrap_or_else(|e| e.into_inner());
+        let _f = crate::verrou::exclusif(&self.dir);
         let mut b = self.charger(nom).unwrap_or_default();
         let r = f(&mut b);
         ecrire(&self.chemin(nom), &b);
         Some(r)
+    }
+
+    /// Comme [`Store::modifier`], seulement si le blog existe déjà (la
+    /// modération ne crée pas de blog).
+    pub fn modifier_existant<R>(&self, nom: &str, f: impl FnOnce(&mut Blog) -> R) -> Option<R> {
+        if !nom_valide(nom) {
+            return None;
+        }
+        let _v = self.verrou.lock().unwrap_or_else(|e| e.into_inner());
+        let _f = crate::verrou::exclusif(&self.dir);
+        let mut b = self.charger(nom)?;
+        let r = f(&mut b);
+        ecrire(&self.chemin(nom), &b);
+        Some(r)
+    }
+
+    /// Supprime le blog de `nom` et ses images ; rend le blog supprimé.
+    pub fn supprimer_blog(&self, nom: &str) -> Option<Blog> {
+        if !nom_valide(nom) {
+            return None;
+        }
+        let _v = self.verrou.lock().unwrap_or_else(|e| e.into_inner());
+        let _f = crate::verrou::exclusif(&self.dir);
+        let b = self.charger(nom)?;
+        if let Err(e) = std::fs::remove_file(self.chemin(nom)) {
+            warn!("tinyblog : {} non supprimé : {e}", self.chemin(nom).display());
+            return None;
+        }
+        // Les images de ses articles, et celles qui traîneraient encore
+        // (`<nom>-<n>.gif`)
+        for f in b.articles.iter().filter_map(|a| a.image.as_deref()) {
+            self.supprimer_image(f);
+        }
+        let prefixe = format!("{nom}-");
+        if let Ok(rd) = std::fs::read_dir(self.dossier_images()) {
+            for e in rd.flatten() {
+                let n = e.file_name().to_string_lossy().into_owned();
+                let a_lui = n.strip_prefix(&prefixe).and_then(|r| r.strip_suffix(".gif")).is_some_and(|id| !id.is_empty() && id.bytes().all(|c| c.is_ascii_digit()));
+                if a_lui {
+                    self.supprimer_image(&n);
+                }
+            }
+        }
+        Some(b)
     }
 
     /// Tous les blogs (nom, blog).
@@ -123,6 +172,7 @@ impl Store {
     /// Un commentaire de plus pour `nom` ; rend son total.
     pub fn compter_com(&self, nom: &str) -> u32 {
         let _v = self.verrou.lock().unwrap_or_else(|e| e.into_inner());
+        let _f = crate::verrou::exclusif(&self.dir);
         let p = self.dir.join("coms.json");
         let mut m: BTreeMap<String, u32> = std::fs::read(&p).ok().and_then(|t| serde_json::from_slice(&t).ok()).unwrap_or_default();
         let n = m.entry(nom.to_string()).or_default();
