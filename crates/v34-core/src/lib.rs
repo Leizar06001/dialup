@@ -31,6 +31,7 @@ mod modem;
 mod phase2;
 mod phase34;
 pub mod v8;
+pub mod v23;
 pub mod v90;
 
 pub use api::*;

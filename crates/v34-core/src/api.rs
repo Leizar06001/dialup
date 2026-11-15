@@ -40,6 +40,8 @@ pub enum Phase {
     Failed,
     /// Télécopie (T.30 / V.29) en cours
     Fax,
+    /// Minitel (V.23 1200/75) : le sifflement, puis l'écran Vidéotex
+    Minitel,
 }
 
 /// Les LEDs d'un modem externe des années 90.
@@ -161,6 +163,10 @@ pub struct ModemConfig {
     /// Identité du télécopieur (TSI/CSI) : le numéro de l'abonné
     #[serde(default)]
     pub ident: String,
+    /// Appelé : répondre en serveur Minitel (ANS pur puis V.23 1200/75) au
+    /// lieu de négocier en V.8 (3615 ORACLE, numéros cachés)
+    #[serde(default)]
+    pub minitel: bool,
 }
 
 impl Default for ModemConfig {
@@ -176,6 +182,7 @@ impl Default for ModemConfig {
             max_rate_pcm: 56000,
             express: false,
             ident: String::new(),
+            minitel: false,
         }
     }
 }
