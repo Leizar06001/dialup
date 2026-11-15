@@ -510,7 +510,7 @@ function morseState(s) {
   if (fichier.disabled !== !!mo) {
     fichier.disabled = !!mo;
     label.classList.toggle("off", !!mo);
-    label.title = mo ? "Pas de fichiers en morse : le télégraphe ne transporte que du texte" : "";
+    label.title = mo ? "Pas de transfert de fichiers en morse" : "";
   }
   if (!mo) return;
   const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);

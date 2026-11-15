@@ -13,10 +13,10 @@
     <!-- ======================== VISIOPHONE ======================== -->
     <section class="box visio" aria-label="Visiophone">
       <h2 class="legend">Visiophone <i>· V.Hallucination</i></h2>
-      <div class="tv" id="visio-tv" title="Ton correspondant, redessiné de mémoire en une quarantaine de formes">
+      <div class="tv" id="visio-tv" title="Image du correspondant, reconstituée en formes géométriques">
         <div class="pic" id="visio-remote"><img alt=""><img alt=""></div>
         <div class="osd" id="visio-osd">AUCUN SIGNAL</div>
-        <div class="pip" id="visio-pip" hidden title="Toi, tel que ton correspondant te reçoit">
+        <div class="pip" id="visio-pip" hidden title="Image envoyée, telle que reçue par le correspondant">
           <div class="pic" id="visio-self"><img alt=""><img alt=""></div>
           <span>MOI</span>
         </div>
@@ -25,13 +25,13 @@
       <div class="vbar">
         <span class="lbl">Image :</span>
         <div class="seg" id="visio-src" role="group" aria-label="Source d'image du visiophone">
-          <button data-src="off" class="on" title="Rien n'est filmé (réglage d'usine)">OFF</button>
-          <button data-src="cam" title="La webcam : tu te montres">CAMÉRA</button>
-          <button data-src="mire" title="Monsieur Mire, présentateur de synthèse, pour essayer sans caméra">MIRE</button>
+          <button data-src="off" class="on" title="Aucune image envoyée">OFF</button>
+          <button data-src="cam" title="Webcam">CAMÉRA</button>
+          <button data-src="mire" title="Mire de test, sans caméra">MIRE</button>
         </div>
       </div>
       <div class="cells">
-        <span class="cell" id="visio-up" title="Tes images : par seconde, octets par image, débit">↑ —</span>
+        <span class="cell" id="visio-up" title="Images envoyées : par seconde, octets par image, débit">↑ —</span>
         <span class="cell" id="visio-down" title="Images reçues : par seconde, octets par image, débit">↓ —</span>
       </div>
       <p class="vmsg" id="visio-msg"></p>
@@ -44,17 +44,17 @@
     <section class="box telecopieur" aria-label="Télécopieur">
       <h2 class="legend">Télécopieur <i>· groupe 3</i></h2>
       <div class="tc-corps">
-        <div class="tc-fente" title="Le chargeur de documents : la page à envoyer est à droite"><i></i></div>
+        <div class="tc-fente" title="Chargeur de documents"><i></i></div>
         <div class="tc-haut">
           <div class="tc-marque">Tinyverse <b>FAX 9600</b><small>Télécopieur groupe 3 · papier thermique</small></div>
           <div class="tc-voyants">
-            <span title="L'appareil est sous tension"><i class="tc-led vert on"></i>SECTEUR</span>
-            <span title="La ligne est prise"><i class="tc-led vert" id="tc-led-ligne"></i>LIGNE</span>
-            <span title="Un fax est arrivé (ou arrive)"><i class="tc-led rouge" id="tc-led-recu"></i>RÉCEPTION</span>
-            <span title="Le dernier fax n'est pas passé"><i class="tc-led orange" id="tc-led-erreur"></i>ERREUR</span>
+            <span title="Sous tension"><i class="tc-led vert on"></i>SECTEUR</span>
+            <span title="Ligne occupée"><i class="tc-led vert" id="tc-led-ligne"></i>LIGNE</span>
+            <span title="Fax reçu"><i class="tc-led rouge" id="tc-led-recu"></i>RÉCEPTION</span>
+            <span title="Échec du dernier fax"><i class="tc-led orange" id="tc-led-erreur"></i>ERREUR</span>
           </div>
         </div>
-        <div class="tc-lcd" title="L'afficheur : l'état du télécopieur, puis le numéro à composer">
+        <div class="tc-lcd" title="État du télécopieur et numéro à composer">
           <div class="tc-lcd1" id="tc-lcd1">PRÊT</div>
           <input id="fax-numero" class="tc-lcd2" inputmode="tel" spellcheck="false" placeholder="N° : -- -- -- -- --" aria-label="Numéro du fax">
         </div>
@@ -63,11 +63,11 @@
             <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
             <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
             <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
-            <button data-k="bis" title="Le dernier numéro composé">BIS</button><button data-k="0">0</button><button data-k="c" title="Efface le dernier chiffre">C</button>
+            <button data-k="bis" title="Rappel du dernier numéro">BIS</button><button data-k="0">0</button><button data-k="c" title="Correction">C</button>
           </div>
           <div class="tc-actions">
-            <button id="fax-envoyer" class="tc-depart" title="Compose le numéro et envoie la page (CNG, T.30, V.29)">DÉPART<small>▶</small></button>
-            <button id="tc-stop" class="tc-stop" title="Coupe le fax en cours (ou efface le numéro)">STOP<small>■</small></button>
+            <button id="fax-envoyer" class="tc-depart" title="Envoi de la page">DÉPART<small>▶</small></button>
+            <button id="tc-stop" class="tc-stop" title="Arrêt du fax en cours ou effacement du numéro">STOP<small>■</small></button>
           </div>
         </div>
       </div>
@@ -83,8 +83,8 @@
         <div class="bbs-out" id="bbs-out"></div>
         <!-- Liaison en morse : les points et les traits en direct, dans les deux sens -->
         <div class="morse-bande" id="morse-bande" hidden>
-          <span class="mb-voie" title="Ce que ton modem manipule en ce moment"><i class="mb-led" id="mb-tx-led"></i>▸ <b id="mb-tx">—</b></span>
-          <span class="mb-voie" title="Ce que l'écoute entend du correspondant"><i class="mb-led rx" id="mb-rx-led"></i>◂ <b id="mb-rx">—</b></span>
+          <span class="mb-voie" title="Émission en cours"><i class="mb-led" id="mb-tx-led"></i>▸ <b id="mb-tx">—</b></span>
+          <span class="mb-voie" title="Réception en cours"><i class="mb-led rx" id="mb-rx-led"></i>◂ <b id="mb-rx">—</b></span>
           <span class="mb-info" id="mb-info"></span>
         </div>
         <form class="bbs-in" id="bbs-form" autocomplete="off">
@@ -99,13 +99,13 @@
       <div class="minitel" id="vue-minitel" hidden>
         <div class="mt-appareil">
           <div class="mt-boitier">
-            <div class="mt-ecran" id="mt-ecran" tabindex="0" title="Clique sur l'écran puis tape : Entrée = ENVOI, ⌫ = CORRECTION, Échap = ANNULATION, F1 = GUIDE, Page suivante = SUITE, F10 = CONNEXION/FIN">
+            <div class="mt-ecran" id="mt-ecran" tabindex="0" title="Cliquer sur l'écran pour saisir au clavier">
               <canvas id="mt-canvas" width="640" height="500"></canvas>
             </div>
             <div class="mt-plinthe">
               <div class="mt-marque">Minitel <i>1 · Tinyverse</i></div>
               <span class="mt-voyant" title="Sous tension"><i class="mt-led on"></i>MARCHE</span>
-              <span class="mt-voyant" title="Connecté à un service (C), ou hors ligne (F)"><i class="mt-led ligne" id="mt-led-ligne"></i>LIGNE</span>
+              <span class="mt-voyant" title="Connecté à un service"><i class="mt-led ligne" id="mt-led-ligne"></i>LIGNE</span>
               <label class="mt-molette" title="Luminosité de l'écran">LUMIÈRE <input type="range" id="mt-lumiere" min="45" max="150" value="100" aria-label="Luminosité de l'écran"></label>
             </div>
           </div>
@@ -121,7 +121,7 @@
                 <button data-t="CORRECTION" title="Retour arrière">Correction</button>
                 <button data-t="SUITE" title="Page suivante">Suite</button>
                 <button data-t="ENVOI" class="envoi" title="Entrée">Envoi</button>
-                <button data-t="CONNEXION/FIN" class="fin" title="F10 : compose le 3615 ORACLE hors ligne, raccroche en ligne">Connexion<br>Fin</button>
+                <button data-t="CONNEXION/FIN" class="fin" title="F10">Connexion<br>Fin</button>
               </div>
             </div>
           </div>
@@ -139,14 +139,14 @@
       <div class="faxv" id="vue-fax" hidden>
         <div class="fax-outils">
           <div class="seg" id="fax-feuille" role="group" aria-label="Feuille affichée">
-            <button data-f="envoi" class="on" title="La page que tu vas envoyer">À envoyer</button>
-            <button data-f="recu" title="Le dernier fax reçu, sur papier thermique">Reçu</button>
+            <button data-f="envoi" class="on" title="Page à envoyer">À envoyer</button>
+            <button data-f="recu" title="Dernier fax reçu">Reçu</button>
           </div>
           <button id="fax-texte" title="Taper du texte sur la page">Écrire…</button>
           <button id="fax-crayon" title="Dessiner à la souris">Crayon</button>
-          <label class="btn" for="fax-image" title="Une image, passée en noir et blanc">Image…</label>
+          <label class="btn" for="fax-image" title="Importer une image (convertie en noir et blanc)">Image…</label>
           <input type="file" id="fax-image" accept="image/*" hidden>
-          <button id="fax-effacer" title="Une page blanche">Effacer</button>
+          <button id="fax-effacer" title="Page blanche">Effacer</button>
         </div>
         <div class="fax-ecrire" id="fax-ecrire" hidden>
           <textarea id="fax-texte-in" rows="3" spellcheck="false" placeholder="Ton texte (il s'ajoute sous ce qui est déjà écrit)"></textarea>

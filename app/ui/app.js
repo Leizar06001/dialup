@@ -912,36 +912,36 @@ function frame() {
 
 /* ---------------------------------------------------------------- infobulles LEDs et phases */
 const TIPS = {
-  maj: ["MAJ · Mise à jour", "Une version plus récente du logiciel est publiée (vérifié au démarrage puis chaque jour, ou avec AT*V). Un clic ouvre sa page dans le navigateur du système : télécharge, installe par-dessus, tes réglages restent."],
-  hs: ["HS · High Speed", "Allumée quand la liaison dépasse 14 400 bit/s (V.32bis, V.34). Sur un vrai modem, c'était la LED des frimeurs."],
-  aa: ["AA · Auto Answer", "Au repos : allumée quand le modem décrochera tout seul si on l'appelle (interrupteur DIP 2 « RÉP. AUTO », le registre S0 d'un vrai modem). En appel : allumée quand c'est lui qui a répondu."],
-  cd: ["CD · Carrier Detect", "La porteuse du modem distant est détectée : la liaison de données est établie. Quand elle s'éteint : NO CARRIER."],
-  oh: ["OH · Off Hook", "Le modem a décroché la ligne, comme quand on soulève le combiné. Elle reste allumée de la numérotation au raccrochage."],
-  rd: ["RD · Receive Data", "Clignote quand des octets arrivent du modem distant (après correction d'erreurs LAPM)."],
-  sd: ["SD · Send Data", "Clignote quand des octets partent vers le modem distant."],
-  tr: ["TR · Terminal Ready", "Le signal DTR : l'ordinateur dit au modem qu'il est prêt. S'il tombe, le modem raccroche."],
-  mr: ["MR · Modem Ready", "Le modem est sous tension et prêt. Toujours allumée… sauf panne de courant."],
-  Phase1: ["Phase 1 · V.8", "L'appelé émet ANSam : 2 100 Hz modulé à 15 Hz, avec une inversion de phase toutes les 450 ms qui coupe les annuleurs d'écho du réseau (le « piiiii »). L'appelant annonce ses capacités avec CM en V.21 à 300 bit/s, l'appelé choisit avec JM, l'appelant confirme par CJ (le « brrrr »)."],
-  Phase2: ["Phase 2 · Sondage de la ligne", "Échange des capacités (INFO0), tons A et B avec inversions de phase pour mesurer le délai aller-retour, puis sonde L1/L2 : 21 fréquences espacées de 150 Hz pour mesurer la réponse et le bruit de la ligne. INFO1 fixe le débit symbole et la porteuse (le « dong-dong »)."],
-  Phase3: ["Phase 3 · Égaliseur", "S et S̄ servent de repère, PP cale finement le rythme et la phase, puis TRN, un signal pseudo-aléatoire connu des deux côtés : l'égaliseur apprend à compenser les déformations de la ligne, l'annuleur d'écho aussi. J annonce la constellation (le « shhhh »)."],
-  Phase4: ["Phase 4 · Débit final", "TRN sur la vraie constellation, puis MP (débit de données, précodage, mise en forme), E (accord) et B1 : la première trame de données brouillée."],
-  Data: ["Données", "Les octets sont codés en treillis à 16 états, répartis sur une constellation jusqu'à 960 points (shell mapping) et protégés par LAPM : trames avec contrôle d'erreur et retransmission. Le modem surveille la qualité et renégocie si la ligne se dégrade (le « kshhhh »)."],
-  cfg: ["CONFIG · Face arrière", "Les interrupteurs DIP du dos du modem : 56K V.90 et débit maximum. Ils sont lus au décroché : un changement vaut pour l'appel suivant."],
-  dip1: ["DIP 1 · 56K V.90", "ON : le modem propose le V.90 pendant la négociation V.8 et peut recevoir jusqu'à 56 000 bit/s d'un FAI raccordé en numérique (l'émission reste en V.34). OFF : V.34 seul, 33 600 bit/s au mieux."],
-  dip2: ["DIP 2 · Réponse automatique", "ON : quand un abonné t'appelle, le modem décroche tout seul après deux sonneries (comme ATS0=2). OFF : ça sonne jusqu'à ce que tu décroches, avec ATA ou le bouton DÉCROCHER."],
-  dip3: ["DIP 3 · 56K express", "OFF (d'usine) : toutes les lenteurs de 1999 — long DIL écouté trois fois, temps de réflexion, SCR pendant le calcul des niveaux, puis la fenêtre « Connexion à… » de Windows : 20 à 25 s de la numérotation à Internet. ON : la version pressée, une dizaine de secondes."],
-  dip4: ["DIP 4 · Morse", "ON : le modem glisse dans son CM un « service non normalisé » (V.8, §6.6 : France, fournisseur TINYVERSE, morse 20 mots/minute). Si le modem d'en face sait faire et le recopie dans son JM, plus de V.34 : du morse en duplex, 800 Hz pour l'appelant, 1600 Hz pour l'appelé, texte seulement, deux lettres par seconde. Sinon, rien ne change : V.34 ou 56K comme d'habitude. Pour essayer seul : la ligne de test, 08 00 00 00 00."],
-  dipres: ["DIP 5 à 8 · Réservé", "Réservé usine — ne pas modifier. Réglés en usine et sans effet sur ce modèle ; le technicien qui savait à quoi ils servaient est parti avec le mode d'emploi. (Le 4 aussi était sous le ruban, avant qu'on le décolle.)"],
-  debit: ["DÉBIT MAX", "Plafond du débit négocié, pour imiter un modem plus ancien ou brider la ligne. Le V.34 s'arrête à 33 600 bit/s ; au-dessus, seul le 56K (V.90) monte, par paliers de 2 667 bit/s, et il ne descend pas sous 28 000. Molette de la souris, ▲ ▼ ou flèches du clavier."],
-  cast: ["COMMENTAIRES", "Le modem commente sa propre négociation comme un match à la télé : ANSam, sondage, débit symbole, CONNECT… Les phrases sont tirées au hasard dans des banques écrites à la main, avec les vraies valeurs mesurées. Aucune intelligence artificielle n'a été dérangée."],
-  messagerie: ["MESSAGERIE", "Ouvre la messagerie du navigateur : le chat (ou le salon du FAI), l'envoi de fichiers et le visiophone V.Hallucination, avec les contacts du central. Elle ne s'ouvre pas toute seule : quand un appel entre abonnés aboutit (ou qu'un Minitel se connecte : son écran s'y affiche), sa LED verte clignote jusqu'à ce que tu l'ouvres, puis reste allumée tant que dure l'appel ; rouge qui clignote : un message t'attend, comme sur un répondeur."],
-  nav: ["NAVIGATEUR", "Ouvre Tinyverse Navigator, sur le web 1998 ou moderne : tout son trafic passe par le modem. Appelle d'abord TINYVERSE, en tête de l'ANNUAIRE ; la LED clignote quand Internet est prêt, jusqu'à ce que tu ouvres le navigateur, puis reste allumée."],
-  fax: ["FAX", "Le télécopieur : ouvre la fenêtre du navigateur sur la TÉLÉCOPIE (le bouton à côté de MESSAGERIE). Écris, dessine ou importe une page, compose le numéro sur le pavé du télécopieur, DÉPART : un vrai fax du groupe 3 (CNG, T.30, V.29, T.4). Le correspondant doit décrocher tout seul (DIP RÉP. AUTO). LED verte : ligne libre, un fax peut partir (pas pendant un autre appel) ; verte qui clignote : fax en cours ; rouge qui clignote : un fax est arrivé."],
-  minitel: ["MINITEL", "Ouvre la fenêtre du navigateur sur le Minitel (le bouton MINITEL de sa barre). Hors ligne, il s'allume sur sa page d'accueil : la touche CONNEXION/FIN (F10) compose le 3615 ORACLE, et le modem passe en V.23 1200/75 au sifflement du serveur. LED verte qui clignote pendant le sifflement, puis tant que tu n'es pas allé voir l'écran ; fixe en ligne."],
-  chat: ["CHAT ↗", "Le chat et l'envoi de fichiers ont déménagé dans la MESSAGERIE du navigateur, avec le visiophone : cet onglet l'ouvre. Il clignote quand un message t'y attend."],
-  taxe: ["TAXES", "Le compteur de Tinyverse Télécom, en francs de 1998 (jamais facturés) : communication locale 0,74 F les 3 premières minutes, puis 0,28 F la minute (0,14 F en heures creuses : 22 h – 8 h et le week-end) ; 3615 ORACLE 2,23 F la minute ; numéro vert gratuit. Seul l'appelant paie. La facture du mois est dans l'onglet SUCCÈS et sur le site."],
-  succes: ["SUCCÈS", "Tes succès d'abonné et ta facture du mois, tenus par le central. Certains sont cachés : à toi de les trouver. L'onglet clignote quand tu en gagnes un."],
-  karaoke: ["♪ KARAOKÉ", "Les paroles de la chanson du modem, en direct : à gauche ce que notre modem émet, à droite ce qu'on entend de l'autre bout. La boule rebondit sur la syllabe en cours. Au ralenti (TEMPS ×0,1), on arrive presque à chanter juste."],
+  maj: ["MAJ · Mise à jour", "Une version plus récente est disponible. Cliquer pour ouvrir la page de téléchargement."],
+  hs: ["HS · High Speed", "Liaison au-dessus de 14 400 bit/s."],
+  aa: ["AA · Auto Answer", "Réponse automatique active (DIP 2)."],
+  cd: ["CD · Carrier Detect", "La porteuse du modem distant est là : la liaison est établie."],
+  oh: ["OH · Off Hook", "Le modem a décroché la ligne."],
+  rd: ["RD · Receive Data", "Des données arrivent du modem distant."],
+  sd: ["SD · Send Data", "Des données partent vers le modem distant."],
+  tr: ["TR · Terminal Ready", "L'ordinateur est prêt (DTR) ; s'il tombe, le modem raccroche."],
+  mr: ["MR · Modem Ready", "Le modem est sous tension."],
+  Phase1: ["Phase 1 · V.8", "Les modems se présentent et choisissent leur protocole : ANSam (le « piiiii »), puis CM, JM et CJ (le « brrrr »)."],
+  Phase2: ["Phase 2 · Sondage de la ligne", "Mesure du délai, de la réponse et du bruit de la ligne, choix du débit symbole (le « dong-dong »)."],
+  Phase3: ["Phase 3 · Égaliseur", "L'égaliseur et l'annuleur d'écho apprennent la ligne sur un signal connu (le « shhhh »)."],
+  Phase4: ["Phase 4 · Débit final", "Choix du débit de données, puis les premières trames."],
+  Data: ["Données", "Les données passent, protégées par la correction d'erreurs LAPM (le « kshhhh »)."],
+  cfg: ["CONFIG · Face arrière", "Les interrupteurs DIP du dos du modem : ils valent pour l'appel suivant."],
+  dip1: ["DIP 1 · 56K V.90", "ON : le modem propose le 56K au FAI. OFF : V.34 seul, 33 600 bit/s au mieux."],
+  dip2: ["DIP 2 · Réponse automatique", "ON : le modem décroche après deux sonneries. OFF : décrocher avec ATA ou DÉCROCHER."],
+  dip3: ["DIP 3 · 56K express", "OFF : la connexion 56K avec les lenteurs de 1999 (20 à 25 s). ON : une dizaine de secondes."],
+  dip4: ["DIP 4 · Morse", "ON : le modem propose le morse ; si le modem distant accepte, l'appel se fait en morse. Ligne de test : 08 00 00 00 00."],
+  dipres: ["DIP 5 à 8 · Réservé", "Réservé usine — ne pas modifier."],
+  debit: ["DÉBIT MAX", "Plafond du débit négocié, pour imiter un modem plus ancien. Molette, ▲ ▼ ou flèches."],
+  cast: ["COMMENTAIRES", "Commentaire en direct de la négociation des modems."],
+  messagerie: ["MESSAGERIE", "Chat, transfert de fichiers et visiophone avec un abonné ; salon pendant une session FAI."],
+  nav: ["NAVIGATEUR", "Le web 1998 ou moderne, par le modem. Nécessite un appel au FAI (TINYVERSE)."],
+  fax: ["FAX", "Télécopieur : envoi et réception de fax entre abonnés."],
+  minitel: ["MINITEL", "Terminal Minitel : accès au 3615 ORACLE en Vidéotex."],
+  chat: ["CHAT ↗", "Ouvre la MESSAGERIE du navigateur."],
+  taxe: ["TAXES", "Coût de l'appel au tarif de 1998 (non facturé)."],
+  succes: ["SUCCÈS", "Succès de l'abonné et facture du mois."],
+  karaoke: ["♪ KARAOKÉ", "Transcription du son de la ligne : à gauche l'émission, à droite la réception."],
 };
 const tip = document.createElement("div");
 tip.id = "tip";
@@ -953,40 +953,45 @@ const kbit = (v) => (v ? `${frInt(v)} bit/s` : "—");
 function tipLive(key) {
   // Panneau CONFIG : la ligne en direct suit les réglages, pas l'état du modem.
   if (key === "cfg" || key === "debit") return cfgSummary();
-  if (key === "dipres") return "○ OFF, scellé";
+  if (key === "dipres") return "○ OFF";
   if (key === "nav") {
     const s = state;
-    return s && s.proxy ? "● Internet prêt : clique !" : s && s.session === "internet" && s.call_state !== "idle" ? "◐ connexion au FAI…" : "○ pas d'Internet : appelle TINYVERSE dans l'ANNUAIRE";
+    return s && s.proxy ? "● Internet disponible" : s && s.session === "internet" && s.call_state !== "idle" ? "◐ Connexion au FAI…" : "○ Pas de connexion au FAI";
   }
   if (key === "taxe" || key === "succes") {
     const tx = state && state.taxe, c = state && state.net && state.net.compte;
     const l = [];
-    if (tx) l.push(tx.recu ? "● appel reçu : c'est l'appelant qui paie" : `● ${tx.libelle}${tx.libelle === "Communication locale" ? (tx.heures_creuses ? ", heures creuses" : ", heures pleines") : ""} : ${tx.minute ? francs(tx.minute) + " la minute" : "gratuit"}${tx.fini ? " (appel terminé)" : ""}`);
-    if (c) l.push(`ce mois-ci : ${francs(c.centimes)} · ${(c.succes || []).length} succès`);
-    return l.join("\n") || "○ pas d'appel";
+    if (tx) l.push(tx.recu ? "● Appel reçu : à la charge de l'appelant" : `● ${tx.libelle}${tx.libelle === "Communication locale" ? (tx.heures_creuses ? ", heures creuses" : ", heures pleines") : ""} : ${tx.minute ? francs(tx.minute) + " la minute" : "gratuit"}${tx.fini ? " (appel terminé)" : ""}`);
+    if (c) l.push(`Ce mois-ci : ${francs(c.centimes)} · ${(c.succes || []).length} succès`);
+    return l.join("\n") || "○ Pas d'appel";
   }
   if (key === "messagerie" || key === "chat") {
     const v = state && state.visio;
-    const l = [messagerie.unread ? "● nouveau message" : messagerie.bbsOnline && messagerie.nouvelAppel ? "● appel abouti : clique pour ouvrir !" : messagerie.bbsOnline ? "● en ligne avec un abonné" : "○ pas d'appel entre abonnés"];
-    if (v && v.camera) l.push("visiophone : ta caméra tourne");
+    const l = [messagerie.unread ? "● Nouveau message" : messagerie.bbsOnline && messagerie.nouvelAppel ? "● Appel abouti" : messagerie.bbsOnline ? "● En ligne avec un abonné" : "○ Pas d'appel en cours"];
+    if (v && v.camera) l.push("Visiophone : caméra active");
     return l.join("\n");
   }
   if (key === "minitel") {
     const s = state;
-    return s && s.call_state === "minitel" ? (s.status.leds.cd ? "● Minitel en ligne · 1200/75 bit/s" : "◐ le serveur siffle…") : s && s.call_state !== "idle" ? "○ ligne occupée" : "○ hors ligne : CONNEXION/FIN compose le 3615 ORACLE";
+    return s && s.call_state === "minitel" ? (s.status.leds.cd ? "● Minitel en ligne · 1200/75 bit/s" : "◐ Connexion au serveur…") : s && s.call_state !== "idle" ? "○ Ligne occupée" : "○ Hors ligne";
   }
-  if (key === "cast") return cast.actif() ? "● micro ouvert" : "○ micro coupé : la régie a débranché le commentateur";
+  if (key === "fax") {
+    const cs = state && state.call_state;
+    return cs === "fax" ? "● Télécopie en cours" : !cs || cs === "idle" ? "○ Ligne libre" : "○ Ligne occupée";
+  }
+  if (key === "maj") return "";
+  if (key === "cast") return cast.actif() ? "● Activés" : "○ Désactivés";
   if (key === "karaoke") {
     const s = state && state.status;
     return s ? `TX ▸ ${s.tx_signal || "—"} · RX ◂ ${s.rx_signal || "—"}` : "";
   }
   if (key === "dip4") {
     const mo = state && state.status && state.status.morse;
-    if (mo && state.status.phase === "Morse") return `● en morse : ${mo.mpm} mots/minute, TX ${frInt(mo.f_tx)} Hz, RX ${frInt(mo.f_rx)} Hz`;
-    return cfg.morse ? "● ON — morse proposé au prochain appel" : "○ OFF — V.34 ou 56K, comme d'habitude";
+    if (mo && state.status.phase === "Morse") return `● Morse : ${mo.mpm} mots/minute, TX ${frInt(mo.f_tx)} Hz, RX ${frInt(mo.f_rx)} Hz`;
+    return cfg.morse ? "● ON — morse proposé au prochain appel" : "○ OFF";
   }
-  if (key === "dip3") return cfg.express ? "● ON — 56K pressé" : "○ OFF — lenteurs d'époque (20 à 25 s)";
-  if (key === "dip2") return cfg.auto ? "● ON — décroche après 2 sonneries" : "○ OFF — décroche avec ATA";
+  if (key === "dip3") return cfg.express ? "● ON — connexion rapide" : "○ OFF — connexion d'époque (20 à 25 s)";
+  if (key === "dip2") return cfg.auto ? "● ON" : "○ OFF";
   if (key === "dip1") {
     if (!cfg.v90) return "○ OFF — V.34 seul";
     return cfg.eff && !cfg.eff.v90 ? `● ON, mais débit max sous ${kbit(28000)} : 56K coupé` : "● ON — 56K proposé au prochain appel";
@@ -1000,13 +1005,13 @@ function tipLive(key) {
     if (key === "hs" && on) extra = ` — ${kbit(p.data_rate_rx)}`;
     if (key === "cd" && on) extra = ` — ${kbit(p.data_rate_rx)} reçus, ${kbit(p.data_rate_tx)} émis`;
     if ((key === "rd" || key === "sd") && st.link) extra = ` — ${fr1((key === "rd" ? st.link.bytes_delivered : st.link.bytes_acked) / 1024)} Ko depuis le début`;
-    return (on ? "● allumée" : "○ éteinte") + extra;
+    return (on ? "● Allumée" : "○ Éteinte") + extra;
   }
   const order = ["Phase1", "Phase2", "Phase3", "Phase4", "Data"];
   let idx = order.indexOf(st.phase);
   if (st.phase === "Retrain") idx = 1;
   const me = order.indexOf(key);
-  const etat = idx < 0 ? "en attente d'appel" : me === idx ? "▶ en cours" : me < idx ? "✓ terminée" : "à venir";
+  const etat = idx < 0 ? "En attente d'appel" : me === idx ? "▶ En cours" : me < idx ? "✓ Terminée" : "À venir";
   const d = [];
   if (key === "Phase1" && p.v8_modes && p.v8_modes.length) d.push(`modes communs : ${p.v8_modes.join(", ")}`);
   if (key === "Phase2") {
