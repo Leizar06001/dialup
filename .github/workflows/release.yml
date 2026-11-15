@@ -190,6 +190,13 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      # Les nouveautés (docs/nouveautes/X.Y.Z.md) ; avant les installateurs :
+      # la récupération du dépôt vide le dossier de travail
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: docs/nouveautes
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: installateurs-*
@@ -204,7 +211,13 @@ jobs:
 
       - name: Notes de version
         run: |
-          cat > notes.md <<EOF
+          # Les nouveautés en premier : l'appli affiche les premières lignes
+          # des notes dans son terminal (badge MAJ)
+          : > notes.md
+          if [ -f "docs/nouveautes/${VERSION}.md" ]; then
+            { echo "## Nouveautés"; echo; cat "docs/nouveautes/${VERSION}.md"; echo; } >> notes.md
+          fi
+          cat >> notes.md <<EOF
           ## Téléchargement
 
           | Système | Fichier |

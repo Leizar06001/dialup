@@ -4298,7 +4298,7 @@ dependencies = [
 
 [[package]]
 name = "v34-app"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "cpal",
  "gtk",
@@ -4317,7 +4317,7 @@ dependencies = [
 
 [[package]]
 name = "v34-cli"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "v34-core",
  "v34-net",
@@ -4325,14 +4325,14 @@ dependencies = [
 
 [[package]]
 name = "v34-core"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "v34-net"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "getrandom 0.3.4",
  "serde",
@@ -4342,7 +4342,7 @@ dependencies = [
 
 [[package]]
 name = "v34-server"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "color_quant",
  "encoding_rs",

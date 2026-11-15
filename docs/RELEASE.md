@@ -28,8 +28,15 @@ La **version vient de l'étiquette** : elle est injectée au moment de la
 compilation (`tauri build --config {"version": "X.Y.Z"}`), dans les noms de
 fichiers comme dans l'appli. Mettre aussi à jour `version` dans
 `app/src-tauri/tauri.conf.json` et `Cargo.toml` reste conseillé, pour que
-les compilations locales affichent la même version, mais n'est pas
-obligatoire.
+les compilations locales affichent la même version. **`Cargo.toml` est
+indispensable** : la vérification des mises à jour compare la dernière
+version publiée à celle de `Cargo.toml` (une 0.1.7 compilée avec 0.1.6 dans
+`Cargo.toml` se croirait en retard).
+
+Les **nouveautés** se mettent dans `docs/nouveautes/X.Y.Z.md` (une puce par
+ligne, les plus importantes d'abord) : elles ouvrent les notes de version, et
+l'appli affiche les trois premières dans son terminal quand elle annonce la
+version.
 
 Compter 10 à 20 minutes. Les dépendances du `Cargo.lock` sont imposées
 (`--locked`) : penser à le committer avec tout changement de dépendance.
