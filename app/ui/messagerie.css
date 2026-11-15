@@ -192,3 +192,34 @@ button.gros { font-weight: bold; }
 /* papier thermique : légèrement crème, encre gris-noir un peu passée */
 .fax-papier canvas#fax-recu { background: #f3efe2; cursor: default; filter: contrast(0.85) sepia(0.15); }
 .fax-etat { height: 22px; }
+
+/* ------------------------------------------------------------------ Minitel
+   Le Minitel 1 : boîtier brun, écran gris un peu bombé, touches de fonction
+   beiges. Le canevas (640 × 500 : 40 × 25 cellules de 16 × 20) garde les
+   proportions de l'écran d'origine. */
+.minitel { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.mt-boitier { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 14px 18px 8px; border-radius: 14px 14px 22px 22px;
+  background: linear-gradient(175deg, #6a5444 0%, #4a382c 55%, #3a2b21 100%);
+  box-shadow: inset 0 2px 0 rgba(255,255,255,0.18), inset 0 -3px 6px rgba(0,0,0,0.4), 0 2px 4px rgba(0,0,0,0.4); }
+.mt-ecran { position: relative; flex: 1; min-height: 0; width: 100%; display: flex; align-items: center; justify-content: center;
+  padding: 10px; border-radius: 22px / 26px; outline: none; cursor: text;
+  background: radial-gradient(ellipse at 50% 45%, #1a1b1a 0%, #050505 80%);
+  box-shadow: inset 0 0 18px 6px rgba(0,0,0,0.9), 0 0 0 3px #2a1f17; }
+.mt-ecran:focus { box-shadow: inset 0 0 18px 6px rgba(0,0,0,0.9), 0 0 0 3px #2a1f17, 0 0 0 5px rgba(255,236,190,0.35); }
+.mt-ecran canvas { display: block; max-width: 100%; max-height: 100%; aspect-ratio: 640 / 500; image-rendering: pixelated;
+  filter: blur(0.25px) contrast(1.05); border-radius: 10px / 12px; }
+.mt-ecran::after { content: ""; position: absolute; inset: 10px; pointer-events: none; border-radius: 10px / 12px;
+  background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.45) 100%),
+    repeating-linear-gradient(0deg, rgba(0,0,0,0.18) 0 1px, transparent 1px 3px); }
+.mt-ecran.bip { animation: mt-bip 160ms ease-out; }
+@keyframes mt-bip { 30% { filter: brightness(1.35); } }
+.mt-marque { font: italic bold 13px Georgia, "Times New Roman", serif; color: #e9dcc6; letter-spacing: 1px;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.6); }
+.mt-marque i { font-weight: normal; color: #b9a78f; }
+.mt-touches { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; }
+.mt-touches button { min-width: 0; padding: 2px 7px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px;
+  background: #d9cfbf; border-color: #f4eee4 #6b5f50 #6b5f50 #f4eee4; box-shadow: inset -1px -1px 0 #a99c88; }
+.mt-touches button.envoi { background: #b9cbb0; font-weight: bold; }
+.mt-touches button.fin { background: #c9a9a0; }
+.mt-etat { height: 22px; }

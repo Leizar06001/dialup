@@ -25,7 +25,8 @@ pub enum RemoteService {
     Echo,
     /// Joue le FAI : tunnel vers Internet depuis ce PC (code du serveur)
     Isp,
-    /// Joue 3615 ORACLE, hors ligne : les cartes répondent (code du serveur)
+    /// Joue 3615 ORACLE, hors ligne : les cartes répondent (code du serveur),
+    /// en serveur Minitel (V.23), comme au central
     Oracle,
 }
 
@@ -516,8 +517,9 @@ impl Link for LocalLoop {
                     }
                 }
                 ModemEvent::Connected { tx_rate, .. } if self.service == RemoteService::Oracle && self.sim.is_none() => {
-                    // Le distant devient 3615 ORACLE (hors ligne : les cartes répondent)
-                    let (pipe, from_modem, to_modem) = v34_net::tunnel::ModemPipe::new(*tx_rate);
+                    // Le distant devient 3615 ORACLE (hors ligne : les cartes
+                    // répondent), en V.23 : dix bits par caractère
+                    let (pipe, from_modem, to_modem) = v34_net::tunnel::ModemPipe::asynchrone(*tx_rate, 10);
                     if oracle_hors_ligne(from_modem, to_modem).is_ok() {
                         self.sim = Some(ServiceSim { pipe, hangup_when_done: true, finished_at: None });
                     }
@@ -543,8 +545,8 @@ impl Link for LocalLoop {
         if matches!(svc, RemoteService::Isp | RemoteService::Oracle) && self.remote.role() == Role::Answer {
             // Le FAI et l'oracle simulés sont raccordés en numérique, comme
             // ceux du central : ils proposent le 56k (V.90) si notre modem le
-            // demande.
-            let cfg = ModemConfig { digital: true, ..ModemConfig::default() };
+            // demande. L'oracle, lui, répond en serveur Minitel (V.23).
+            let cfg = ModemConfig { digital: true, minitel: svc == RemoteService::Oracle, ..ModemConfig::default() };
             self.remote = Modem::new(Role::Answer, cfg);
         }
     }

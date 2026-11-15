@@ -30,38 +30,29 @@ Oracle : Ce mot n'existe pas encore, mais je le vois : un Minitel sans fil, plat
 Question : Comment pirater le compte de mon voisin ?
 Oracle : Les astres refusent de tremper dans vos manigances, et le 3615 a de la mémoire. Demandez plutôt à votre voisin son code… de bonne conduite.";
 
-/// Bannière du service (ASCII pur : passe dans toutes les polices).
-const BANNIERE: &str = r"   3 6 1 5
-  ___  ___    _   ___ _    ___
- / _ \| _ \  /_\ / __| |  | __|
-| (_) |   / / _ \ (__| |__| _|
- \___/|_|_\/_/ \_\___|____|___|
-  ~ l'avenir en direct depuis 1998 ~";
-
-const FILET: &str = "----------------------------------------";
-
 /// Prix affiché (pour rire : rien n'est facturé)
 pub const PRIX_MINUTE: f64 = 2.23;
 
-/// Écran d'accueil. `restantes` : questions à l'IA qui restent aujourd'hui
-/// (None : oracle hors ligne, les cartes répondent).
+/// Texte de l'écran d'accueil (sous le logo). `restantes` : questions à
+/// l'IA qui restent aujourd'hui (None : oracle hors ligne, les cartes
+/// répondent).
 pub fn accueil(abonne: &str, restantes: Option<u32>) -> String {
-    let mut s = format!("{BANNIERE}\n{FILET}\n  2,23 F la minute · Kiosque Télétel\n{FILET}\nBienvenue, {abonne}. Les astres vous attendent.");
+    let mut s = format!("Bienvenue, {abonne}. Les astres vous attendent.");
     match restantes {
         Some(0) => {}
         Some(n) => s.push_str(&format!(
-            "\nPosez votre question en bas, puis ENVOI (touche Entrée). {n} question{s} pour aujourd'hui. /aide : le GUIDE, /fin : raccrocher.",
+            "\nTapez votre question en bas de l'écran, puis ENVOI. {n} question{s} pour aujourd'hui.\nGUIDE : le mode d'emploi. CONNEXION/FIN : raccrocher.",
             s = if n > 1 { "s" } else { "" }
         )),
         None => s.push_str(
-            "\nCe soir, le fil qui relie l'oracle aux étoiles est débranché : ce sont les cartes qui répondent.\nPosez votre question en bas, puis ENVOI (touche Entrée). /aide : le GUIDE, /fin : raccrocher.",
+            "\nCe soir, le fil qui relie l'oracle aux étoiles est débranché : ce sont les cartes qui répondent.\nTapez votre question en bas de l'écran, puis ENVOI.\nGUIDE : le mode d'emploi. CONNEXION/FIN : raccrocher.",
         ),
     }
     s
 }
 
-/// GUIDE (commande /aide).
-pub const GUIDE: &str = "GUIDE · Tapez votre question en bas, puis ENVOI (Entrée) : l'oracle répond en quelques phrases, et se souvient de vos dernières questions jusqu'à ce que vous raccrochiez.\n/sommaire : l'écran d'accueil. /fin : raccrocher (ou ATH, comme d'habitude).\nL'oracle ne connaît que 1998 : au-delà, il ne voit que des brumes.";
+/// GUIDE (la touche, ou /aide).
+pub const GUIDE: &str = "GUIDE. Tapez votre question en bas de l'écran, puis ENVOI : l'oracle répond en quelques phrases, et se souvient de vos dernières questions jusqu'à ce que vous raccrochiez.\nCORRECTION efface la dernière lettre, ANNULATION toute la question. RÉPÉTITION : revoir la dernière réponse. SOMMAIRE : l'écran d'accueil. CONNEXION/FIN : raccrocher (ou ATH, comme d'habitude).\nL'oracle ne connaît que 1998 : au-delà, il ne voit que des brumes.";
 
 /// Quota de l'abonné épuisé (l'oracle raccroche ensuite).
 pub const QUOTA_ABONNE: &str = "Les astres ont assez parlé pour vous aujourd'hui : même un oracle a besoin de sommeil. Revenez demain, après le journal de 20 heures. L'oracle raccroche.";
@@ -79,8 +70,9 @@ pub const ATTENTE_ASTRES: &str = "L'oracle consulte les astres";
 pub const ATTENTE_CARTES: &str = "L'oracle bat les cartes";
 
 pub const UNE_A_LA_FOIS: &str = "Une question à la fois, mortel : l'oracle n'a qu'une boule de cristal.";
-pub const FICHIER: &str = "L'oracle ne lit pas les fichiers : il les devine. Posez plutôt votre question en toutes lettres.";
-pub const COMMANDE_INCONNUE: &str = "Cette touche n'existe pas sur le Minitel céleste. /aide pour le GUIDE.";
+pub const COMMANDE_INCONNUE: &str = "Cette commande n'existe pas sur le Minitel céleste. Touche GUIDE pour le mode d'emploi.";
+/// SUITE ou RETOUR : il n'y a qu'une page
+pub const PAS_DE_SUITE: &str = "Il n'y a pas d'autre page : l'oracle est concis.";
 pub const INACTIVITE: &str = "Votre silence en dit long, mais l'oracle a d'autres consultants. Il raccroche.";
 
 fn francs(secs: u64) -> String {
@@ -277,9 +269,7 @@ mod tests {
         assert_eq!(compteur(192), "[ 3 min 12 s · 7,14 F ]");
         assert!(au_revoir(60).contains("2,23 F"));
         let a = accueil("gaston", Some(30));
-        assert!(a.contains("3 6 1 5") && a.contains("2,23 F la minute") && a.contains("30 questions") && a.contains("gaston"));
+        assert!(a.contains("30 questions") && a.contains("gaston") && a.contains("ENVOI") && a.contains("CONNEXION/FIN"));
         assert!(accueil("gaston", None).contains("cartes"));
-        // 40 colonnes au plus pour la bannière, comme un Minitel
-        assert!(BANNIERE.lines().all(|l| l.chars().count() <= 40));
     }
 }

@@ -116,7 +116,7 @@ $("btn-reneg").addEventListener("click", () => {
 const PHASE_NAMES = {
   Idle: "REPOS", Phase1: "PHASE 1 · V.8", Phase2: "PHASE 2 · SONDAGE", Phase3: "PHASE 3 · ÉGALISEUR",
   Phase4: "PHASE 4 · ENTRAÎNEMENT FINAL", Data: "MODE DONNÉES", Retrain: "RÉENTRAÎNEMENT",
-  Cleardown: "RACCROCHAGE", Failed: "ÉCHEC", Fax: "TÉLÉCOPIE", Morse: "MORSE · TÉLÉGRAPHE",
+  Cleardown: "RACCROCHAGE", Failed: "ÉCHEC", Fax: "TÉLÉCOPIE", Morse: "MORSE · TÉLÉGRAPHE", Minitel: "MINITEL · V.23",
 };
 
 bridge.listen("v34:console", (c) => crt(c.text, c.kind));
@@ -181,7 +181,9 @@ bridge.listen("messagerie:vu", () => { messagerie.unread = false; messagerie.nou
 // Un numéro choisi dans l'annuaire s'affiche aussi dans le terminal
 bridge.listen("messagerie:compose", (num) => { $("dial-number").value = num; });
 function updateMessagerie(s) {
-  const bbs = s.session !== "internet" && (s.call_state === "online" || s.call_state === "morse");
+  // (un Minitel en ligne aussi : son écran est dans la messagerie)
+  const minitel = s.call_state === "minitel" && s.status.leds.cd;
+  const bbs = s.session !== "internet" && (s.call_state === "online" || s.call_state === "morse" || minitel);
   // L'appel aboutit : la LED clignote (une fois par appel : un réentraînement
   // ne la relance pas), jusqu'à ce qu'on ouvre la messagerie.
   if (s.call_state === "idle") messagerie.annonce = messagerie.nouvelAppel = false;
@@ -488,6 +490,7 @@ const PHASE_ORDER = ["Phase1", "Phase2", "Phase3", "Phase4", "Data"];
 const CALL_PILL = {
   idle: ["REPOS", ""], dialing: ["NUMÉROTATION", "warn"], ringing: ["SONNERIE", "warn"],
   connecting: ["NÉGOCIATION", "warn"], online: ["EN LIGNE", "good"], fax: ["TÉLÉCOPIE", "good"],
+  minitel: ["MINITEL", "good"],
   morse: ["MORSE", "good"],
 };
 const ledEls = {};
@@ -514,6 +517,8 @@ function onState(s) {
 
   let idx = PHASE_ORDER.indexOf(st.phase);
   if (st.phase === "Retrain") idx = 1;
+  // Minitel : V.8 jusqu'au sifflement reconnu, puis les données (V.23)
+  if (st.phase === "Minitel") idx = st.leds.cd ? 4 : 0;
   // Morse : V.8, puis directement le télégraphe (pas de phases 2 à 4)
   const morse = st.phase === "Morse";
   if (morse) idx = 4;
@@ -532,6 +537,7 @@ function onState(s) {
   if (st.phase === "Failed") [pill, cls] = ["ÉCHEC", "bad"];
   if (st.phase === "Retrain") [pill, cls] = ["RETRAIN", "warn"];
   if (st.phase === "Cleardown") [pill, cls] = ["RACCROCHE", "warn"];
+  if (s.call_state === "minitel" && !st.leds.cd) [pill, cls] = ["SIFFLEMENT", "warn"];
   const pillEl = $("call-pill");
   setText("call-pill", pill);
   pillEl.className = "call-pill " + cls;
@@ -884,7 +890,7 @@ const TIPS = {
   dipres: ["DIP 5 à 8 · Réservé", "Réservé usine — ne pas modifier. Réglés en usine et sans effet sur ce modèle ; le technicien qui savait à quoi ils servaient est parti avec le mode d'emploi. (Le 4 aussi était sous le ruban, avant qu'on le décolle.)"],
   debit: ["DÉBIT MAX", "Plafond du débit négocié, pour imiter un modem plus ancien ou brider la ligne. Le V.34 s'arrête à 33 600 bit/s ; au-dessus, seul le 56K (V.90) monte, par paliers de 2 667 bit/s, et il ne descend pas sous 28 000. Molette de la souris, ▲ ▼ ou flèches du clavier."],
   cast: ["COMMENTAIRES", "Le modem commente sa propre négociation comme un match à la télé : ANSam, sondage, débit symbole, CONNECT… Les phrases sont tirées au hasard dans des banques écrites à la main, avec les vraies valeurs mesurées. Aucune intelligence artificielle n'a été dérangée."],
-  messagerie: ["MESSAGERIE", "Ouvre la messagerie du navigateur : le chat (ou le salon du FAI), l'envoi de fichiers et le visiophone V.Hallucination, avec les contacts du central. Elle ne s'ouvre pas toute seule : quand un appel entre abonnés aboutit, sa LED verte clignote jusqu'à ce que tu l'ouvres, puis reste allumée tant que dure l'appel ; rouge qui clignote : un message t'attend, comme sur un répondeur."],
+  messagerie: ["MESSAGERIE", "Ouvre la messagerie du navigateur : le chat (ou le salon du FAI), l'envoi de fichiers et le visiophone V.Hallucination, avec les contacts du central. Elle ne s'ouvre pas toute seule : quand un appel entre abonnés aboutit (ou qu'un Minitel se connecte : son écran s'y affiche), sa LED verte clignote jusqu'à ce que tu l'ouvres, puis reste allumée tant que dure l'appel ; rouge qui clignote : un message t'attend, comme sur un répondeur."],
   nav: ["NAVIGATEUR", "Ouvre Tinyverse Navigator, sur le web 1998 ou moderne : tout son trafic passe par le modem. Appelle d'abord TINYVERSE, en tête de l'ANNUAIRE ; la LED clignote quand Internet est prêt, jusqu'à ce que tu ouvres le navigateur, puis reste allumée."],
   fax: ["FAX", "Le télécopieur : ouvre la fenêtre du navigateur sur la TÉLÉCOPIE (le bouton à côté de MESSAGERIE). Écris, dessine ou importe une page, tape un numéro, Envoyer : un vrai fax du groupe 3 (CNG, T.30, V.29, T.4). Le correspondant doit décrocher tout seul (DIP RÉP. AUTO). LED verte : ligne libre, un fax peut partir (pas pendant un autre appel) ; verte qui clignote : fax en cours ; rouge qui clignote : un fax est arrivé."],
   chat: ["CHAT ↗", "Le chat et l'envoi de fichiers ont déménagé dans la MESSAGERIE du navigateur, avec le visiophone : cet onglet l'ouvre. Il clignote quand un message t'y attend."],
@@ -916,7 +922,7 @@ function tipLive(key) {
   }
   if (key === "messagerie" || key === "chat") {
     const v = state && state.visio;
-    const l = [messagerie.unread ? "● nouveau message" : messagerie.bbsOnline && messagerie.nouvelAppel ? "● appel abouti : clique pour ouvrir !" : messagerie.bbsOnline ? "● en ligne avec un abonné" : "○ pas d'appel entre abonnés"];
+    const l = [messagerie.unread ? "● nouveau message" : messagerie.bbsOnline && messagerie.nouvelAppel ? "● appel abouti : clique pour ouvrir !" : messagerie.bbsOnline ? (state && state.call_state === "minitel" ? "● Minitel en ligne : son écran est dans la messagerie" : "● en ligne avec un abonné") : "○ pas d'appel entre abonnés"];
     if (v && v.camera) l.push("visiophone : ta caméra tourne");
     return l.join("\n");
   }

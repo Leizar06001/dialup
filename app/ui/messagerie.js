@@ -24,6 +24,9 @@ function setText(id, txt) {
 }
 
 let state = null; // dernier état du moteur
+/** Le Minitel (minitel.js), et l'appel Minitel en cours (ou le dernier, tant
+    qu'aucun autre appel n'a commencé) : la conversation, c'est son écran. */
+let minitel = null, minitelEnCours = false;
 
 /* ---------------------------------------------------------------- chat */
 const bbsOut = $("bbs-out");
@@ -555,7 +558,7 @@ faxBlanc();
 function titreBoite() {
   const inet = state && state.session === "internet" && state.call_state !== "idle";
   const morse = state && state.call_state === "morse";
-  setText("chat-title", fax.vue === "fax" ? "Télécopie" : inet ? "Salon du FAI" : morse ? "Conversation · morse" : "Conversation · fichiers");
+  setText("chat-title", fax.vue === "fax" ? "Télécopie" : fax.vue === "minitel" ? "Minitel · Vidéotex 40 × 25" : inet ? "Salon du FAI" : morse ? "Conversation · morse" : "Conversation · fichiers");
 }
 /** Dit à la barre du navigateur ce qui est affiché, et si un fax attend. */
 function annoncerOnglet() {
@@ -566,11 +569,15 @@ function faxNouveau(oui) {
   annoncerOnglet();
 }
 function vueChat(v) {
+  // pendant (et après) un appel Minitel, la conversation, c'est son écran
+  if (v === "chat" && minitelEnCours) v = "minitel";
   fax.vue = v;
   $("vue-chat").hidden = v !== "chat";
   document.querySelector(".filebar").hidden = v !== "chat";
   $("vue-fax").hidden = v !== "fax";
+  $("vue-minitel").hidden = v !== "minitel";
   if (v === "fax") fax.nouveau = false;
+  if (v === "minitel" && minitel) minitel.focus();
   titreBoite();
   annoncerOnglet();
 }
@@ -585,6 +592,24 @@ try {
 listen("messagerie:onglet", (v) => {
   try { localStorage.removeItem("messagerie-onglet"); } catch (_) { /* rien */ }
   vueChat(v === "fax" ? "fax" : "chat");
+});
+
+/* ---------------------------------------------------------------- Minitel
+   L'écran arrive du moteur (v34:minitel) ; il remplace la conversation dès
+   qu'un appel Minitel commence (sans ouvrir de fenêtre : seule la LED de la
+   MESSAGERIE clignote dans la fenêtre du modem), et y reste jusqu'au
+   prochain appel d'un autre genre. */
+function appelMinitel(oui) {
+  if (minitelEnCours === oui) return;
+  minitelEnCours = oui;
+  if (oui && fax.vue !== "fax") vueChat("minitel");
+  if (!oui && fax.vue === "minitel") vueChat("chat");
+}
+minitel = MinitelVue.monter({ invoke, listen, surActif: () => appelMinitel(true) });
+listen("v34:state", (s) => {
+  if (s.call_state === "minitel") appelMinitel(true);
+  else if (s.call_state === "online" || s.call_state === "fax" || s.call_state === "morse") appelMinitel(false);
+  if (minitel) minitel.etat(s);
 });
 // La barre du navigateur se charge en même temps : elle demande l'onglet
 // quand elle est prête, et on le lui dit dès qu'on écoute (l'onglet voulu

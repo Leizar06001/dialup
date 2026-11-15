@@ -15,9 +15,13 @@
 //! 2026. Succès : « Promotion » (chef), « Secret d'État » (dossier rouge).
 //!
 //! Un vrai petit système de fichiers, en lecture seule : LISTE, VA, LIRE,
-//! plus QUI, ANNUAIRE, JOURNAL, CONNEXION, et quelques surprises.
+//! plus QUI, ANNUAIRE, JOURNAL, CONNEXION, et quelques surprises. Sur le
+//! Minitel, chaque commande s'inscrit dans la zone comme sur une console ;
+//! GUIDE vaut AIDE, SOMMAIRE vaut LISTE et RETOUR remonte d'un dossier.
 
-use super::{choix, hasard, Fin, Ligne};
+use v34_net::videotex::{Touche, BLANC, JAUNE, ROUGE, VERT};
+
+use super::{choix, hasard, Cadre, Fin, Ligne, Style};
 
 pub const MOT_DE_PASSE: &str = "bogue";
 pub const MOT_DE_PASSE_CHEF: &str = "minouche";
@@ -151,23 +155,26 @@ const JOURNAL: &str = "JOURNAL DU SYSTÈME 98\n\
 03/11/1998 03:34 directeur : création de DIRECTION/ROUGE.TXT\n\
 14/11/1998 23:59 agent : tentative de lecture de DIRECTION/ROUGE.TXT — ACCÈS REFUSÉ";
 
+// (lignes de 40 colonnes au plus : celles du Minitel)
 const ANNUAIRE: &str = "ANNUAIRE INTERNE\n\
-Standard du ministère ........ 01 45 78 19 98\n\
-Horloge parlante ............. 08 36 99 36 99\n\
-Météo des lignes ............. 08 36 68 68 68\n\
-Commission de l'an 2000 ...... 0 800 20 00 00\n\
-Gérard (parti) ............... 01 43 33 12 12\n\
-Ligne directe du ministre .... ** ** ** ** ** (habilitation de niveau 4)";
+Standard ........... 01 45 78 19 98\n\
+Horloge parlante ... 08 36 99 36 99\n\
+Météo des lignes ... 08 36 68 68 68\n\
+Commission an 2000 . 0 800 20 00 00\n\
+Gérard (parti) ..... 01 43 33 12 12\n\
+Ministre ...... ** ** ** ** ** (niv. 4)";
 
 const AIDE: &str = "COMMANDES DU SYSTÈME 98\n\
-LISTE ............ ce que contient le dossier courant\n\
-VA <dossier> ..... changer de dossier (VA .. pour remonter)\n\
-LIRE <fichier> ... afficher un fichier\n\
-QUI .............. qui êtes-vous, qui est connecté\n\
-ANNUAIRE ......... les numéros internes\n\
-JOURNAL .......... le journal du système\n\
-CONNEXION <nom> .. changer d'identité (chef, directeur…)\n\
-FIN .............. se déconnecter";
+LISTE ........ le dossier courant\n\
+VA <dossier> . changer de dossier\n\
+VA .. ........ remonter\n\
+LIRE <fichier> afficher un fichier\n\
+QUI .......... qui est connecté\n\
+ANNUAIRE ..... les numéros internes\n\
+JOURNAL ...... le journal du système\n\
+CONNEXION <nom> changer d'identité\n\
+FIN .......... se déconnecter\n\
+GUIDE = AIDE, SOMMAIRE = LISTE, RETOUR = VA ..";
 
 const REFUS: &[&str] = &[
     "Cet incident sera signalé à votre chef de service.",
@@ -218,8 +225,11 @@ impl Session {
 /// Demande un mot de passe pour ce compte ; vrai s'il est bon.
 fn verifier(l: &mut Ligne, nom: &str) -> Result<bool, Fin> {
     let (_, mdp) = compte(nom);
-    l.dire("MOT DE PASSE ? (il s'affiche en clair : c'est normal, c'est le ministère)")?;
+    let invite = l.invite_actuelle().to_string();
+    l.dire_style("MOT DE PASSE ? (il s'affiche en clair : c'est normal, c'est le ministère)", Style::fg(JAUNE))?;
+    l.invite("MOT DE PASSE ?")?;
     let tape = l.attendre()?;
+    l.invite(&invite)?;
     // un prix (le directeur) : « 150 F », « 150 francs », « 150,00 »…
     if mdp.chars().all(|c| c.is_ascii_digit()) {
         return Ok(super::prix::lire_prix(&tape).map(|p| p.to_string()).as_deref() == Some(mdp));
@@ -244,12 +254,21 @@ fn entrer(l: &mut Ligne, s: &mut Session, nom: &str) -> Result<(), Fin> {
 }
 
 pub fn lancer(l: &mut Ligne) -> Result<(), Fin> {
+    l.cadre(&Cadre {
+        titre: "MINISTERE DES POSTES",
+        sous_titre: "Lignes Perdues · SYSTÈME 98 · agents".into(),
+        fg: BLANC,
+        fond: ROUGE,
+        touches: "commande  GUIDE : aide",
+        invite: "IDENTIFIANT ?",
+    })?;
+    l.touches(&[(Touche::Guide, "AIDE"), (Touche::Sommaire, "LISTE"), (Touche::Retour, "VA .."), (Touche::Repetition, "QUI")]);
     l.dire(
         "MINISTÈRE DES POSTES ET TÉLÉCOMMUNICATIONS\n\
          Service des Lignes Perdues · SYSTÈME 98 · réservé aux agents\n\
-         Toute tentative d'accès non autorisée sera tamponnée en trois exemplaires.\n\
-         IDENTIFIANT ?",
+         Toute tentative d'accès non autorisée sera tamponnée en trois exemplaires.",
     )?;
+    l.dire_style("IDENTIFIANT ?", Style::fg(JAUNE))?;
     let nom = l.attendre()?;
     let mut ok = false;
     for essai in 1..=3 {
@@ -271,9 +290,11 @@ pub fn lancer(l: &mut Ligne) -> Result<(), Fin> {
     }
     let mut s = Session { nom: String::new(), niveau: 1, dossier: "" };
     entrer(l, &mut s, &nom)?;
-    l.dire(&s.invite())?;
+    l.invite(&s.invite())?;
     loop {
         let ligne = l.attendre()?;
+        // la commande s'inscrit dans la zone, comme sur une console
+        l.dire_style(&format!("{} {ligne}", s.invite()), Style::fg(VERT))?;
         let mut mots = ligne.split_whitespace();
         let cmd = mots.next().unwrap_or("").to_uppercase();
         let arg = mots.collect::<Vec<_>>().join(" ");
@@ -304,9 +325,9 @@ pub fn lancer(l: &mut Ligne) -> Result<(), Fin> {
             "MINISTRE" => l.dire("Le ministre ne prend pas d'appels. Le ministre est en réunion. Le ministre est toujours en réunion.")?,
             "PIRATER" | "HACK" | "HACKER" => l.dire("Le piratage est formellement interdit au ministère. Nous vous prions de bien vouloir lire le JOURNAL, puis de ne rien en faire.")?,
             "" => {}
-            _ => l.dire("COMMANDE INCONNUE. Tapez AIDE.")?,
+            _ => l.dire("COMMANDE INCONNUE. Tapez AIDE (ou la touche GUIDE).")?,
         }
-        l.dire(&s.invite())?;
+        l.invite(&s.invite())?;
     }
 }
 

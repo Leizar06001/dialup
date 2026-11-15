@@ -230,6 +230,33 @@ const Commentateur = (() => {
       "Numérotation du {num} : direction l'Oracle, qui croit dur comme fer qu'on est en 1998. Ne le contrariez pas.",
       "{Notre} compose le {num}… On consulte l'Oracle ! Le compteur du kiosque se frotte déjà les mains.",
     ],
+    // ---------------------------------------------------------------- Minitel
+    minitel_ans: [
+      "Tiens ! Un 2100 hertz tout plat, sans le petit vibrato à 15 hertz de l'ANSam. Ce n'est pas un modem comme les autres, en face…",
+      "Biiiii… mais un biiiii sans fioritures : un ANS à l'ancienne, comme en 1984. Suspense dans les tribunes.",
+      "Cet ANS-là ne module pas : {autre} ne parle pas V.8. Qui décroche encore comme ça ? Les connaisseurs ont deviné.",
+    ],
+    minitel_detecte: [
+      "Le sifflement ! 1300 hertz, le cri du Minitel. {Notre} range son V.34 et sort le clavier : on passe en V.23 !",
+      "C'est un serveur Minitel ! La porteuse à 1300 hertz ne trompe personne. {Notre} répond à 390 hertz, tout bas, comme il se doit.",
+      "Fuiiiiii ! Quiconque a tapé 3615 un jour vient de reconnaître ce son. {Notre} se fait Minitel.",
+    ],
+    connect_minitel: [
+      "CONNECT 1200/75 ! Le petit F devient un C en haut de l'écran : nous sommes sur Télétel. 1200 bit/s pour lire, 75 pour taper.",
+      "Connecté en V.23 ! 1200 bit/s à l'aller, 75 au retour : de quoi lire vite et taper lentement, la devise du Minitel.",
+      "La page arrive à 1200 bit/s, et le compteur tourne. Bienvenue sur Télétel ! L'écran est dans la messagerie.",
+    ],
+    meuble_minitel: [
+      "Le serveur siffle, le Minitel écoute. Patience : la connexion d'un Minitel, c'est trois secondes de musique.",
+      "Ce sifflement-là a accompagné des millions de 3615. Et autant de factures salées.",
+      "Pas de V.8, pas de sondage, pas d'égaliseur : le Minitel, c'est la simplicité de 1980.",
+    ],
+    ambiance_minitel: [
+      "75 bit/s au retour : chaque touche met plus d'un dixième de seconde à partir. Le Minitel n'aime pas les dactylos pressés.",
+      "Sur Télétel, ce n'est pas le Minitel qui affiche ce qu'on tape : le serveur renvoie l'écho, à 1200 bit/s.",
+      "Le compteur tourne. Sur le vrai 3615, la minute coûtait plus cher qu'un ticket de métro.",
+      "ENVOI, SUITE, RETOUR, GUIDE, SOMMAIRE : tout le Minitel tient dans ces quelques touches.",
+    ],
     oracle_en_ligne: [
       "L'Oracle est en ligne ! Posez votre question dans la messagerie… et ne lui parlez pas de l'an 2000, il est inquiet.",
       "Connecté à l'Oracle. Pour lui, la France vient de gagner la Coupe du monde : laissez-le savourer.",
@@ -783,12 +810,18 @@ const Commentateur = (() => {
     INFO0d: "info0d", Ja: "ja", Sd: "sd", "S̄d": "sd", TRN1d: "sd", Jd: "jd", "J′d": "jd",
     DIL: "dil", Ri: "ri", "R̄i": "ri", TRN2d: "trn2d", CPt: "cp", CP: "cp", "CP′": "cp", Ed: "ed",
   };
-  const MEUBLES = { Phase1: "meuble_v8", Phase2: "meuble_p2", Phase3: "meuble_p3", Phase4: "meuble_p4", Retrain: "meuble_retrain", Fax: "meuble_fax" };
+  const MEUBLES = { Phase1: "meuble_v8", Phase2: "meuble_p2", Phase3: "meuble_p3", Phase4: "meuble_p4", Retrain: "meuble_retrain", Fax: "meuble_fax", Minitel: "meuble_minitel" };
 
   /* ------------------------------------------------------------ karaoké */
   /** Paroles par signal (expression sur le nom, variantes). */
   const PAROLES = [
     [/^ANSam/, ["Biiiiiiiiiiiiiiiiiiiii", "Piiiiiiiiii-iiiiiiiiii", "Biiiiiii-iiiiii-iiiiiii"]],
+    // Minitel : l'ANS tout plat, le sifflement, la porteuse de retour, les pages
+    [/^ANS$/, ["Iiiiiiiiiiiiiiiiiiiiiiii", "Biiiiiiiiiiiiiiiiiiiiii"]],
+    [/^porteuse 1300/, ["Fuiiiiiiiiiiiiiiiiiiiiii", "Uiiiiiiiiiiiiiiiiiiiiiii", "Fiiiiiiiiiiiiiiiiiiiiii"]],
+    [/^porteuse 390/, ["Ouuuuuuuuuuuuuuuuuu", "Hmmmmmmmmmmmmmmmmmm"]],
+    [/^V\.23 1200/, ["Krrrtchiii-krrrtchiii", "Tchikitchikitchiki", "Krrrkrrr-tchiiii"]],
+    [/^V\.23 75/, ["bloup… bloup… bloup…", "toc… toc… toc…"]],
     [/^(CM|JM|CJ)$/, ["di-di-di-di-di-di-di", "dou-di-dou-di-di-dou", "didididi-dididi-di"]],
     [/^INFO/, ["brrr-brrt brrr-brrt", "brrrt-brrrt-brrrt", "brr-brr-brrrrt"]],
     [/^DIL$/, ["Ouiii-ouuu-ouiii-ouuu-ouiii", "Wiiou-wiiou-wiiou-wiiou", "Ouin-ouin-ouiiin-ouin-ouiiin"]],
@@ -1012,6 +1045,10 @@ const Commentateur = (() => {
       if (p === "Fax") appel.fax = true;
       if (p === "Morse") appel.morse = true;
       switch (p) {
+        case "Minitel":
+          appel.minitel = true;
+          if (premiere("minitel_detecte")) dire("minitel_detecte", {}, { prio: 2 });
+          break;
         case "Phase1":
           if ((appel.sortant != null ? appel.sortant : role() === "Call") && premiere("sonne")) dire("sonne");
           break;
@@ -1061,6 +1098,8 @@ const Commentateur = (() => {
       const t = maintenant();
       if (/^ANSam détecté/.test(msg)) {
         if (premiere("ansam")) dire("ansam_rx", {}, { prio: 1 });
+      } else if (/^2100 Hz sans modulation/.test(msg)) {
+        if (premiere("minitel_ans")) dire("minitel_ans", {}, { prio: 1 });
       } else if ((m = /^JM reçu ×2 : modes communs (.*)$/.exec(msg))) {
         // (morse proposé : c'est la réponse au morse qu'on commente, juste après)
         if (!appel.morsePropose && premiere("jm")) dire("jm_rx", { modes: modes(m[1]) }, { prio: 1, groupe: "v8" });
@@ -1173,6 +1212,13 @@ const Commentateur = (() => {
       appel.rx = rx;
       appel.connecte = true;
       appel.connecteA = maintenant();
+      // Minitel : 1200 bit/s vers l'écran, 75 depuis le clavier
+      if (appel.minitel || (tx === 75 && rx === 1200)) {
+        appel.minitel = true;
+        dire("connect_minitel", v, { prio: 2 });
+        if (appel.oracle) dire("oracle_en_ligne", {}, { prio: 1 });
+        return;
+      }
       const cle = rx > 33600 ? "connect_56k" : rx >= 31200 ? "connect_top" : rx >= 19200 ? "connect_bien" : "connect_bof";
       const asym = rx <= 33600 && tx !== rx ? ` Et ${milliers(tx)} en émission.` : "";
       dire(cle, v, { prio: 2, suffixe: asym });
@@ -1363,7 +1409,10 @@ const Commentateur = (() => {
       if (t - derniereLigne < MEUBLE_MS || t - appel.meubleA < MEUBLE_MS) return;
       let cle = null, v = {};
       if (cs === "dialing" || cs === "ringing") cle = "meuble_sonne";
-      else if (ph === "Morse") {
+      else if (ph === "Minitel" && appel.connecte) {
+        // en ligne sur Télétel : un mot de temps en temps
+        if (t - derniereLigne > AMBIANCE_MS) cle = "ambiance_minitel";
+      } else if (ph === "Morse") {
         if (t - derniereLigne < AMBIANCE_MS / 2) return;
         cle = "meuble_morse";
       } else if (MEUBLES[ph]) cle = MEUBLES[ph];
@@ -1428,6 +1477,10 @@ const Commentateur = (() => {
         r.message = "donnees";
         return r;
       }
+      if (st.phase === "Minitel" && appel.connecte && maintenant() - appel.connecteA > 3500 && !(s.speaker && s.speaker.active)) {
+        r.message = "minitel";
+        return r;
+      }
       if (st.phase === "Morse" && st.morse) return morseKaraoke(r, st.morse);
       r.nous = voix(st.tx_signal, "tx");
       r.eux = voix(appel.distantTx != null && !s.net ? appel.distantTx : st.rx_signal, "rx");
@@ -1477,6 +1530,7 @@ const Commentateur = (() => {
   const MESSAGES = {
     attente: "♪ En attente du coup d'envoi… ♪",
     donnees: "♫ Fin du morceau : place aux octets, qui chantent en silence ♫",
+    minitel: "♫ Le Minitel est en ligne : la suite se lit à l'écran, dans la messagerie ♫",
     fin: "♫ Merci, vous avez été formidables ! ♫",
   };
 

@@ -5,7 +5,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use v34_net::bbs::{self, Decoder, Frame, Item};
+use v34_net::videotex::{self as vt, Touche};
 
 use super::*;
 use crate::log::{set_level, Level};
@@ -298,42 +298,17 @@ fn cache_des_premieres_questions() {
     assert_eq!(o.compteurs().cache, 1);
 }
 
-/// Texte des trames de chat (tout doit être en trames de chat).
-fn lire_ecran(octets: &[u8]) -> (String, usize) {
-    let mut d = Decoder::default();
-    let mut texte = String::new();
-    let mut trames = 0;
-    for it in d.push(octets) {
-        match it {
-            Item::Frame(Frame::Chat(t)) => {
-                texte.push_str(&t);
-                trames += 1;
-            }
-            autre => panic!("l'oracle n'envoie que des trames de chat : {autre:?}"),
-        }
-    }
-    (texte, trames)
+/// Ce que tape l'abonné au clavier du Minitel : le texte, puis ENVOI.
+fn clavier(ligne: &str) -> Vec<u8> {
+    let mut b = vt::encoder(ligne);
+    b.extend(Touche::Envoi.octets());
+    b
 }
 
-#[test]
-fn cadence_de_l_ecran() {
-    let (tx, rx) = mpsc::sync_channel(1024);
-    let mut e = Ecran::new(tx, 1200);
-    let texte = "x".repeat(60);
-    let t0 = Instant::now();
-    e.lignes(&texte).unwrap();
-    let dt = t0.elapsed().as_secs_f64();
-    // 1200 bit/s = 120 caractères par seconde : 60 caractères ≈ 0,5 s
-    assert!((0.35..0.8).contains(&dt), "60 caractères en {dt:.2} s");
-    let octets: Vec<u8> = rx.try_iter().flatten().collect();
-    let (t, trames) = lire_ecran(&octets);
-    assert_eq!(t, format!("\n{texte}"));
-    assert!(trames >= 4, "envoyé par petits morceaux ({trames} trames)");
-    // chaque ligne commence par un retour à la ligne, jamais le texte ne finit par un
-    e.lignes("a\nb").unwrap();
-    e.suite("...").unwrap();
-    let (t, _) = lire_ecran(&rx.try_iter().flatten().collect::<Vec<u8>>());
-    assert_eq!(t, "\na\nb...");
+/// Le texte du flot Vidéotex reçu, espaces resserrés (la mise en page sur
+/// 40 colonnes coupe les phrases).
+fn lire_ecran(octets: &[u8]) -> String {
+    vt::transcrire(octets).split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Fait tourner une consultation ; renvoie (envoyer, recevoir, fin).
@@ -350,7 +325,7 @@ fn consultation_test(o: Oracle, abonne: &str) -> (mpsc::Sender<Vec<u8>>, mpsc::R
 fn attendre(rx: &mpsc::Receiver<Vec<u8>>, tout: &mut Vec<u8>, motif: &str) -> String {
     let t0 = Instant::now();
     loop {
-        let (t, _) = lire_ecran(tout);
+        let t = lire_ecran(tout);
         if t.contains(motif) {
             return t;
         }
@@ -368,35 +343,65 @@ fn consultation_complete_avec_l_ia() {
     let o = oracle(&f.url, &cle, |_| {});
     let (tx, rx, fin) = consultation_test(o, "gaston");
     let mut ecran = Vec::new();
-    let t = attendre(&rx, &mut ecran, "/fin : raccrocher.");
-    assert!(t.contains("3 6 1 5") && t.contains("2,23 F la minute") && t.contains("Bienvenue, gaston") && t.contains("100 questions"), "{t}");
-    tx.send(bbs::encode(&Frame::Chat("Vais-je être riche ?".into()))).unwrap();
+    let t = attendre(&rx, &mut ecran, "CONNEXION/FIN : raccrocher.");
+    assert!(t.contains("ORACLE") && t.contains("2,23 F la minute") && t.contains("Bienvenue, gaston") && t.contains("100 questions"), "{t}");
+    tx.send(clavier("Vais-je être riche ?")).unwrap();
     let t = attendre(&rx, &mut ecran, "mortel.");
-    assert!(t.contains(&format!("\n{}.", persona::ATTENTE_ASTRES)), "des points pendant l'attente : {t}");
-    assert!(t.contains("\nLes astres disent oui, mortel."), "{t}");
+    // l'écho de la question (le serveur renvoie ce qu'on tape), la question
+    // dans la zone, des points pendant l'attente
+    assert!(t.contains("Vais-je être riche ?"), "{t}");
+    assert!(t.contains(&format!("{}..", persona::ATTENTE_ASTRES)), "des points pendant l'attente : {t}");
+    assert!(t.contains("Les astres disent oui, mortel."), "{t}");
     attendre(&rx, &mut ecran, " F ]");
-    tx.send(bbs::encode(&Frame::Chat("/fin".into()))).unwrap();
-    let t = attendre(&rx, &mut ecran, "Au revoir !");
-    assert_eq!(fin.join().unwrap(), "consultation terminée (/fin)");
-    assert!(t.starts_with("\n   3 6 1 5") && !t.ends_with('\n'), "un retour à la ligne avant chaque ligne, jamais après");
-    assert!(!t.contains("\n\n\n"));
+    // RÉPÉTITION remontre la dernière réponse
+    let n = lire_ecran(&ecran).matches("Les astres disent oui").count();
+    tx.send(Touche::Repetition.octets().to_vec()).unwrap();
+    let t0 = Instant::now();
+    while lire_ecran(&ecran).matches("Les astres disent oui").count() == n {
+        assert!(t0.elapsed() < Duration::from_secs(5), "RÉPÉTITION sans effet");
+        if let Ok(b) = rx.recv_timeout(Duration::from_millis(50)) {
+            ecran.extend(b);
+        }
+    }
+    tx.send(Touche::ConnexionFin.octets().to_vec()).unwrap();
+    attendre(&rx, &mut ecran, "Au revoir !");
+    assert_eq!(fin.join().unwrap(), "consultation terminée (CONNEXION/FIN)");
     assert_eq!(f.n(), 1);
+    // c'est bien un écran Minitel : effacement, titre en double taille
+    let mut m = vt::Ecran::new();
+    m.recevoir(&ecran);
+    assert!(ecran.starts_with(&[vt::FF]));
+    assert!((1..25).any(|r| m.texte_rangee(r).contains("O R A C L E")), "{}", m.texte());
 }
 
 #[test]
-fn consultation_hors_ligne_texte_brut_et_raccroche() {
+fn consultation_hors_ligne_touches_et_raccroche() {
     let absente = std::env::temp_dir().join("v34-oracle-nulle-part/openrouter.key");
     let o = oracle("http://127.0.0.1:9/", &absente, |_| {});
     let (tx, rx, fin) = consultation_test(o, "gaston");
     let mut ecran = Vec::new();
-    let t = attendre(&rx, &mut ecran, "/fin : raccrocher.");
+    let t = attendre(&rx, &mut ecran, "CONNEXION/FIN : raccrocher.");
     assert!(t.contains("les cartes qui répondent"), "{t}");
-    // un terminal à l'ancienne envoie du texte brut, ligne par ligne
-    tx.send(b"Qui a gagne la coupe du monde ?\r".to_vec()).unwrap();
+    // une faute de frappe : CORRECTION
+    let mut b = vt::encoder("Qui a gagne la coupe du monde ?x");
+    b.extend(Touche::Correction.octets());
+    b.extend(Touche::Envoi.octets());
+    tx.send(b).unwrap();
     let t = attendre(&rx, &mut ecran, " F ]");
+    assert!(t.contains("> Qui a gagne la coupe du monde ?"), "{t}");
+    assert!(!t.contains("> Qui a gagne la coupe du monde ?x"), "corrigé : {t}");
     assert!(t.contains("Brésil") || t.contains("Stade de France"), "réponse à thème : {t}");
-    tx.send(bbs::encode(&Frame::Chat("/aide".into()))).unwrap();
-    attendre(&rx, &mut ecran, "GUIDE");
+    // la touche GUIDE, puis un terminal à l'ancienne (texte brut et /aide)
+    tx.send(Touche::Guide.octets().to_vec()).unwrap();
+    attendre(&rx, &mut ecran, "GUIDE. Tapez votre question");
+    tx.send(b"/aide\r".to_vec()).unwrap();
+    let t0 = Instant::now();
+    while lire_ecran(&ecran).matches("GUIDE. Tapez").count() < 2 {
+        assert!(t0.elapsed() < Duration::from_secs(5), "/aide sans effet");
+        if let Ok(b) = rx.recv_timeout(Duration::from_millis(50)) {
+            ecran.extend(b);
+        }
+    }
     drop(tx);
     assert_eq!(fin.join().unwrap(), "raccroché par l'appelant");
 }
@@ -409,8 +414,8 @@ fn consultation_quota_epuise_et_inactivite() {
     o.reserver("gaston", jour_utc()).unwrap();
     let (_tx, rx, fin) = consultation_test(o, "gaston");
     assert_eq!(fin.join().unwrap(), "quota du jour épuisé", "l'oracle raccroche de lui-même");
-    let t = attendre(&rx, &mut Vec::new(), persona::QUOTA_ABONNE);
-    assert!(!t.contains("Posez votre question"));
+    let t = attendre(&rx, &mut Vec::new(), "L'oracle raccroche.");
+    assert!(!t.contains("Tapez votre question"));
     assert_eq!(f.n(), 0);
 
     let mut o = oracle(&f.url, &cle, |_| {});
@@ -420,4 +425,24 @@ fn consultation_quota_epuise_et_inactivite() {
     assert_eq!(fin.join().unwrap(), "raccroché par l'oracle (inactivité)");
     assert!(t0.elapsed() < Duration::from_secs(4));
     attendre(&rx, &mut Vec::new(), "Au revoir !");
+}
+
+/// Deux questions tapées d'avance pendant que l'oracle répond : une seule
+/// attend son tour.
+#[test]
+fn une_question_a_la_fois() {
+    let f = Faux::new(|_, _| (200, ia_dit("Oui.", "stop"), Duration::from_millis(600)));
+    let cle = fichier_cle("file", CLE);
+    let o = oracle(&f.url, &cle, |_| {});
+    let (tx, rx, fin) = consultation_test(o, "gaston");
+    let mut ecran = Vec::new();
+    attendre(&rx, &mut ecran, "CONNEXION/FIN : raccrocher.");
+    for q in ["Une ?", "Deux ?", "Trois ?"] {
+        tx.send(clavier(q)).unwrap();
+    }
+    attendre(&rx, &mut ecran, persona::UNE_A_LA_FOIS);
+    attendre(&rx, &mut ecran, "> Deux ?");
+    drop(tx);
+    assert_eq!(fin.join().unwrap(), "raccroché par l'appelant");
+    assert!(!lire_ecran(&ecran).contains("> Trois ?"));
 }

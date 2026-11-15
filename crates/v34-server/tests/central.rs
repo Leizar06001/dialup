@@ -233,8 +233,8 @@ fn special_number_answers(number: &str) {
     a.dial(ISP).unwrap();
     wait_for(&mut a, &mut [&mut c], "BUSY", |e| matches!(e, CentralEvent::Busy { .. }));
 
-    // Le modem répond (silence ≥ 200 ms puis ANSam à 2100 Hz) : on doit
-    // entendre un signal non nul en moins de 2 s.
+    // Le modem répond (silence ≥ 200 ms puis ANSam à 2100 Hz, ou l'ANS pur
+    // d'un serveur Minitel) : on doit entendre un signal non nul en moins de 2 s.
     let mut out = vec![0.0f32; FRAME_SAMPLES];
     let mut max_rms = 0.0f32;
     let t0 = Instant::now();
@@ -450,4 +450,71 @@ fn facture_et_succes_apres_un_appel() {
     assert_eq!(v34_server::facturation::lire_tickets(&dir, c.mois).len(), 1);
     drop(server);
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// De bout en bout : un modem appelle un numéro caché (la Commission de
+/// l'an 2000) à travers le central, reconnaît le sifflement du serveur
+/// Minitel, passe en V.23, reçoit sa page en Vidéotex, tape « 3 » puis
+/// ENVOI au clavier, lit la réponse, et termine par CONNEXION/FIN.
+#[test]
+fn minitel_de_bout_en_bout() {
+    use v34_core::{Modem, ModemCommand, ModemConfig, ModemEvent, Phase, Role};
+    use v34_net::videotex::{self as vt, Touche};
+
+    let server = start_server();
+    let mut c = registered(&server, C);
+    c.dial("0800200000").unwrap();
+    wait_for(&mut c, &mut [], "décroché", |e| matches!(e, CentralEvent::Answered { .. }));
+    let mut modem = Modem::new(Role::Call, ModemConfig::default());
+    modem.command(ModemCommand::Dial);
+    let mut ecran = vt::Ecran::new();
+    let (mut rx, mut tx) = (vec![0.0f32; FRAME_SAMPLES], vec![0.0f32; FRAME_SAMPLES]);
+    let t0 = Instant::now();
+    let mut next = t0;
+    let (mut connect, mut minitel, mut fin) = (None, false, None);
+    let (mut choisi, mut au_revoir) = (false, false);
+    while t0.elapsed() < Duration::from_secs(45) && fin.is_none() {
+        c.recv_block(&mut rx);
+        modem.process(&rx, &mut tx);
+        c.send_block(&tx).unwrap();
+        for ev in modem.drain_events() {
+            match ev {
+                ModemEvent::PhaseChanged(Phase::Minitel) => minitel = true,
+                ModemEvent::Connected { tx_rate, rx_rate } => {
+                    assert_eq!((tx_rate, rx_rate), (75, 1200));
+                    connect = Some(t0.elapsed());
+                    ecran.connexion(true);
+                }
+                ModemEvent::Data(d) => ecran.recevoir(&d),
+                ModemEvent::Disconnected { reason } => fin = Some(reason),
+                _ => {}
+            }
+        }
+        let texte = ecran.texte();
+        if !choisi && texte.contains("CONNEXION/FIN : raccrocher.") {
+            choisi = true;
+            let mut b = b"3".to_vec();
+            b.extend(Touche::Envoi.octets());
+            modem.command(ModemCommand::Send(b));
+        }
+        if choisi && !au_revoir && texte.contains("Autre chose ?") {
+            au_revoir = true;
+            assert!(texte.contains("bogue"), "la réponse au 3 : {texte}");
+            modem.command(ModemCommand::Send(Touche::ConnexionFin.octets().to_vec()));
+        }
+        next += Duration::from_millis(20);
+        if let Some(d) = next.checked_duration_since(Instant::now()) {
+            std::thread::sleep(d);
+        }
+    }
+    let connect = connect.expect("CONNECT");
+    assert!(minitel, "passé en Minitel");
+    assert!(connect < Duration::from_secs(6), "CONNECT en {connect:?}");
+    assert!(au_revoir, "écran : {}", ecran.texte());
+    // le service a raccroché après son au revoir ; le Minitel l'a vu
+    assert!(ecran.texte().contains("Au revoir !"), "{}", ecran.texte());
+    assert!(fin.is_some(), "fin de l'appel");
+    // la page : le titre en double hauteur sur son bandeau
+    assert!(ecran.texte_rangee(2).contains("COMMISSION AN 2000"), "{}", ecran.texte());
+    assert_ne!(ecran.cellule(2, 2).attr & vt::A_DOUBLE_HAUTEUR, 0);
 }

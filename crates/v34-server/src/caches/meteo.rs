@@ -1,12 +1,15 @@
 //! 08 36 68 68 68 : la météo des lignes. Le bulletin du jour (le même toute
 //! la journée), d'après l'état réel du réseau publié par le central
 //! (`etat.json`) : abonnés connectés, communications en cours, salon du FAI.
+//! RÉPÉTITION (ou « /bulletin ») le relit.
 
 use std::time::Duration;
 
 use serde::Deserialize;
 
-use super::{choix, unix_now, Fin, Ligne};
+use v34_net::videotex::{Touche, CYAN, JAUNE, NOIR};
+
+use super::{choix, unix_now, Cadre, Fin, Ligne, Style};
 
 #[derive(Default, Deserialize)]
 #[serde(default)]
@@ -39,18 +42,16 @@ fn bulletin(l: &mut Ligne, t: u64) -> Result<(), Fin> {
         0 => "mer d'huile, personne à l'horizon".to_string(),
         n => format!("mer agitée, {} au large", pl(n, "bavard")),
     };
+    l.ecran.vider_zone()?;
+    l.dire_style(&format!("Bulletin de {} h {:02}", h.heure, h.minute), Style::fg(JAUNE))?;
     l.dire(&format!(
-        "MÉTÉO DES LIGNES · bulletin de {} h {:02}\n\
-         Situation générale : {}. On compte {} sur le réseau et {} en cours.\n\
+        "Situation générale : {}. On compte {} sur le réseau et {} en cours.\n\
          Ligne Parfaite : {}.\n\
          Ligne Urbaine : {}.\n\
          Ligne Campagne : {}.\n\
          Ligne Orage : avis de grand frais ! {}.\n\
          Salon du FAI : {mer}.\n\
-         Prochain bulletin à {} h. Ce bulletin vous est offert par le Ministère des Postes.\n\
-         /bulletin pour le réécouter, /fin pour raccrocher.",
-        h.heure,
-        h.minute,
+         Prochain bulletin à {} h. Ce bulletin vous est offert par le Ministère des Postes.",
         tire(SITUATIONS, 0),
         pl(e.connectes, "abonné"),
         pl(e.appels, "communication"),
@@ -59,10 +60,21 @@ fn bulletin(l: &mut Ligne, t: u64) -> Result<(), Fin> {
         tire(CAMPAGNE, 3),
         tire(ORAGE, 4),
         (h.heure + 1) % 24,
-    ))
+    ))?;
+    l.dire_style("RÉPÉTITION : relire le bulletin. CONNEXION/FIN : raccrocher.", Style::fg(CYAN))
 }
 
 pub fn lancer(l: &mut Ligne) -> Result<(), Fin> {
+    l.cadre(&Cadre {
+        titre: "METEO DES LIGNES",
+        sous_titre: "le bulletin du réseau, offert par le Ministère".into(),
+        fg: NOIR,
+        fond: CYAN,
+        touches: "RÉPÉTITION : le bulletin",
+        invite: ">",
+    })?;
+    l.touches(&[(Touche::Repetition, "/bulletin"), (Touche::Sommaire, "/bulletin"), (Touche::Suite, "/bulletin")]);
+    l.guide("La météo des lignes donne l'état du réseau, une fois par jour. RÉPÉTITION pour relire le bulletin.");
     bulletin(l, unix_now())?;
     loop {
         if let Some(s) = l.lire(Duration::from_secs(60))? {

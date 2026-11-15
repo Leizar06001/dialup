@@ -248,8 +248,8 @@ Chaque minute est taxée en francs, comme en 1998 : la facture est pour de rire,
 <tr><td>🗨 Salon du FAI</td><td>Tous les abonnés connectés au FAI discutent ensemble.</td></tr>
 <tr><td>📝 Tinyblog <span class="nouveau">NOUVEAU !</span></td><td>Votre blog, à l'adresse <code>tinyblog</code>, lisible seulement par le modem : articles avec une image en 256 couleurs, texte en [b]gras[/b], en couleur ou qui clignote, six thèmes, des « J'kiffe » et des com's. Avec l'accès Internet.</td></tr>
 <tr><td>🧾 Facture &amp; succès <span class="nouveau">NOUVEAU !</span></td><td>Le compteur TAXES tourne pendant vos appels. Dans <a href="/compte">Mon compte</a> : votre facture détaillée du mois (jamais réclamée), le classement des plus grosses factures du réseau, et 38 succès à décrocher, dont quelques-uns bien cachés.</td></tr>
-<tr><td>🕵 Numéros cachés <span class="nouveau">NOUVEAU !</span></td><td>Certains numéros ne figurent dans aucun annuaire. L'oracle en connaît au moins un, et le modem sait balayer une plage de numéros, comme les « wardialers » de l'époque. À vous de chercher.</td></tr>
-<tr><td>🔮 3615 ORACLE</td><td>Au 08 36 67 22 53 : une intelligence artificielle persuadée qu'on est en 1998. Posez-lui vos questions dans la messagerie, elle répond à la vitesse d'un Minitel. Au-delà de 1998, elle ne voit que des brumes. 2,23 F la minute (pour de rire, comme toute la facture). Avec l'accès Internet, une trentaine de questions par jour.</td></tr>
+<tr><td>🕵 Numéros cachés <span class="nouveau">NOUVEAU !</span></td><td>Certains numéros ne figurent dans aucun annuaire. L'oracle en connaît au moins un, et le modem sait balayer une plage de numéros, comme les « wardialers » de l'époque. Ce sont de vrais services Minitel, chacun avec sa page. À vous de chercher.</td></tr>
+<tr><td>🔮 3615 ORACLE <span class="nouveau">MINITEL !</span></td><td>Au 08 36 67 22 53 : une intelligence artificielle persuadée qu'on est en 1998, sur un vrai Minitel. Le sifflement à 1300 Hz, CONNECT 1200/75, et l'écran Vidéotex dans la messagerie : la boule de cristal en mosaïques, les touches ENVOI, SUITE, GUIDE, CONNEXION/FIN. Au-delà de 1998, elle ne voit que des brumes. 2,23 F la minute (pour de rire, comme toute la facture). Avec l'accès Internet, une trentaine de questions par jour.</td></tr>
 <tr><td>📞 Ligne de test</td><td>Le 08 00 00 00 00 vous renvoie tout ce que vous lui envoyez.</td></tr>
 </table>
 <h2>Tarifs</h2>
@@ -485,10 +485,13 @@ La caméra reste éteinte tant que vous n'avez pas choisi CAMÉRA. Pendant une s
 <p>Pour qu'un abonné puisse vous appeler, laissez le logiciel connecté au central : avec l'interrupteur <b>DIP 2 « RÉP. AUTO »</b> sur ON, le modem décroche tout seul après deux sonneries.</p>
 <h3>3615 ORACLE</h3>
 <p>Une intelligence artificielle qu'on ne joint qu'au modem, et qui est persuadée qu'on est en 1998 : le Minitel, le franc, Windows 98, la Coupe du monde…
-Ce qui vient après, elle ne fait que l'entrevoir, comme une voyante dans le brouillard.</p>
+Ce qui vient après, elle ne fait que l'entrevoir, comme une voyante dans le brouillard.
+C'est un vrai service <b>Minitel</b>.</p>
 <ol><li>En bas de l'<b>ANNUAIRE</b>, dans les numéros spéciaux : <b>3615 ORACLE</b> ☎ APPELER (le <b>08 36 67 22 53</b>, « ORACLE » sur le clavier du téléphone).</li>
-<li>Après CONNECT, la <b>MESSAGERIE</b> s'ouvre sur l'écran d'accueil du service. Tapez votre question en bas, puis Entrée (la touche ENVOI du Minitel) : l'oracle répond en quelques phrases, à la vitesse d'un Minitel, et se souvient de la conversation jusqu'à ce que vous raccrochiez.</li>
-<li><code>/aide</code> affiche le GUIDE, <code>/fin</code> raccroche. Le compteur TAXES affiche 2,23 F la minute, mais rien n'est jamais réclamé.</li></ol>
+<li>Le serveur ne répond pas comme un modem ordinaire : un 2100 Hz tout plat (l'ANS), puis le célèbre sifflement du Minitel, à 1300 Hz. Votre modem le reconnaît, répond par sa porteuse à 390 Hz et passe en <b>V.23</b> : CONNECT 1200/75 en trois secondes et demie, 1200 bit/s vers l'écran, 75 bit/s depuis le clavier.</li>
+<li>La <b>MESSAGERIE</b> ne s'ouvre pas toute seule : sa LED clignote. Ouvrez-la : la conversation devient l'écran d'un Minitel 1 (40 colonnes, 25 rangées, en niveaux de gris), avec ses touches de fonction en dessous. Cliquez sur l'écran, tapez votre question, puis <b>ENVOI</b> (Entrée). Les lettres partent à 75 bit/s et c'est le serveur qui les renvoie à l'écran, comme sur Télétel ; l'oracle répond en quelques phrases et se souvient de la conversation jusqu'à ce que vous raccrochiez.</li>
+<li>Les touches : <b>CORRECTION</b> (⌫), <b>ANNULATION</b> (Échap), <b>SUITE</b> (page suivante d'un long texte), <b>GUIDE</b> (F1), <b>SOMMAIRE</b>, <b>RÉPÉTITION</b> (la dernière réponse), <b>CONNEXION/FIN</b> (F10 : le service dit au revoir et raccroche). Les anciennes commandes <code>/aide</code> et <code>/fin</code> marchent toujours. Le compteur TAXES affiche 2,23 F la minute, mais rien n'est jamais réclamé.</li></ol>
+<p>Comme sur un vrai Minitel, il n'y a pas de correction d'erreurs : sur une ligne qui crépite, un caractère abîmé s'affiche en pavé.
 <p>Réservé aux abonnés qui ont l'accès Internet, une trentaine de questions par jour. Si l'IA est injoignable, l'oracle tire les cartes à la place, et le dit.
 Vos questions sont transmises à OpenRouter et au fournisseur du modèle pour fabriquer la réponse (voir la <a href="/confidentialite">politique de confidentialité</a>) : n'y mettez rien de personnel.</p>
 <h3>Télécopie</h3>
@@ -510,6 +513,7 @@ Pas de mot de passe à retenir : le FAI sait déjà qui vous êtes.</p>
 <li>Sur ce site, <a href="/compte">Mon compte</a> : le détail de vos communications, mois par mois, et le classement des plus grosses factures du réseau.</li></ul>
 <h3>Numéros cachés</h3>
 <p>Il paraît que certains numéros ne figurent dans aucun annuaire. L'oracle en connaîtrait au moins un… Chaque numéro trouvé rapporte un succès, et parfois une belle facture.
+Ce sont, eux aussi, de vrais services Minitel : chacun sa page, son bandeau et ses touches (RÉPÉTITION, SUITE, GUIDE…).
 Les plus patients balaieront une plage entière depuis le TERMINAL, avec la commande <code>AT*B</code> (voir l'aide du logiciel). Attention : chaque porteuse trouvée est taxée.</p>
 <h3>Le morse</h3>
 <p>Un mode « maison », comme les modems bricolés des années 90 : avec l'interrupteur <b>DIP 4 « MORSE »</b> du panneau <b>CONFIG</b> sur ON, votre modem le propose pendant la négociation V.8, dans un « service non normalisé » (code pays de la France, fournisseur TINYVERSE).

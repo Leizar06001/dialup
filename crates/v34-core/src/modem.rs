@@ -140,6 +140,9 @@ pub struct Modem {
     pub(crate) fax_page: Option<(Vec<Vec<bool>>, bool)>,
     /// Appelé : écoute du CNG (1100 Hz) d'un télécopieur qui appelle
     pub(crate) cng: Option<(ToneDetector, PowerMeter, u64)>,
+    /// Minitel (V.23) en cours, et l'oreille qui reconnaît son sifflement
+    pub(crate) minitel: Option<Box<crate::v23::Minitel>>,
+    pub(crate) ecoute_v23: Option<crate::v23::EcouteMinitel>,
     /// Morse convenu en V.8 (services non normalisés), vitesse en mots/minute
     pub(crate) morse_convenu: Option<u8>,
     /// Liaison morse en cours (à la place des phases 2 à 4 du V.34)
@@ -204,6 +207,8 @@ impl Modem {
             fax: None,
             fax_page: None,
             cng: None,
+            minitel: None,
+            ecoute_v23: None,
             morse_convenu: None,
             morse: None,
         }
@@ -236,6 +241,8 @@ impl Modem {
                 self.log(LogLevel::Info, &format!("Télécopie : {} lignes à envoyer — CNG, en attente du télécopieur", lignes.len()));
                 self.fax = Some(Box::new(crate::fax::session::Fax::emetteur(&lignes, &self.cfg.ident, fine)));
             }
+            ModemCommand::Answer if self.cfg.minitel => self.repondre_minitel(),
+            ModemCommand::Hangup | ModemCommand::Send(_) if self.minitel.is_some() => self.commande_minitel(cmd),
             ModemCommand::Dial => {
                 self.reset_link();
                 self.role = Role::Call;
@@ -244,6 +251,8 @@ impl Modem {
                 self.set_phase(Phase::Phase1);
                 self.log(LogLevel::Info, "Décroché — attente de la tonalité de réponse (ANSam)");
                 self.ansam_det = Some(AnsamDetector::new());
+                // (ou le sifflement d'un serveur Minitel)
+                self.ecoute_v23 = Some(crate::v23::EcouteMinitel::new());
                 self.goto(St::CallWaitAnsam);
                 self.set_tx(TxMode::Silence, "silence");
             }
@@ -301,6 +310,9 @@ impl Modem {
         if self.fax.is_some() {
             return self.process_fax(rx, tx);
         }
+        if self.minitel.is_some() {
+            return self.process_minitel(rx, tx);
+        }
         if self.morse.is_some() {
             return self.process_morse(rx, tx);
         }
@@ -313,6 +325,10 @@ impl Modem {
             if self.ecouter_cng(*r) {
                 // Le reste du bloc part en télécopie
                 return self.process_fax(&rx[i + 1..], &mut tx[i + 1..]);
+            }
+            if self.ecouter_minitel(*r) {
+                // … ou en Minitel
+                return self.process_minitel(&rx[i + 1..], &mut tx[i + 1..]);
             }
         }
         if let Some(p) = self.p34.as_ref() {
@@ -411,7 +427,7 @@ impl Modem {
     // Outils internes
     // ------------------------------------------------------------------
 
-    fn reset_link(&mut self) {
+    pub(crate) fn reset_link(&mut self) {
         let role = self.role;
         let cfg = self.cfg.clone();
         let n = self.n;
