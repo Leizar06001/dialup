@@ -4,8 +4,14 @@
 //!
 //! ```json
 //! {"version":"0.1.1","depuis":1763100000,"maj":1763100042,"abonnes":42,
-//!  "connectes":3,"appels":1,"modems":{"occupes":1,"max":4},"salon":2}
+//!  "connectes":3,"appels":1,"modems":{"occupes":1,"max":4},"salon":2,
+//!  "en_ligne":["gaston","raziel"],
+//!  "communications":[{"de":"gaston","numero":"0836154286","vers":"fai","decroche":1763100030}]}
 //! ```
+//!
+//! La page publique n'affiche que les nombres ; les noms (`en_ligne`,
+//! `communications`, absents des centraux plus anciens) ne servent qu'à la
+//! page d'administration.
 //!
 //! Fichier absent, illisible ou pas mis à jour depuis plus de
 //! [`PERIME_S`] secondes : le central est considéré hors service.
@@ -44,6 +50,24 @@ pub struct Etat {
     pub modems: Modems,
     /// Présents dans le salon du FAI
     pub salon: u64,
+    /// Abonnés connectés (administration seulement)
+    pub en_ligne: Vec<String>,
+    /// Appels en cours (administration seulement)
+    pub communications: Vec<Communication>,
+}
+
+/// Un appel en cours.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Communication {
+    /// Appelant
+    pub de: String,
+    /// Numéro composé
+    pub numero: String,
+    /// Abonné appelé, ou service (« fai », « oracle »…)
+    pub vers: String,
+    /// Décroché (secondes Unix) ; `None` : ça sonne encore
+    pub decroche: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]

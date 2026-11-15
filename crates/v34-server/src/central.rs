@@ -1021,6 +1021,24 @@ impl Server {
         }
         *next = now + Duration::from_secs(1);
         let path = path.clone();
+        // Qui est en ligne, et qui appelle qui : pour la page
+        // d'administration du site (la page publique n'affiche que les nombres)
+        let mut en_ligne: Vec<&str> = self.regs.values().map(|r| r.name.as_str()).collect();
+        en_ligne.sort_unstable();
+        en_ligne.dedup();
+        let mut communications: Vec<serde_json::Value> = self
+            .calls
+            .values()
+            .map(|c| {
+                serde_json::json!({
+                    "de": c.appelant.0,
+                    "numero": c.numero,
+                    "vers": c.appele,
+                    "decroche": c.debut.map(|(_, t)| t),
+                })
+            })
+            .collect();
+        communications.sort_by_key(|c| c["decroche"].as_u64().unwrap_or(u64::MAX));
         let etat = serde_json::json!({
             "version": env!("CARGO_PKG_VERSION"),
             "depuis": self.depuis,
@@ -1030,6 +1048,8 @@ impl Server {
             "appels": self.calls.len(),
             "modems": { "occupes": self.modem_calls(), "max": self.cfg.modems.appels_max },
             "salon": self.policy.salon.as_ref().map_or(0, |s| s.present().len()),
+            "en_ligne": en_ligne,
+            "communications": communications,
         });
         let tmp = path.with_extension("json.tmp");
         let res = std::fs::write(&tmp, etat.to_string()).and_then(|()| std::fs::rename(&tmp, &path));
