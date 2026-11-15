@@ -68,6 +68,10 @@
     #m-msg .rec { display: none; color: #e00000; margin-right: 4px; }
     #m-msg.rec .rec { display: inline; animation: clignote 1.2s steps(2, jump-none) infinite; }
     @keyframes clignote { 50% { opacity: .25; } }
+    /* TÉLÉCOPIE : voyant rouge qui clignote quand un fax est arrivé */
+    #m-fax .voyant { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 6px; vertical-align: middle;
+      background: #600; box-shadow: inset 1px 1px 1px #000; }
+    #m-fax.nouveau .voyant { background: #ff2a2a; box-shadow: 0 0 4px #ff2a2a; animation: clignote 0.9s steps(2, jump-none) infinite; }
     /* Ligne de l'appel (mode MESSAGERIE), à la place de l'adresse */
     .callinfo { flex: 1; display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 6px; background: #fff;
       border: 2px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo); white-space: nowrap; overflow: hidden; }
@@ -87,6 +91,7 @@
       <button id="m-1998" class="on" title="Pages allégées par le FAI : texte, liens, images 256 couleurs">WEB 1998</button>
       <button id="m-mod" title="Le vrai web, tel quel… à 56 kbit/s au mieux">MODERNE</button>
       <button id="m-msg" title="Chat, visiophone, fichiers et contacts : l'appel en cours, sans le web"><span class="rec">●</span>MESSAGERIE</button>
+      <button id="m-fax" title="Le télécopieur : écrire, dessiner ou importer une page et la faxer à un abonné (hors appel)">TÉLÉCOPIE<i class="voyant"></i></button>
     </div>
     <div class="throbber" id="throbber" title="Tinyverse Navigator"><b>T</b><i></i><i></i><i></i></div>
   </div>
@@ -115,11 +120,15 @@
     // Vue : la page web ("web") ou la messagerie ("messagerie", décidée par
     // l'appli : touche MESSAGERIE du modem, appel entre abonnés…)
     let vue = "web", webOk = true;
+    // Dans la messagerie : la conversation ("chat") ou le télécopieur ("fax")
+    let onglet = "chat", faxNouveau = false;
     function render() {
       const msg = vue === "messagerie";
       $("m-1998").classList.toggle("on", !msg && mode === "1998");
       $("m-mod").classList.toggle("on", !msg && mode === "moderne");
-      $("m-msg").classList.toggle("on", msg);
+      $("m-msg").classList.toggle("on", msg && onglet !== "fax");
+      $("m-fax").classList.toggle("on", msg && onglet === "fax");
+      $("m-fax").classList.toggle("nouveau", faxNouveau && !(msg && onglet === "fax"));
       $("f-go").hidden = msg;
       $("r-msg").hidden = !msg;
       for (const id of ["b-back", "b-fwd", "b-reload", "b-home", "b-blog"]) $(id).disabled = msg;
@@ -147,7 +156,18 @@
     const web = (m) => T.core.invoke("nav_vue", { vue: "web" }).then((v) => { setVue(v); setMode(m); go($("addr").value); }).catch((e) => alert(e));
     $("m-1998").onclick = () => web("1998");
     $("m-mod").onclick = () => web("moderne");
-    $("m-msg").onclick = () => T.core.invoke("nav_vue", { vue: "messagerie" }).then(setVue);
+    /** MESSAGERIE ou TÉLÉCOPIE : la page locale de la messagerie, sur la conversation ou le télécopieur. */
+    const messagerie = (o) => {
+      onglet = o;
+      T.event.emit("messagerie:onglet", o).catch(() => {});
+      // le fax reçu est vu : la LED FAX de la façade du modem s'éteint
+      if (o === "fax") T.event.emit("fax:vu").catch(() => {});
+      T.core.invoke("nav_vue", { vue: "messagerie" }).then(setVue);
+    };
+    $("m-msg").onclick = () => messagerie("chat");
+    $("m-fax").onclick = () => messagerie("fax");
+    T.event.listen("messagerie:onglet-actuel", (e) => { onglet = e.payload.vue; faxNouveau = e.payload.nouveau; render(); })
+      .then(() => T.event.emit("messagerie:onglet-demande")).catch(() => {});
     $("b-hang").onclick = () => T.core.invoke("at_command", { line: "ATH" });
     $("f-go").onsubmit = (e) => { e.preventDefault(); go($("addr").value); };
     $("b-home").onclick = () => { $("addr").value = ""; go(""); };
@@ -201,6 +221,7 @@
       if (s.incoming) call = `On t'appelle : le ${fmtNum(s.incoming)}…`;
       else if (s.call_state === "dialing" || s.call_state === "ringing") call = "Numérotation…";
       else if (s.call_state === "connecting") call = "Les modems négocient…";
+      else if (s.call_state === "fax") call = "Télécopie en cours : les deux télécopieurs se parlent en T.30, la page passe en V.29";
       else if (s.call_state === "online" && !bbs) call = "En ligne avec le FAI : la conversation, c'est son salon";
       else if (s.call_state === "online" && s.oracle) call = `En ligne avec 3615 ORACLE${debits} · 2,23 F la minute (pour de rire)${s.net ? "" : " · boucle locale : les cartes répondent"}`;
       else if (s.call_state === "online") call = `En ligne d'abonné à abonné${debits}${s.net ? "" : " · boucle locale : l'écho te répond"}`;

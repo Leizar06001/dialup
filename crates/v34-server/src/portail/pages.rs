@@ -486,7 +486,7 @@ Ce qui vient après, elle ne fait que l'entrevoir, comme une voyante dans le bro
 Vos questions sont transmises à OpenRouter et au fournisseur du modèle pour fabriquer la réponse (voir la <a href="/confidentialite">politique de confidentialité</a>) : n'y mettez rien de personnel.</p>
 <h3>Télécopie</h3>
 <p>Un vrai télécopieur du groupe 3, comme ceux des bureaux de 1998 (logiciel 0.1.7 ou plus récent des deux côtés).</p>
-<ol><li>Bouton <b>FAX</b> de la façade (sa LED est verte quand la ligne est libre : un fax ne part que hors appel), ou onglet <b>Télécopie</b> de la MESSAGERIE.</li>
+<ol><li>Bouton <b>FAX</b> de la façade (sa LED est verte quand la ligne est libre : un fax ne part que hors appel), ou bouton <b>TÉLÉCOPIE</b> de la fenêtre du navigateur, à côté de MESSAGERIE.</li>
 <li>Écrivez, dessinez au crayon ou importez une image, tapez le numéro d'un abonné (ou cliquez-le dans la liste), puis <b>Envoyer</b>.</li>
 <li>Le correspondant doit laisser son modem décrocher tout seul (<b>DIP 2 « RÉP. AUTO »</b> sur ON) : son modem reconnaît le sifflement du fax, négocie en T.30, reçoit la page en V.29 (9 600 bit/s, 7 200 ou 4 800 si la ligne est mauvaise) et l'imprime ligne par ligne sur papier thermique. Elle est aussi enregistrée en image dans le dossier <b>Téléchargements/V34 reçus</b>.</li></ol>
 <h3>Tinyblog</h3>

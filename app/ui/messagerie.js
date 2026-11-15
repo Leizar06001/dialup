@@ -481,7 +481,7 @@ listen("v34:state", (s) => {
   const inet = s.session === "internet" && s.call_state !== "idle";
   const ph = inet ? "parle au salon du FAI… (/qui : présents)" : "tape ton message…";
   if ($("bbs-input").placeholder !== ph) $("bbs-input").placeholder = ph;
-  setText("chat-title", inet ? "Salon du FAI" : "Conversation · fichiers");
+  titreBoite();
   renderDir(s.net);
   visioState(s);
 });
@@ -500,7 +500,7 @@ const FAX_L = 1728, FAX_H = 2288;
 const faxPage = $("fax-page"), faxRecu = $("fax-recu");
 const fpx = faxPage.getContext("2d", { willReadFrequently: true });
 const frx = faxRecu.getContext("2d");
-const fax = { crayon: false, trace: null, curseurY: 120, vue: "chat", feuille: "envoi", y: 0, fine: true };
+const fax = { crayon: false, trace: null, curseurY: 120, vue: "chat", nouveau: false, feuille: "envoi", y: 0, fine: true };
 
 function faxBlanc() {
   fpx.fillStyle = "#fff";
@@ -509,20 +509,29 @@ function faxBlanc() {
 }
 faxBlanc();
 
-/** Onglets Conversation / Télécopie */
+/** Conversation ou Télécopie : choisies par les boutons MESSAGERIE et
+    TÉLÉCOPIE de la barre du navigateur (ou FAX, sur la façade du modem). */
+function titreBoite() {
+  const inet = state && state.session === "internet" && state.call_state !== "idle";
+  setText("chat-title", fax.vue === "fax" ? "Télécopie" : inet ? "Salon du FAI" : "Conversation · fichiers");
+}
+/** Dit à la barre du navigateur ce qui est affiché, et si un fax attend. */
+function annoncerOnglet() {
+  if (T) T.event.emit("messagerie:onglet-actuel", { vue: fax.vue, nouveau: fax.nouveau }).catch(() => {});
+}
+function faxNouveau(oui) {
+  fax.nouveau = oui;
+  annoncerOnglet();
+}
 function vueChat(v) {
   fax.vue = v;
   $("vue-chat").hidden = v !== "chat";
   document.querySelector(".filebar").hidden = v !== "chat";
   $("vue-fax").hidden = v !== "fax";
-  document.querySelectorAll("#chat-onglets button").forEach((b) => b.classList.toggle("on", b.dataset.vue === v));
-  if (v === "fax") {
-    $("fax-voyant").classList.remove("on");
-    // le fax reçu a été vu : la LED FAX de la fenêtre du modem s'éteint
-    if (T && document.hasFocus()) T.event.emit("fax:vu").catch(() => {});
-  }
+  if (v === "fax") fax.nouveau = false;
+  titreBoite();
+  annoncerOnglet();
 }
-document.querySelectorAll("#chat-onglets button").forEach((b) => b.addEventListener("click", () => vueChat(b.dataset.vue)));
 // Le bouton FAX de la fenêtre du modem ouvre la messagerie sur la Télécopie
 // (à l'ouverture : l'onglet noté par la fenêtre du modem ; ensuite : l'événement)
 try {
@@ -535,6 +544,10 @@ listen("messagerie:onglet", (v) => {
   try { localStorage.removeItem("messagerie-onglet"); } catch (_) { /* rien */ }
   vueChat(v === "fax" ? "fax" : "chat");
 });
+// La barre du navigateur se charge en même temps : elle demande l'onglet
+// quand elle est prête, et on le lui dit dès qu'on écoute (l'onglet voulu
+// est déjà choisi : une seule réponse, pas de « chat » puis « fax » qui se croisent)
+listen("messagerie:onglet-demande", annoncerOnglet).then(annoncerOnglet);
 
 function feuille(f) {
   fax.feuille = f;
@@ -660,7 +673,7 @@ $("fax-envoyer").addEventListener("click", () => {
   invoke("fax_envoyer", { numero, hauteur, octets: Array.from(octets.subarray(0, (FAX_L / 8) * hauteur)), fine: true })
     .catch((err) => faxEtat("Envoi impossible : " + err));
 });
-// Sur l'onglet Télécopie, un contact remplit le numéro du fax (sans appeler)
+// Sur la Télécopie, un contact remplit le numéro du fax (sans appeler)
 $("dir-list").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-num]");
   if (!b || fax.vue !== "fax") return;
@@ -684,7 +697,7 @@ listen("v34:fax", (m) => {
       fax.fine = m.fine;
       frx.fillStyle = "#f3efe2";
       frx.fillRect(0, 0, FAX_L, FAX_H);
-      if (fax.vue !== "fax") $("fax-voyant").classList.add("on");
+      if (fax.vue !== "fax") faxNouveau(true);
       feuille("recu");
       break;
     case "ligne": {
@@ -712,7 +725,7 @@ listen("v34:fax", (m) => {
       break;
     case "fin":
       faxEtat((m.ok ? "✓ " : "✗ ") + m.raison + (m.fichier ? " — enregistré : " + m.fichier : ""));
-      if (m.recu && fax.vue !== "fax") $("fax-voyant").classList.add("on");
+      if (m.recu && fax.vue !== "fax") faxNouveau(true);
       break;
   }
 });

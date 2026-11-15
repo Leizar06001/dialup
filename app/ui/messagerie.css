@@ -159,11 +159,6 @@ button.on { background: #d8d8d8 repeating-conic-gradient(#c0c0c0 0 25%, #e0e0e0 
   .vmsg { min-height: 1.3em; }
 }
 
-/* ------------------------------------------------------------------ onglets de la boîte de conversation */
-.onglets { position: absolute; top: -11px; right: 8px; background: var(--face); padding: 0 2px; }
-.onglets button { min-height: 20px; min-width: 0; padding: 0 8px; font-weight: normal; }
-.onglets .voyant { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-left: 4px; background: #600; vertical-align: middle; }
-.onglets .voyant.on { background: var(--led-red); box-shadow: 0 0 4px var(--led-red); animation: clign 0.9s steps(2, jump-none) infinite; }
 @keyframes clign { 50% { opacity: 0.25; } }
 
 /* ------------------------------------------------------------------ télécopieur */

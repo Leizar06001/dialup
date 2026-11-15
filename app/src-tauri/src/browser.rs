@@ -93,7 +93,7 @@ pub fn set_vue(app: &AppHandle, messagerie: bool) -> Result<Vue, String> {
 }
 
 fn titre(messagerie: bool) -> &'static str {
-    if messagerie { "Tinyverse Messagerie — chat, visiophone, fichiers" } else { "Tinyverse Navigator — Internet par modem" }
+    if messagerie { "Tinyverse Messagerie — chat, visiophone, fichiers, télécopie" } else { "Tinyverse Navigator — Internet par modem" }
 }
 
 /// Ouvre (ou ramène au premier plan) la fenêtre du navigateur, sur la
