@@ -20,7 +20,7 @@
 use std::f32::consts::PI;
 
 use super::chargement::{base_donnees, Chargement};
-use super::constellation::{gray, maq_decider, mdp, mdp_decider};
+use super::constellation::{arc_decider, maq_decider};
 use super::emetteur::{motif_analytique, SymboleConnu};
 use super::partition::{debut_motif, duree_motif, harmoniques, note_du_motif, periode, reference, Degre, Ordonnanceur, Symbole, ARTICULATION, CROCHE, DEGRES, FE, GARDE, MOTIF};
 use super::{decalage_donnees, Duplex, Mode, Voix};
@@ -132,7 +132,8 @@ pub struct Recepteur {
     canal: Vec<Vec<Cpx>>,
     bases: Vec<Vec<Cpx>>,
     osc: Vec<Vec<Cpx>>,
-    idx: Vec<u32>,
+    /// Phases décidées (joli), par rapport à la référence de la note
+    phase: Vec<f32>,
     phi: f64,
     t_phi: usize,
     omega: f64,
@@ -166,7 +167,7 @@ impl Recepteur {
             canal: Vec::new(),
             bases: Vec::new(),
             osc: DEGRES.iter().map(|&d| osc(periode(voix, d))).collect(),
-            idx: Vec::new(),
+            phase: Vec::new(),
             phi: 0.0,
             t_phi: 0,
             omega: 0.0,
@@ -614,11 +615,12 @@ impl Recepteur {
                 for i in 0..rangs.len() {
                     if base[i].norm_sqr() > 0.0 {
                         let est = y[i] * r * (1.0 / base[i].norm_sqr()) * base[i].conj();
-                        canal[i] = canal[i] + (est - canal[i]) * 0.5;
+                        let d = (est - canal[i]) * 0.5;
+                        canal[i] += d;
                     }
                 }
             }
-            self.idx = vec![0; rangs.len()];
+            self.phase = vec![0.0; rangs.len()];
             return;
         }
         // Données : décisions, phase commune, décisions finales
@@ -634,15 +636,19 @@ impl Recepteur {
             })
             .collect();
         let mode = self.mode;
-        let decider = |i: usize, zi: Cpx| -> (Cpx, u32) {
+        let signe = if self.stats.symboles % 2 == 1 { -1.0 } else { 1.0 };
+        let mut phase = std::mem::take(&mut self.phase);
+        let decider = |i: usize, zi: Cpx, phase: &[f32]| -> (Cpx, u32) {
             let b = bits[i];
             if b == 0 {
-                return (Cpx::new(1.0, 0.0), 0);
+                return (Cpx::from_polar(1.0, phase.get(i).copied().unwrap_or(0.0)), 0);
             }
             match mode {
                 Mode::Joli => {
-                    let k = mdp_decider(b, zi);
-                    (mdp(b, k), k)
+                    // pas observé depuis la phase décidée au symbole précédent
+                    let d = (zi * Cpx::from_polar(1.0, -phase[i])).arg();
+                    let (v, pas) = arc_decider(b, signe * d);
+                    (Cpx::from_polar(1.0, phase[i] + signe * pas), v)
                 }
                 Mode::Rapide => {
                     let (v, p) = maq_decider(b, zi);
@@ -656,7 +662,7 @@ impl Recepteur {
         let mut g = Cpx::ZERO;
         for i in 0..rangs.len() {
             if actif[i] {
-                let (p, _) = decider(i, z[i]);
+                let (p, _) = decider(i, z[i], &phase);
                 g += z[i] * p.conj() * attendu[i].norm_sqr();
             }
         }
@@ -673,20 +679,14 @@ impl Recepteur {
                 continue;
             }
             let zi = z[i] * r;
-            let (p, v) = decider(i, zi);
+            let (p, v) = decider(i, zi, &phase);
             let b = bits[i];
             if b > 0 {
-                let val = match mode {
-                    Mode::Joli => {
-                        let m = 1u32 << b;
-                        let delta = (v + m - self.idx[i]) % m;
-                        self.idx[i] = v;
-                        gray(delta)
-                    }
-                    Mode::Rapide => v,
-                };
+                if mode == Mode::Joli {
+                    phase[i] = p.arg();
+                }
                 for j in (0..b).rev() {
-                    self.bits.push(((val >> j) & 1) as u8);
+                    self.bits.push(((v >> j) & 1) as u8);
                 }
             }
             let e = zi - p;
@@ -707,9 +707,10 @@ impl Recepteur {
                 // LMS normalisé du canal de cette harmonique
                 let bn = base[i].norm_sqr();
                 let corr = (y[i] * r - attendu[i] * p) * p.conj() * base[i].conj() * (1.0 / bn);
-                canal[i] = canal[i] + corr * 0.05;
+                canal[i] += corr * 0.05;
             }
         }
+        self.phase = phase;
         if !efface {
             self.stats.err += err;
             self.stats.sig += sig;

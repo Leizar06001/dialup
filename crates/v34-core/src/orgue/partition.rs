@@ -144,13 +144,15 @@ pub fn duree_melodie() -> usize {
 
 /// Motif d'appel (notes jouées ensemble, durée en croches) : les cinq
 /// notes des *Rencontres du troisième type* (ré mi do do↓ sol↓), puis
-/// « la si » ; chaque note est tenue, phases connues : le récepteur y cale
-/// le rythme, la fréquence, le canal et le bruit de chaque harmonique de
-/// chaque note de la mélodie (toutes y figurent). Puis deux accords, la
-/// mineur et sol majeur (la dominante, qui appelle le do de la mélodie) :
-/// à eux deux ils font sonner *ensemble* toutes les notes de la mélodie,
-/// ce qu'il faut à notre annuleur d'écho pour apprendre la réponse de
-/// l'écho à toutes ces harmoniques à la fois.
+/// « la si ». Chaque note est tenue sa première moitié, phases connues :
+/// le récepteur y cale le rythme, la fréquence, le canal et le bruit de
+/// chaque harmonique de chaque note de la mélodie (toutes y figurent) ;
+/// elle tremble sa seconde moitié (symboles connus découpés comme les
+/// données) : il y mesure l'interférence que verront les données. Puis la
+/// mineur et sol majeur, deux fois (la dominante appelle le do de la
+/// mélodie), en accords agités : à eux deux ils font sonner *ensemble*
+/// toutes les notes de la mélodie, étalées comme des données — ce qu'il
+/// faut à notre annuleur d'écho pour apprendre l'écho sur toute la bande.
 pub const MOTIF: [(&[Degre], usize); 11] = {
     use Degre::*;
     [

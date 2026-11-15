@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::f32::consts::PI;
 
 use super::chargement::{base_donnees, Chargement};
-use super::constellation::{gray_inverse, maq, mdp};
+use super::constellation::{maq, mdp, pas_arc, ARC_JOLI};
 use super::partition::{
     debut_motif, duree_motif, harmoniques, periode, reference, transition, Degre, Ordonnanceur, Symbole, ALLUMAGE, ARTICULATION, CROCHE, DEGRES, EXTINCTION, GARDE, MOTIF,
 };
@@ -135,8 +135,8 @@ pub struct Emetteur {
     donnees: Option<Donnees>,
     chargement: Chargement,
     bases: Vec<Vec<Cpx>>,
-    /// Indices MDP courants (joli, codage différentiel)
-    idx: Vec<u32>,
+    /// Phases courantes (joli, codage différentiel), par rapport à la référence
+    phase: Vec<f32>,
     bits: VecDeque<u8>,
     /// Bits de remplissage (file vide) et bits de la file émis
     pub bourrage: usize,
@@ -166,7 +166,7 @@ impl Emetteur {
             donnees: None,
             chargement,
             bases,
-            idx: Vec::new(),
+            phase: Vec::new(),
             bits: VecDeque::new(),
             bourrage: 0,
             bits_emis: 0,
@@ -298,10 +298,14 @@ impl Emetteur {
         let d = s.degre;
         let base = self.bases[d.index()].clone();
         if s.reference {
-            self.idx = vec![0; base.len()];
+            self.phase = vec![0.0; base.len()];
             self.jouer(&[(d, base)], t_d + s.debut_note);
             return;
         }
+        // Joli : le signe du pas alterne d'un symbole à l'autre, si bien
+        // que des données constantes (une ligne au repos) ne font
+        // qu'osciller autour de la note au lieu de la désaccorder
+        let signe = if self.symboles % 2 == 1 { -1.0 } else { 1.0 };
         self.symboles += 1;
         let bits = self.chargement.bits[d.index()].clone();
         let mut c = base.clone();
@@ -312,9 +316,9 @@ impl Emetteur {
             let v = self.prendre(b);
             c[i] = match self.mode {
                 Mode::Joli => {
-                    let m = 1u32 << b;
-                    self.idx[i] = (self.idx[i] + gray_inverse(v)) % m;
-                    base[i] * mdp(b, self.idx[i])
+                    let p = self.phase[i] + signe * pas_arc(b, v);
+                    self.phase[i] = (p + PI).rem_euclid(2.0 * PI) - PI;
+                    base[i] * Cpx::from_polar(1.0, self.phase[i])
                 }
                 Mode::Rapide => base[i] * maq(b, v),
             };
@@ -339,14 +343,22 @@ impl Emetteur {
                 Some(a) if a.prochain == t && t < a.fin => a,
                 _ => continue,
             };
+            // Tremblant du mode joli : petits pas dans l'arc, comme ses
+            // données ; sinon (accords, mode rapide) phases au hasard
+            let arc = a.degre.is_some() && self.mode == Mode::Joli;
             let c: Vec<Cpx> = a
                 .base
                 .iter()
-                .map(|z| {
+                .zip(&s.c)
+                .map(|(z, cur)| {
                     h ^= h << 13;
                     h ^= h >> 17;
                     h ^= h << 5;
-                    *z * mdp(3, h >> 29)
+                    if arc {
+                        *cur * Cpx::from_polar(1.0, ((h >> 8) as f32 / (1u32 << 24) as f32 - 0.5) * ARC_JOLI)
+                    } else {
+                        *z * mdp(3, h >> 29)
+                    }
                 })
                 .collect();
             a.prochain += s.w + GARDE;
@@ -468,14 +480,18 @@ mod tests {
     }
 
     #[test]
-    fn mode_joli_sans_donnees_une_tenue_parfaite() {
-        // des zéros en mode joli : phases inchangées → la note est périodique
+    fn mode_joli_au_repos_une_note_tenue() {
+        // des zéros en mode joli : la phase oscille d'un demi-pas autour de
+        // la note, la forme d'onde reste périodique à quelques % près
         let mut e = Emetteur::new(Voix::Appelant, Duplex::PleineBande, Mode::Joli);
         e.programmer_donnees(0);
         let x: Vec<f32> = (0..4800).map(|_| e.echantillon()).collect();
         let w = periode(Voix::Appelant, Degre::Do);
+        let (mut xy, mut xx) = (0.0f32, 0.0f32);
         for i in ARTICULATION..4800 - w {
-            assert!((x[i] - x[i + w]).abs() < 1e-4, "{i}");
+            xy += x[i] * x[i + w];
+            xx += x[i] * x[i];
         }
+        assert!(xy / xx > 0.97, "périodicité {}", xy / xx);
     }
 }

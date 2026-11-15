@@ -1,5 +1,13 @@
-//! Constellations : MDP différentielle (mode « joli ») et MAQ rectangulaire
-//! (mode « rapide »), codage de Gray, seuils de chargement.
+//! Constellations : pas de phase dans un arc (mode « joli ») et MAQ
+//! rectangulaire (mode « rapide »), codage de Gray, seuils de chargement.
+//!
+//! Pourquoi un arc : si chaque harmonique prenait une phase au hasard à
+//! chaque symbole (MDP sur tout le cercle), son énergie s'étalerait sur
+//! ±1/T autour d'elle — à peu près l'écart entre harmoniques — et le
+//! spectre deviendrait presque plat : un souffle coloré, plus de hauteur.
+//! Avec des pas limités à ±45°, la phase ne fait que diffuser lentement :
+//! ~80 % de la puissance reste sur les raies (une « voix céleste »), au
+//! prix d'environ 12 dB de SNR à nombre de bits égal.
 
 use std::f32::consts::PI;
 
@@ -9,21 +17,21 @@ use crate::dsp::Cpx;
 /// Bits maximum par harmonique.
 pub fn bits_max(mode: Mode) -> u8 {
     match mode {
-        Mode::Joli => 5,
+        Mode::Joli => 4,
         Mode::Rapide => 10,
     }
 }
 
 /// Rapport signal/bruit (dB, par harmonique) qu'il faut pour porter `bits`
 /// bits avec un taux d'erreur brut de l'ordre de 1e-5, sans marge.
-/// Joli : MDP-2^b décidée de façon cohérente puis décodée en différentiel
-/// (une erreur de symbole en coûte deux) ; la MDP-32 (±5,6°) a besoin de
-/// plus que la théorie : bruit de phase résiduel et interférence la
-/// gênent davantage (mesuré). Rapide : MAQ carrée ou
+/// Joli : 2^b pas espacés de 90°/2^b, décidés de façon cohérente par
+/// rapport à la phase décidée précédente (une erreur en coûte deux) :
+/// autant qu'une MDP-2^(b+2) sur tout le cercle, avec un peu de marge pour
+/// le bruit de phase résiduel (mesuré). Rapide : MAQ carrée ou
 /// rectangulaire (8, 32, 128, 512 points), décision cohérente.
 pub fn snr_requis_db(mode: Mode, bits: u8) -> f32 {
     match mode {
-        Mode::Joli => [0.0, 10.0, 13.0, 18.5, 24.5, 33.0][bits as usize],
+        Mode::Joli => [0.0, 18.5, 24.5, 32.0, 38.0][bits as usize],
         Mode::Rapide => [0.0, 10.0, 13.0, 17.0, 20.0, 23.5, 26.5, 30.0, 33.0, 36.5, 39.5][bits as usize],
     }
 }
@@ -44,6 +52,26 @@ pub fn gray_inverse(g: u32) -> u32 {
         s >>= 1;
     }
     i
+}
+
+/// Ouverture de l'arc des pas de phase du mode joli (90°).
+pub const ARC_JOLI: f32 = PI / 2.0;
+
+/// Pas de phase (rad) portant la valeur `v` (code de Gray, cyclique) sur
+/// `bits` bits. La valeur 0 tombe sur le plus petit pas (juste sous le
+/// centre de l'arc) : une ligne au repos reste une note tenue.
+pub fn pas_arc(bits: u8, v: u32) -> f32 {
+    let m = 1u32 << bits;
+    let j = (gray_inverse(v) + m / 2 - 1) % m;
+    (j as f32 - (m as f32 - 1.0) / 2.0) * ARC_JOLI / m as f32
+}
+
+/// Décision d'un pas de phase observé `d` (rad) : (valeur, pas décidé).
+pub fn arc_decider(bits: u8, d: f32) -> (u32, f32) {
+    let m = 1u32 << bits;
+    let mf = m as f32;
+    let j = (d * mf / ARC_JOLI + (mf - 1.0) / 2.0).round().clamp(0.0, mf - 1.0) as u32;
+    (gray((j + m - (m / 2 - 1)) % m), (j as f32 - (mf - 1.0) / 2.0) * ARC_JOLI / mf)
 }
 
 /// Point MDP d'indice `i` (sur 2^bits).
@@ -130,6 +158,20 @@ mod tests {
                 assert_eq!(maq_decider(bits, z + Cpx::new(0.02, -0.02)).0, v);
             }
             assert!((p / m as f32 - 1.0).abs() < 1e-4, "{bits} bits : puissance {}", p / m as f32);
+        }
+    }
+
+    #[test]
+    fn arc_aller_retour_dans_plus_ou_moins_45_degres() {
+        for bits in 1..=4u8 {
+            for v in 0..(1u32 << bits) {
+                let p = pas_arc(bits, v);
+                assert!(p.abs() < ARC_JOLI / 2.0);
+                if v == 0 {
+                    assert!(p.abs() < ARC_JOLI / (1 << bits) as f32, "{bits} bits : zéro sur le plus petit pas");
+                }
+                assert_eq!(arc_decider(bits, p + 0.2 * ARC_JOLI / (1 << bits) as f32).0, v);
+            }
         }
     }
 
