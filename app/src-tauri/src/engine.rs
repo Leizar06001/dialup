@@ -435,6 +435,19 @@ fn fmt_speed(x: f64) -> String {
     s.replace('.', ",")
 }
 
+/// Le haut-parleur joue-t-il ? ATM0 jamais, ATM2 toujours (décroché), ATM1
+/// (AUTO) jusqu'à la porteuse… sauf une télécopie, qu'on entend jusqu'au
+/// bout : la porteuse s'y allume dès le CNG, et le sifflement de la page,
+/// c'est tout l'intérêt.
+fn hp_actif(mode: u8, offhook: bool, cd: bool, phase: Phase) -> bool {
+    offhook
+        && match mode {
+            0 => false,
+            1 => !cd || phase == Phase::Fax,
+            _ => true,
+        }
+}
+
 fn in_call(p: Phase) -> bool {
     !matches!(p, Phase::Idle | Phase::Failed)
 }
@@ -1628,12 +1641,7 @@ impl Engine {
 
         // HP : décroché (ou en numérotation) + mode ATM
         let offhook = self.status.leds.oh || self.script.is_active();
-        let active = offhook
-            && match self.spk_mode {
-                0 => false,
-                1 => !self.status.leds.cd,
-                _ => true,
-            };
+        let active = hp_actif(self.spk_mode, offhook, self.status.leds.cd, self.status.phase);
         let target = if active { self.volume * LEVELS[self.spk_level as usize] } else { 0.0 };
         let step = 1.0 / (SAMPLE_RATE as f32 * 0.03); // fondu de 30 ms
         let mut out = [0.0f32; BLOCK];
@@ -1910,6 +1918,19 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hp_auto_jusqu_a_la_porteuse_sauf_le_fax() {
+        // AUTO : la négociation s'entend, plus les données…
+        assert!(hp_actif(1, true, false, Phase::Phase2));
+        assert!(!hp_actif(1, true, true, Phase::Data));
+        // …mais une télécopie, porteuse allumée, s'entend jusqu'au bout
+        assert!(hp_actif(1, true, true, Phase::Fax));
+        // OFF reste muet, même pour un fax ; raccroché, rien
+        assert!(!hp_actif(0, true, true, Phase::Fax));
+        assert!(!hp_actif(1, false, false, Phase::Fax));
+        assert!(hp_actif(2, true, true, Phase::Data));
+    }
 
     #[test]
     fn config_panel_maps_to_modem_config() {
