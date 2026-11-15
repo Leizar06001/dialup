@@ -1002,6 +1002,10 @@ button.dip-col:focus-visible .dip-slot { outline: 2px solid var(--vfd); outline-
 .dip-tape { left: 103px; }
 .dip-legend { grid-template-columns: 26px 26px 26px 1fr; }
 
+/* Interrupteur 4 (morse) : le ruban ne couvre plus que les 5 à 8. */
+.dip-tape { left: 135px; letter-spacing: 1px; }
+.dip-legend { grid-template-columns: 26px 26px 26px 26px 1fr; }
+
 /* ------------------------------------------------------------------ « Connexion à… » (Windows 98)
    La fenêtre de l'Accès réseau à distance, le temps que PPP s'installe. */
 .w98 {

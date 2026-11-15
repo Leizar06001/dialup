@@ -45,6 +45,12 @@
 ║  T I N Y V E R S E   B B S   · 1996 ·  ║
 ╚════════════════════════════════════════╝</pre>
         <div class="bbs-out" id="bbs-out"></div>
+        <!-- Liaison en morse : les points et les traits en direct, dans les deux sens -->
+        <div class="morse-bande" id="morse-bande" hidden>
+          <span class="mb-voie" title="Ce que ton modem manipule en ce moment"><i class="mb-led" id="mb-tx-led"></i>▸ <b id="mb-tx">—</b></span>
+          <span class="mb-voie" title="Ce que l'écoute entend du correspondant"><i class="mb-led rx" id="mb-rx-led"></i>◂ <b id="mb-rx">—</b></span>
+          <span class="mb-info" id="mb-info"></span>
+        </div>
         <form class="bbs-in" id="bbs-form" autocomplete="off">
           <span class="prompt">&lt;moi&gt;</span>
           <input id="bbs-input" spellcheck="false" aria-label="Message" placeholder="tape ton message…">

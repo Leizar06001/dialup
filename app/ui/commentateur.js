@@ -133,6 +133,57 @@ const Commentateur = (() => {
       "Raté pour le fax : {raison}. Il faudra recommencer, ou poster une lettre.",
       "Rapport d'émission : ÉCHEC. {Raison}.",
     ],
+    // ---------------------------------------------------------------- morse
+    nsf_cm: [
+      "Surprise dans le CM ! Au bout des modes, {notre} glisse un « service non normalisé » : France, TINYVERSE… du morse ! On se croirait en 1912.",
+      "Regardez bien le CM : un petit bloc fait maison, code pays de la France, code fournisseur TINYVERSE. {Notre} propose de parler morse !",
+      "{Notre} sort le manipulateur du grenier : le CM propose du morse, à {mpm} mots par minute. Qui va oser ?",
+    ],
+    nsf_cm_rx: [
+      "{Autre} propose du morse dans son CM ! Interrupteur 4 sur ON : {notre} dit banco.",
+      "Service non normalisé reçu : TINYVERSE, morse, {mpm} mots par minute. {Notre} accepte. Les télégraphistes sont dans la place !",
+      "Un CM qui parle morse ! {Notre} recopie le bloc dans son JM : marché conclu.",
+    ],
+    nsf_refus_rx: [
+      "{Autre} propose du morse… {notre} fait la sourde oreille : interrupteur 4 sur OFF. Ce sera du V.34, comme tout le monde.",
+      "Une proposition de morse ! Refusée : {notre} n'a pas décollé le ruban du DIP 4.",
+    ],
+    nsf_jm: [
+      "Et le JM répond : TINYVERSE, morse, accepté ! Pas de V.34 ce soir, mesdames et messieurs : place au télégraphe !",
+      "{Autre} recopie le bloc non normalisé dans son JM : marché conclu, on passe au morse !",
+      "Incroyable : {autre} parle morse, lui aussi ! Le V.34 reste au vestiaire.",
+    ],
+    nsf_jm_non: [
+      "Pas de bloc non normalisé dans le JM : {autre} ne parle pas morse. Tant pis, on reste en V.34.",
+      "{Autre} ignore poliment notre proposition de morse. Retour au programme habituel.",
+    ],
+    morse_connect: [
+      "CONNECT {mpm} MPM MORSE ! {mpm} mots par minute, deux lettres par seconde : le modem le plus lent de l'histoire, et fier de l'être.",
+      "Et c'est le CONNECT ! En morse, à {mpm} mots par minute. Samuel Morse en pleurerait de joie.",
+      "CONNECT MORSE ! 800 hertz d'un côté, 1600 de l'autre : un duo à l'octave, en direct et en duplex.",
+    ],
+    morse_ka: [
+      "Ti-taa-ti-taa-ti… KA ! Un message commence, tendez l'oreille.",
+      "KA, le signal de début : {autre} prend la parole.",
+    ],
+    morse_ar: [
+      "Ti-taa-ti-taa-ti : AR, fin du message. À vous les studios !",
+      "AR ! Message terminé. Chez les radioamateurs, on dirait « over ».",
+    ],
+    morse_illisible: [
+      "Une lettre illisible ! Un clic d'orage, ou le télégraphiste d'en face a la main qui tremble.",
+      "Tiens, un signe que personne ne connaît. La ligne a avalé un point, ou en a inventé un.",
+    ],
+    morse_sk: [
+      "Ti-ti-ti-taa-ti-taa : SK, fin de contact. Le télégraphiste range son manipulateur.",
+      "SK ! La politesse du télégraphe avant de raccrocher. Quelle classe.",
+    ],
+    meuble_morse: [
+      "Le télégraphe crépite. {Notre} n'a jamais été aussi lent, ni aussi heureux.",
+      "Ti-ti-taa… On ne s'en lasse pas. À ce rythme-là, on a le temps de savourer chaque lettre.",
+      "Petit rappel pour les jeunes : un trait vaut trois points, et entre deux mots on compte sept points. Tout est dans le rythme.",
+      "Pendant ce temps-là, à 33 600 bit/s, on aurait envoyé une encyclopédie. Mais aurait-elle eu cette élégance ?",
+    ],
     meuble_fax: [
       "Le papier avance, millimètre par millimètre.",
       "Une ligne, puis une autre. Le fax ne se presse pas, mais il ne s'arrête pas.",
@@ -726,7 +777,7 @@ const Commentateur = (() => {
     ],
   };
   /** Situations qui terminent l'appel (affichées en rouge). */
-  const FINS = new Set(["fax_echec", "no_carrier", "abandon", "raccroche_eux", "raccroche_nous", "echec", "occupe", "pas_de_reponse", "pas_de_tonalite"]);
+  const FINS = new Set(["fax_echec", "morse_sk", "no_carrier", "abandon", "raccroche_eux", "raccroche_nous", "echec", "occupe", "pas_de_reponse", "pas_de_tonalite"]);
   /** Signaux du 56k (V.90), commentés dans les deux sens. */
   const V90 = {
     INFO0d: "info0d", Ja: "ja", Sd: "sd", "S̄d": "sd", TRN1d: "sd", Jd: "jd", "J′d": "jd",
@@ -753,6 +804,8 @@ const Commentateur = (() => {
     [/^(DIS|CSI|DCS|TSI|CFR|FTT|EOP|MPS|MCF|RTN|DCN|V\.21)$/, ["Tirlirlirlirlirli", "Brrrdldldldldldl", "Trrr-dlilidlidli"]],
     [/^(TCF|PAGE)$/, ["Krrrrchhhhhhhhhhhh", "Kchhhh-krrrchhhhhh", "Chhhhhhhhh-krrrrrr"]],
   ];
+  /** Morse en syllabes : « .- » → « ti-taa ». */
+  const tiTaa = (code) => String(code || "").split("").map((c) => (c === "." ? "ti" : "taa")).join("-");
   /** Syllabes DTMF par rangée du clavier. */
   const DTMF = { 1: "bip", 2: "bip", 3: "bip", 4: "bup", 5: "bup", 6: "bup", 7: "bep", 8: "bep", 9: "bep", "*": "bop", 0: "bop", "#": "bop" };
   /** Chronologie de la numérotation (s) : comme tones.rs. */
@@ -940,6 +993,7 @@ const Commentateur = (() => {
         case "RxSignal": return surSignal(d, "rx");
         case "Log": return surLog(String((d && d.msg) || ""));
         case "Connected": return surConnexion(d.tx_rate, d.rx_rate);
+        case "Morse": return surMorse(d);
         case "ParamsUpdated": if (appel) appel.params = d; return;
         case "Disconnected":
           if (appel && !appel.clos) fin(appel.connecte ? "raccroche_nous" : "abandon");
@@ -956,6 +1010,7 @@ const Commentateur = (() => {
       if ((p === "Phase1" || p === "Fax") && (!appel || appel.clos)) nouvelAppel();
       if (!appel) return;
       if (p === "Fax") appel.fax = true;
+      if (p === "Morse") appel.morse = true;
       switch (p) {
         case "Phase1":
           if ((appel.sortant != null ? appel.sortant : role() === "Call") && premiere("sonne")) dire("sonne");
@@ -1080,6 +1135,21 @@ const Commentateur = (() => {
         if (premiere("crc" + m[1], "manche")) dire("crc", { quoi: m[1] });
       } else if (/^Inversion de A non détectée/.test(msg)) {
         if (premiere("inversion", "manche")) dire("inversion_ratee", {}, { libre: true });
+      } else if ((m = /^CM : service non normalisé .*morse à (\d+)/.exec(msg))) {
+        if (premiere("nsf")) dire("nsf_cm", { mpm: m[1] }, { prio: 1, groupe: "v8" });
+      } else if ((m = /^CM : l'appelant propose le morse .*accepté, (\d+)/.exec(msg))) {
+        if (premiere("nsf")) dire("nsf_cm_rx", { mpm: m[1] }, { prio: 1, groupe: "v8" });
+      } else if (/^CM : l'appelant propose le morse .*refusé/.test(msg)) {
+        if (premiere("nsf")) dire("nsf_refus_rx", {}, { prio: 1, groupe: "v8" });
+      } else if (/^JM : le correspondant accepte le morse/.test(msg)) {
+        if (premiere("nsf_jm")) dire("nsf_jm", {}, { prio: 1, groupe: "v8" });
+      } else if (/^JM sans service non normalisé/.test(msg)) {
+        if (premiere("nsf_jm")) dire("nsf_jm_non", {}, { groupe: "v8" });
+      } else if ((m = /^CONNECT (\d+) MPM MORSE/.exec(msg))) {
+        appel.morse = true;
+        appel.connecte = true;
+        appel.connecteA = t;
+        dire("morse_connect", { mpm: m[1] }, { prio: 2 });
       } else if ((m = /^Échec : (.*)$/.exec(msg))) {
         fin("echec", { why: m[1] });
       } else if (/^L'autre modem raccroche/.test(msg)) {
@@ -1089,6 +1159,7 @@ const Commentateur = (() => {
 
     function surConnexion(tx, rx) {
       if (!appel) nouvelAppel();
+      if (appel.morse) return; // (déjà dit : CONNECT … MPM MORSE)
       const v = { rx: milliers(rx), tx: milliers(tx) };
       if (appel.connecte) {
         // Même connexion annoncée deux fois (journal 56k + événement) : on l'a déjà dite.
@@ -1104,6 +1175,24 @@ const Commentateur = (() => {
       const asym = rx <= 33600 && tx !== rx ? ` Et ${milliers(tx)} en émission.` : "";
       dire(cle, v, { prio: 2, suffixe: asym });
       if (appel.oracle) dire("oracle_en_ligne", {}, { prio: 1 });
+    }
+
+    /* -------------------------------------------- morse (signe par signe) */
+    function surMorse(m) {
+      if (!appel || !m || !m.data) return;
+      appel.morse = true;
+      const texte = m.data.texte;
+      if (m.type === "Recu") {
+        if (texte === "<KA>" && premiere("morse_ka")) dire("morse_ka", {}, { libre: true });
+        else if (texte === "<AR>" && premiere("morse_ar")) dire("morse_ar", {}, { libre: true });
+        else if (texte === "<SK>") fin("morse_sk");
+        else if (texte === "*" && maintenant() - (appel.illisibleA || -1e9) > 30000) {
+          appel.illisibleA = maintenant();
+          dire("morse_illisible", {}, { libre: true });
+        }
+      } else if (m.type === "Emis" && texte === "<SK>") {
+        fin("morse_sk");
+      }
     }
 
     /* -------------------------------------------- console (codes Hayes) */
@@ -1272,7 +1361,10 @@ const Commentateur = (() => {
       if (t - derniereLigne < MEUBLE_MS || t - appel.meubleA < MEUBLE_MS) return;
       let cle = null, v = {};
       if (cs === "dialing" || cs === "ringing") cle = "meuble_sonne";
-      else if (MEUBLES[ph]) cle = MEUBLES[ph];
+      else if (ph === "Morse") {
+        if (t - derniereLigne < AMBIANCE_MS / 2) return;
+        cle = "meuble_morse";
+      } else if (MEUBLES[ph]) cle = MEUBLES[ph];
       else if (ph === "Data" && appel.connecte && t - derniereLigne > AMBIANCE_MS) {
         const st = etat.status, l = st.link;
         cle = "ambiance";
@@ -1334,8 +1426,25 @@ const Commentateur = (() => {
         r.message = "donnees";
         return r;
       }
+      if (st.phase === "Morse" && st.morse) return morseKaraoke(r, st.morse);
       r.nous = voix(st.tx_signal, "tx");
       r.eux = voix(appel.distantTx != null && !s.net ? appel.distantTx : st.rx_signal, "rx");
+      return r;
+    }
+
+    /** Morse : nous, la lettre en cours (« A : ti-taa », la boule sur
+     *  l'élément qui part) ; eux, ce qui arrive, au fil des points et traits. */
+    function morseKaraoke(r, mo) {
+      if (mo.tx_code) {
+        const n = mo.tx_code.length;
+        const k = Math.min(1, (mo.tx_fait + (mo.tx_cle ? 0.5 : 0)) / n);
+        r.nous = { txt: `${mo.tx_texte} : ${tiTaa(mo.tx_code)}`, mode: "temps", k: 0.15 + 0.85 * k, cle: "m" + mo.tx_texte + mo.tx_code };
+      }
+      if (mo.rx_code) {
+        r.eux = { txt: tiTaa(mo.rx_code) + (mo.rx_cle ? "…" : ""), mode: "temps", k: 1, cle: "r" + mo.rx_code + mo.rx_cle };
+      } else if (mo.rx_texte && mo.rx_dernier_code) {
+        r.eux = { txt: `${mo.rx_texte} : ${tiTaa(mo.rx_dernier_code)}`, mode: "repos", cle: "d" + mo.rx_texte + mo.rx_dernier_code };
+      }
       return r;
     }
 
@@ -1467,7 +1576,7 @@ const Commentateur = (() => {
     return { actif: () => actif };
   }
 
-  return { creer, paroles, monter, PHRASES: P, V90 };
+  return { creer, paroles, monter, tiTaa, PHRASES: P, V90 };
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = Commentateur;

@@ -432,7 +432,9 @@ function visioState(s) {
   if (!v.online && visio.remote) { visio.remote = false; visioBlank("visio-remote"); }
   // Incrustation sur l'écran du correspondant
   let osd = "", sub = "";
-  if (!v.online) {
+  if (s.call_state === "morse") {
+    [osd, sub] = ["TÉLÉGRAPHE", "pas d'images en morse : du texte, ti-taa"];
+  } else if (!v.online) {
     osd = inet ? "LIGNE PRISE PAR INTERNET" : "AUCUN SIGNAL";
     sub = inet ? "le visiophone va d'abonné à abonné" : s.call_state === "idle" ? "appelle un abonné" : "connexion en cours…";
   } else if (v.peer === "muet") {
@@ -479,12 +481,51 @@ listen("v34:state", (s) => {
   state = s;
   // Session Internet : le chat parle au salon du FAI.
   const inet = s.session === "internet" && s.call_state !== "idle";
-  const ph = inet ? "parle au salon du FAI… (/qui : présents)" : "tape ton message…";
+  const morse = s.call_state === "morse";
+  const ph = inet ? "parle au salon du FAI… (/qui : présents)" : morse ? "ton message part en morse (deux lettres par seconde)…" : "tape ton message…";
   if ($("bbs-input").placeholder !== ph) $("bbs-input").placeholder = ph;
   titreBoite();
   renderDir(s.net);
   visioState(s);
+  morseState(s);
 });
+
+/* ---------------------------------------------------------------- morse
+   Liaison en morse (DIP 4) : le bandeau montre ce qui part et ce qui
+   arrive, point par point ; les fichiers ne passent pas au télégraphe. */
+const morseVue = { cle: null };
+/** « .-- » → spans : éléments déjà partis, en cours, à venir. */
+function morseCode(code, fait, cle) {
+  const joli = (c) => (c === "." ? "·" : "−");
+  return [...code].map((c, i) => `<i class="${i < fait ? "fait" : i === fait && cle ? "cours" : "reste"}">${joli(c)}</i>`).join("");
+}
+function morseState(s) {
+  const mo = s.call_state === "morse" && s.status && s.status.morse;
+  const bande = $("morse-bande");
+  if (bande.hidden !== !mo) bande.hidden = !mo;
+  const fichier = $("file-input"), label = document.querySelector('.filebar label[for="file-input"]');
+  if (fichier.disabled !== !!mo) {
+    fichier.disabled = !!mo;
+    label.classList.toggle("off", !!mo);
+    label.title = mo ? "Pas de fichiers en morse : le télégraphe ne transporte que du texte" : "";
+  }
+  if (!mo) return;
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const cle = JSON.stringify([mo.tx_texte, mo.tx_code, mo.tx_fait, mo.tx_cle, mo.tx_attente, mo.rx_code, mo.rx_cle, mo.rx_texte, mo.snr_db != null ? Math.round(mo.snr_db) : null]);
+  if (cle === morseVue.cle) return;
+  morseVue.cle = cle;
+  $("mb-tx-led").classList.toggle("on", mo.tx_cle);
+  $("mb-rx-led").classList.toggle("on", mo.rx_cle);
+  $("mb-tx").innerHTML = mo.tx_code ? `${esc(mo.tx_texte)} ${morseCode(mo.tx_code, mo.tx_fait, mo.tx_cle)}` : "—";
+  const rx = $("mb-rx");
+  // en cours : les éléments déjà entendus, et le ton qui sonne ; sinon la dernière lettre lue
+  const passe = !mo.rx_code && !mo.rx_cle && !!mo.rx_texte;
+  rx.classList.toggle("passe", passe);
+  rx.innerHTML = mo.rx_code || mo.rx_cle ? morseCode(mo.rx_code, 99, false) + (mo.rx_cle ? '<i class="cours">▪</i>' : "")
+    : passe ? `${esc(mo.rx_texte)} ${morseCode(mo.rx_dernier_code, 99, false)}` : "—";
+  const attente = mo.tx_attente ? ` · ${mo.tx_attente} lettre${mo.tx_attente > 1 ? "s" : ""} en attente` : "";
+  setText("mb-info", `${mo.mpm} mots/min${attente}${mo.snr_db != null ? ` · S/B ${Math.round(mo.snr_db)} dB` : ""}`);
+}
 if (!T) renderDir(null);
 // Démo / tests : V34_VISIO=mire allume la mire à l'ouverture
 invoke("app_info").then((i) => { if (i && (i.visio === "mire" || i.visio === "cam")) visioSource(i.visio); }).catch(() => {});
@@ -513,7 +554,8 @@ faxBlanc();
     TÉLÉCOPIE de la barre du navigateur (ou FAX, sur la façade du modem). */
 function titreBoite() {
   const inet = state && state.session === "internet" && state.call_state !== "idle";
-  setText("chat-title", fax.vue === "fax" ? "Télécopie" : inet ? "Salon du FAI" : "Conversation · fichiers");
+  const morse = state && state.call_state === "morse";
+  setText("chat-title", fax.vue === "fax" ? "Télécopie" : inet ? "Salon du FAI" : morse ? "Conversation · morse" : "Conversation · fichiers");
 }
 /** Dit à la barre du navigateur ce qui est affiché, et si un fax attend. */
 function annoncerOnglet() {

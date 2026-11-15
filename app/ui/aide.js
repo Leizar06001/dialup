@@ -31,7 +31,7 @@
         [["APPELER", "/", "Entrée"], "Compose le numéro du champ du terminal (ATDT…) : tonalité, numérotation, sonnerie, puis la négociation qui chante."],
         [["RACCROCHER"], "Raccroche (ATH), proprement si la liaison est établie (cleardown V.34)."],
         [["TINYVERSE", "☎ APPELER"], "En tête de l'ANNUAIRE, toujours là (même en boucle locale) : compose le **08 36 15 42 86**, le fournisseur d'accès décroche et la ligne transporte Internet."],
-        [["08 00 00 00 00"], "Ligne de test du central : elle te renvoie tout ce que tu lui envoies."],
+        [["08 00 00 00 00"], "Ligne de test du central : elle te renvoie tout ce que tu lui envoies. Avec le DIP 4 (MORSE) sur ON, elle répond en morse : de quoi s'entraîner seul."],
         [["08 36 67 22 53"], "**3615 ORACLE** : une intelligence artificielle persuadée qu'on est en 1998. On lui parle dans la MESSAGERIE (rubrique ORACLE)."],
         [["☎ APPELER"], "Dans l'ANNUAIRE, à côté d'un abonné en ligne ou d'un numéro spécial : le compose pour toi (les contacts de la MESSAGERIE aussi)."],
         [["RING"], "Appel entrant (mode réseau) : avec la réponse automatique (DIP 2 sur ON), ça sonne deux fois puis le modem décroche tout seul (LED AA) ; sinon, ATA ou DÉCROCHER."],
@@ -166,6 +166,18 @@
       ],
     },
     {
+      id: "morse", titre: "Le morse (DIP 4)", court: "MORSE",
+      intro: "Un mode « propriétaire », comme les modems maison des années 90 : négocié en V.8, puis du vrai code morse international, à l'oreille.",
+      items: [
+        [["CONNECT 20 MPM MORSE"], "Le code résultat d'une liaison en morse : 20 mots par minute (cadence PARIS, le point dure 60 ms), soit environ deux lettres par seconde. La pastille d'état affiche MORSE, la case DATA de la frise devient MORSE."],
+        [null, "Duplex intégral : l'appelant siffle à **800 Hz**, l'appelé à **1600 Hz**, une octave au-dessus ; chacun écoute la note de l'autre, même quand les deux parlent en même temps. En HP AUTO, on entend tout l'appel (comme pour un fax)."],
+        [["Entrée"], "Dans la MESSAGERIE : ton message part en morse, entre KA (début) et AR (fin). La réponse s'écrit lettre par lettre, au rythme où elle est reconnue ; le bandeau MORSE montre les points et les traits en direct, et le karaoké chante les « ti » et les « taa »."],
+        [["É", "È", "À", "Ç"], "Les lettres accentuées ont leur code (É ··−··, À ·−−·−…) ; ê, â, ô, œ perdent leur accent ; ce que le morse ne sait pas dire (€, #, émoticônes) est sauté, et la messagerie le signale."],
+        [["KA", "AR", "SK"], "Les procédures : KA ouvre un message, AR le ferme, SK met fin au contact. Raccrocher envoie SK d'abord ; le correspondant raccroche en l'entendant."],
+        [null, "Texte seulement : pas de fichiers ni de visiophone au télégraphe. Par temps d'orage, une coupure peut manger un point ou couper un trait en deux : une lettre fausse, ou « * » pour un signe inconnu. C'est le métier."],
+      ],
+    },
+    {
       id: "config", titre: "CONFIG : la face arrière", court: "CONFIG",
       items: [
         [["CONFIG"], "Retourne le modem : interrupteurs DIP et molette de débit. Réglages mémorisés sur ce PC et lus au décroché : ils valent pour l'appel suivant."],
@@ -173,7 +185,8 @@
         [null, "Le 56K tombe en V.34 tout seul si la ligne est trop bruitée ou si elle décale les fréquences (« Longue distance ») : il exige une liaison numérique jusqu'à ton central, comme en 1998."],
         [["DIP 2 · RÉP. AUTO"], "ON : le modem décroche tout seul après deux sonneries. OFF : ça sonne (RING) jusqu'à ce que tu décroches avec ATA ou le bouton DÉCROCHER, qui remplace APPELER."],
         [["DIP 3 · 56K EXPR."], "OFF (d'usine) : toutes les lenteurs de 1999 — long DIL écouté trois fois, temps de réflexion, SCR, puis la fenêtre « Connexion à… » de Windows (« Vérification du nom d'utilisateur et du mot de passe… ») : 20 à 25 s de la numérotation à Internet. ON : une dizaine de secondes."],
-        [["DIP 4", "…", "8"], "Réservés usine, sous le ruban « NE PAS MODIFIER ». On a dit : ne pas modifier."],
+        [["DIP 4 · MORSE"], "OFF d'usine. ON : le modem propose le **morse** pendant la négociation V.8, dans un « service non normalisé » (§6.6 de V.8 : code pays de la France, fournisseur TINYVERSE, 20 mots par minute). Si l'autre modem sait faire et accepte, la ligne passe au télégraphe ; sinon, rien ne change (V.34 ou 56K). Le FAI et l'oracle ne parlent pas morse ; la ligne de test et un abonné au DIP 4 sur ON, si."],
+        [["DIP 5", "…", "8"], "Réservés usine, sous le ruban « NE PAS MODIFIER ». On a dit : ne pas modifier."],
         [["DÉBIT MAX"], "Plafond du débit, de 2 400 à 56 000 bit/s, pour imiter un modem plus ancien. Le V.34 s'arrête à 33 600 ; sous 28 000, le 56K se coupe."],
         [["▲", "▼", "molette"], "Tournent la molette ; au clavier : flèches (un cran), `Pg↑` `Pg↓` (quatre), `Début` `Fin` (les extrêmes). Clique un cran voisin pour y aller."],
         [null, "L'afficheur résume ce que fera le modem au prochain appel ; `ATI4` le redit dans le terminal."],
