@@ -603,6 +603,10 @@ impl P34 {
                         let pp = seq_pp();
                         let refs: Vec<(i64, Cpx)> = (0..48).map(|i| (st + i as i64, pp[i])).collect();
                         let tau = self.rx.fine_timing(&refs);
+                        // l'horloge de l'autre peut différer de la nôtre (vrai
+                        // modem derrière un adaptateur) : on suit son rythme
+                        // dès l'entraînement
+                        self.rx.start_tracking();
                         self.pp_start = st;
                         self.trained = 0;
                         self.rx_st = RxSt::Train;
@@ -744,6 +748,9 @@ impl P34 {
                 if let Some(bits) = bits {
                     for b in bits {
                         self.link.rx_bit(b);
+                    }
+                    for n in self.link.take_notes() {
+                        self.detail(n);
                     }
                     let got = self.link.take_received();
                     if !got.is_empty() {

@@ -23,10 +23,12 @@
 //!
 //! ## Conventions retenues
 //!
-//! * Adresse : EA = 1, DLCI = 0, bit C/R : l'appelant (`originator`) émet ses
-//!   commandes avec C/R = 0 et ses réponses avec C/R = 1, l'appelé l'inverse.
-//!   (L'interopérabilité avec un vrai modem V.42 n'est pas un objectif : pas
-//!   de phase de détection ODP/ADP ni de négociation XID.)
+//! * Adresse : EA = 1, DLCI = 0, bit C/R : entre nos modems, l'appelant
+//!   (`originator`) émet ses commandes avec C/R = 0 et ses réponses avec
+//!   C/R = 1, l'appelé l'inverse. Face à un vrai modem ([`Lapm::set_standard`]),
+//!   c'est la Table 6/V.42 (l'inverse), et l'appelant négocie par XID avant
+//!   SABME (pas de V.42 bis) ; l'appelé répond aux XID. Pas de phase de
+//!   détection ODP/ADP : V.8 a déjà annoncé LAPM.
 //! * Établissement : l'appelant répète SABME (P=1) toutes les T401 jusqu'à
 //!   recevoir UA. Après UA, il émet immédiatement une trame (I ou RR).
 //!   L'appelé, une fois UA envoyé, n'émet pas de trame I tant qu'il n'a pas
@@ -58,6 +60,10 @@ pub const K_WINDOW: usize = 15;
 pub const T401_MIN_BITS: u64 = 2048;
 /// Nombre d'expirations de T401 tolérées pendant la déconnexion (N400).
 const N400_DISC: u32 = 10;
+/// XID de négociation émises sans réponse avant de passer au SABME (N400).
+/// Deux seulement : un U.S. Robotics ne répond jamais aux XID d'un
+/// appelant, et raccroche s'il n'a pas reçu de SABME au bout de ~2 s.
+const N400_XID: u32 = 2;
 
 /// Fanion HDLC.
 const FLAG: u8 = 0x7E;
@@ -79,6 +85,13 @@ const U_DM: u8 = 0x0F;
 const U_PF: u8 = 0x10;
 /// XID (échange d'identification, V.42 §8.2.4.13), bit P/F à 0
 const U_XID: u8 = 0xAF;
+/// FRMR (rejet de trame, V.42 §8.2.4.11)
+const U_FRMR: u8 = 0x87;
+
+/// Octets en hexadécimal, pour le journal
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02X}")).collect::<Vec<_>>().join(" ")
+}
 
 // ---------------------------------------------------------------------------
 // FCS 16 bits (CRC-CCITT version HDLC / X.25, traitement LSB en premier)
@@ -344,6 +357,7 @@ pub enum LapmState {
 enum SentKind {
     Info,
     Poll,
+    Xid,
     Sabme,
     Disc,
     Ua,
@@ -444,6 +458,17 @@ pub struct Lapm {
     standard: bool,
     /// Champ d'information de la réponse XID à émettre
     xid_resp: Option<Vec<u8>>,
+    /// V.42 strict : trames de service échangées (XID, SABME, UA, DISC, DM,
+    /// FRMR), pour le journal — c'est tout ce qu'on voit d'un vrai modem
+    notes: Vec<String>,
+    /// Appelant en V.42 strict : notre XID de négociation est à émettre
+    /// (avant SABME), ou émise et sa réponse attendue (essais déjà faits)
+    xid_due: bool,
+    xid_wait: bool,
+    xid_tries: u32,
+    /// Plafonds négociés pour nos trames émises (taille, fenêtre)
+    n401_tx: Option<usize>,
+    k_tx: Option<usize>,
 
     /// Compteurs (les champs `established` et `tx_queue` sont calculés).
     counters: LapmStats,
@@ -486,6 +511,12 @@ impl Lapm {
             u_resp: None,
             standard: false,
             xid_resp: None,
+            notes: Vec::new(),
+            xid_due: false,
+            xid_wait: false,
+            xid_tries: 0,
+            n401_tx: None,
+            k_tx: None,
             counters: LapmStats::default(),
         }
     }
@@ -523,6 +554,7 @@ impl Lapm {
     /// Prochain bit à émettre ; à appeler une fois par bit émis par le modem.
     pub fn next_tx_bit(&mut self) -> bool {
         self.clock += 1;
+
         if let Some(deadline) = self.t401_deadline {
             // T401 n'expire pas pendant la réception d'une trame : elle porte
             // peut-être l'acquittement attendu (report d'au plus une trame).
@@ -632,6 +664,24 @@ impl Lapm {
     /// nos modems d'avant attendent.
     pub fn set_standard(&mut self, standard: bool) {
         self.standard = standard;
+        // Appelant face à un vrai modem : négociation XID (sans V.42 bis),
+        // puis SABME (V.42 §7.2.2, §8.10). Pas de phase de détection
+        // (ODP/ADP) : V.8 a déjà annoncé LAPM des deux côtés.
+        if standard && self.originator && self.state == LapmState::Establishing && self.clock == 0 {
+            self.xid_due = true;
+            self.sabme_due = false;
+        }
+    }
+
+    /// Trames de service échangées depuis le dernier appel (V.42 strict).
+    pub fn take_notes(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.notes)
+    }
+
+    fn note(&mut self, msg: String) {
+        if self.standard && self.notes.len() < 64 {
+            self.notes.push(msg);
+        }
     }
 
     /// Octet d'adresse d'une trame émise (commande ou réponse). V.42 : les
@@ -644,8 +694,9 @@ impl Lapm {
 
     /// Réponse à une XID de négociation (V.42 §8.10, §12.2) : fonctions
     /// optionnelles HDLC sans SREJ ni FCS 32 bits, longueur de trame et
-    /// fenêtre demandées ramenées à nos limites, pas de V.42 bis (aucun
-    /// sous-champ privé : pas de compression).
+    /// fenêtre demandées ramenées à nos limites, et pas de V.42 bis, dit
+    /// explicitement (sous-champ privé « V42 », P0 = 0) : l'absence vaut
+    /// refus d'après la norme, mais un U.S. Robotics s'est cru en V.42 bis.
     fn xid_response(&self, cmd: &[u8]) -> Vec<u8> {
         // paramètres demandés : PI → valeur
         let mut asked: Vec<(u8, u32)> = Vec::new();
@@ -683,7 +734,60 @@ impl Lapm {
         let mut info = vec![0x82, 0x80];
         info.extend((params.len() as u16).to_be_bytes());
         info.extend(params);
+        // Table 11b/V.42 : identification « V42 », puis P0 = 0 (compression
+        // dans aucun sens)
+        let private = [0u8, 3, b'V', b'4', b'2', 1, 1, 0];
+        info.push(0xF0);
+        info.extend((private.len() as u16).to_be_bytes());
+        info.extend(private);
         info
+    }
+
+    /// Notre XID de négociation (appelant) : fonctions optionnelles comme
+    /// en réponse, N401 et k dans les deux sens, pas de V.42 bis.
+    fn xid_command(&self) -> Vec<u8> {
+        let n401_bits = ((self.n401 * 8) as u16).to_be_bytes();
+        let k = self.k as u8;
+        let params: Vec<u8> = vec![3, 4, 0x8A, 0x89, 0, 0, 5, 2, n401_bits[0], n401_bits[1], 6, 2, n401_bits[0], n401_bits[1], 7, 1, k, 8, 1, k];
+        let private = [0u8, 3, b'V', b'4', b'2', 1, 1, 0];
+        let mut info = vec![0x82, 0x80];
+        info.extend((params.len() as u16).to_be_bytes());
+        info.extend(params);
+        info.push(0xF0);
+        info.extend((private.len() as u16).to_be_bytes());
+        info.extend(private);
+        info
+    }
+
+    /// Réponse à notre XID : on retient les plafonds (N401, k) pour nos
+    /// trames émises, puis on établit la liaison.
+    fn on_xid_answer(&mut self, info: &[u8]) {
+        self.xid_wait = false;
+        self.t401_deadline = None;
+        self.sabme_due = true;
+        if info.first() != Some(&0x82) {
+            return;
+        }
+        let mut i = 1;
+        while i + 3 <= info.len() {
+            let (gi, gl) = (info[i], u16::from_be_bytes([info[i + 1], info[i + 2]]) as usize);
+            let body = &info[i + 3..(i + 3 + gl).min(info.len())];
+            if gi == 0x80 {
+                let mut j = 0;
+                while j + 2 <= body.len() {
+                    let (pi, pl) = (body[j], body[j + 1] as usize);
+                    let pv = &body[(j + 2).min(body.len())..(j + 2 + pl).min(body.len())];
+                    let v = pv.iter().fold(0usize, |a, &b| a << 8 | b as usize);
+                    match pi {
+                        5 | 6 if v >= 8 => self.n401_tx = Some(self.n401_tx.unwrap_or(self.n401).min(v / 8)),
+                        7 | 8 if v >= 1 => self.k_tx = Some(self.k_tx.unwrap_or(self.k).min(v)),
+                        _ => {}
+                    }
+                    j += 2 + pl;
+                }
+            }
+            i += 3 + gl;
+        }
     }
 
     fn arm_t401(&mut self) {
@@ -731,6 +835,19 @@ impl Lapm {
 
     fn on_t401_expiry(&mut self) {
         match self.state {
+            LapmState::Establishing if self.xid_wait => {
+                self.xid_tries += 1;
+                if self.xid_tries >= N400_XID {
+                    // pas de réponse : on établit sans négocier
+                    self.xid_wait = false;
+                    self.sabme_due = true;
+                    let c = &self.counters;
+                    let msg = format!("V.42 : pas de réponse à notre XID ({} trames reçues, {} rejetées), SABME sans négociation", c.frames_rx, c.fcs_errors);
+                    self.note(msg);
+                } else {
+                    self.xid_due = true;
+                }
+            }
             LapmState::Establishing => self.sabme_due = true,
             LapmState::Disconnecting => {
                 self.disc_retries += 1;
@@ -761,6 +878,11 @@ impl Lapm {
             }
             SentKind::Poll => {
                 if connected && self.poll_outstanding {
+                    self.arm_t401();
+                }
+            }
+            SentKind::Xid => {
+                if self.state == LapmState::Establishing && self.xid_wait {
                     self.arm_t401();
                 }
             }
@@ -807,6 +929,18 @@ impl Lapm {
             return Some(SentKind::Other);
         }
         match self.state {
+            LapmState::Establishing if self.xid_due => {
+                self.xid_due = false;
+                self.xid_wait = true;
+                out.push(self.addr(true));
+                out.push(U_XID);
+                let info = self.xid_command();
+                if self.xid_tries == 0 {
+                    self.note(format!("V.42 : notre XID de négociation : {}", hex(&info)));
+                }
+                out.extend(info);
+                Some(SentKind::Xid)
+            }
             LapmState::Establishing if self.sabme_due => {
                 self.sabme_due = false;
                 out.push(self.addr(true));
@@ -839,7 +973,7 @@ impl Lapm {
             && !self.poll_due
             && !self.peer_busy
             && (self.next_idx < self.window.len()
-                || (self.window.len() < self.k && !self.tx_queue.is_empty()))
+                || (self.window.len() < self.k_tx.unwrap_or(self.k) && !self.tx_queue.is_empty()))
     }
 
     fn select_connected(&mut self, out: &mut Vec<u8>) -> Option<SentKind> {
@@ -872,7 +1006,7 @@ impl Lapm {
         // 4. Trame I (nouvelle ou retransmise), qui porte aussi l'acquittement.
         if self.can_send_i() {
             if self.next_idx == self.window.len() {
-                let n = self.tx_queue.len().min(self.n401);
+                let n = self.tx_queue.len().min(self.n401_tx.unwrap_or(self.n401));
                 let data: Vec<u8> = self.tx_queue.drain(..n).collect();
                 self.window.push_back(TxEntry { data, sent: false });
             }
@@ -908,6 +1042,7 @@ impl Lapm {
         let addr = f[0];
         // EA = 1 et DLCI = 0 ; seul le bit C/R peut varier.
         if addr & !0x02 != 0x01 {
+            self.note(format!("V.42 : trame d'adresse inattendue : {}", hex(&f[..f.len().min(12)])));
             return;
         }
         let cr = addr & 0x02 != 0;
@@ -927,10 +1062,30 @@ impl Lapm {
             self.on_s_frame(c0, f[2] >> 1, f[2] & 1 != 0, is_cmd);
         } else if c0 & !U_PF == U_XID {
             // XID de négociation d'un vrai modem (V.42) : on répond
+            self.note(format!("V.42 : XID {} reçue : {}", if is_cmd { "commande" } else { "réponse" }, hex(&f[2..])));
             if is_cmd && self.standard {
-                self.xid_resp = Some(self.xid_response(&f[2..]));
+                let resp = self.xid_response(&f[2..]);
+                self.note(format!("V.42 : notre réponse XID : {}", hex(&resp)));
+                self.xid_resp = Some(resp);
+            } else if !is_cmd && self.xid_wait {
+                self.on_xid_answer(&f[2..]);
             }
         } else {
+            let name = match c0 & !U_PF {
+                U_SABME => "SABME",
+                U_UA => "UA",
+                U_DISC => "DISC",
+                U_DM => "DM",
+                U_FRMR => "FRMR",
+                _ => "U inconnue",
+            };
+            self.note(format!(
+                "V.42 : {name} reçue ({}, {}={}){}",
+                if is_cmd { "commande" } else { "réponse" },
+                if is_cmd { "P" } else { "F" },
+                (c0 & U_PF != 0) as u8,
+                if f.len() > 2 { format!(" : {}", hex(&f[2..])) } else { String::new() }
+            ));
             // Trame U : sans champ d'information pour celles qu'on traite.
             if f.len() != 2 {
                 return;
@@ -1143,6 +1298,48 @@ mod tests {
         let da: Vec<u8> = (0..900u32).map(|i| (i * 7) as u8).collect();
         let db: Vec<u8> = (0..700u32).map(|i| (i * 13) as u8).collect();
         transfer(&mut pair, &da, &db, 400_000);
+        // l'appelant a négocié par XID avant d'établir la liaison
+        let na = pair.a.take_notes();
+        let nb = pair.b.take_notes();
+        assert!(na.iter().any(|n| n.contains("notre XID de négociation")) && na.iter().any(|n| n.contains("XID réponse reçue")), "{na:?}");
+        assert!(nb.iter().any(|n| n.contains("XID commande reçue")) && nb.iter().any(|n| n.contains("SABME reçue")), "{nb:?}");
+    }
+
+    /// Appelant face à un vrai modem : XID (sans V.42 bis : sous-champ privé,
+    /// P0 = 0) avant SABME ; la réponse fixe nos plafonds d'émission. Un
+    /// modem qui ne répond pas aux XID : SABME après N400 essais.
+    #[test]
+    fn appelant_negocie_par_xid() {
+        let mut a = Lapm::new(true);
+        a.set_standard(true);
+        let mut out = Vec::new();
+        assert!(matches!(a.select_frame(&mut out), Some(SentKind::Xid)));
+        assert_eq!(&out[..2], &[0x03, U_XID], "commande de l'appelant, C/R = 1");
+        assert!(out.ends_with(&[0xF0, 0, 8, 0, 3, b'V', b'4', b'2', 1, 1, 0]), "pas de V.42 bis");
+        assert!(a.select_frame(&mut out).is_none(), "rien avant la réponse");
+        // réponse : N401 = 64 octets (512 bits), k = 7
+        let params = [3u8, 4, 0x8A, 0x89, 0, 0, 5, 2, 0x02, 0x00, 6, 2, 0x02, 0x00, 7, 1, 7, 8, 1, 7];
+        let mut resp = vec![0x03, U_XID, 0x82, 0x80, 0, params.len() as u8]; // réponse de l'appelé : C/R = 1
+        resp.extend(params);
+        a.handle_frame(&resp);
+        assert_eq!((a.n401_tx, a.k_tx), (Some(64), Some(7)));
+        assert!(matches!(a.select_frame(&mut out), Some(SentKind::Sabme)));
+        // sans réponse : XID répétée à chaque T401, puis SABME
+        let mut m = Lapm::new(true);
+        m.set_standard(true);
+        for _ in 0..((N400_XID as u64 + 1) * m.t401_bits() + 2000) {
+            m.next_tx_bit();
+            if m.sending == Some(SentKind::Sabme) {
+                break;
+            }
+        }
+        assert_eq!(m.sending, Some(SentKind::Sabme));
+        assert_eq!(m.xid_tries, N400_XID);
+        let notes = m.take_notes();
+        assert!(notes.iter().any(|n| n.contains("pas de réponse à notre XID")), "{notes:?}");
+        // nos anciens modems (convention d'origine) : SABME d'emblée
+        let mut legacy = Lapm::new(true);
+        assert!(matches!(legacy.select_frame(&mut out), Some(SentKind::Sabme)));
     }
 
     /// XID de négociation typique d'un modem V.42 bis (N401 = 256 octets,
@@ -1164,8 +1361,9 @@ mod tests {
         let resp = b.xid_resp.clone().expect("réponse XID");
         assert_eq!(&resp[..2], &[0x82, 0x80]);
         let gl = u16::from_be_bytes([resp[2], resp[3]]) as usize;
-        assert_eq!(resp.len(), 4 + gl, "pas de sous-champ privé (pas de compression)");
-        let body = &resp[4..];
+        // puis le sous-champ privé : « V42 », P0 = 0 (pas de compression)
+        assert_eq!(&resp[4 + gl..], &[0xF0, 0, 8, 0, 3, b'V', b'4', b'2', 1, 1, 0], "refus explicite de V.42 bis");
+        let body = &resp[4..4 + gl];
         assert_eq!(&body[..6], &[3, 4, 0x8A, 0x89, 0, 0]);
         // N401 ramené à 128 octets = 1024 bits, k = 15
         assert!(body.windows(4).any(|w| w == [5, 2, 0x04, 0x00]) && body.windows(4).any(|w| w == [6, 2, 0x04, 0x00]));
@@ -1173,6 +1371,8 @@ mod tests {
         let mut out = Vec::new();
         b.select_frame(&mut out);
         assert_eq!(&out[..2], &[0x03, U_XID], "réponse de l'appelé : C/R = 1");
+        let notes = b.take_notes();
+        assert!(notes.len() == 2 && notes[0].contains("XID commande reçue") && notes[1].contains("notre réponse XID"), "{notes:?}");
         // notre convention d'origine n'y répond pas (nos modems n'en envoient pas)
         let mut legacy = Lapm::new(false);
         legacy.handle_frame(&frame);

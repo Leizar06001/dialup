@@ -5,8 +5,12 @@
 //! correction de phase de porteuse (boucle du 2e ordre).
 //!
 //! Le rythme symbole est estimé en boucle ouverte pendant le signal S,
-//! puis figé : les deux modems partagent la même horloge à 8 kHz (le
-//! réseau est numérique), l'égaliseur absorbe le reste.
+//! puis figé : deux de nos modems partagent la même horloge à 8 kHz (le
+//! réseau est numérique), l'égaliseur absorbe le reste. Un vrai modem
+//! derrière un adaptateur téléphonique a SON quartz (+54 ppm mesurés sur un
+//! U.S. Robotics : un demi-symbole de glissement en 3 s) : dès le recalage
+//! sur PP, on suit donc les changements de phase du rythme, estimée en
+//! boucle ouverte ([`QamRx::start_tracking`]).
 
 use std::collections::VecDeque;
 
@@ -20,6 +24,26 @@ const NT: usize = 48;
 const CENTER: usize = 23;
 /// Retard de l'égaliseur en symboles : (NT − 1 − CENTER) / 2
 pub const EQ_DELAY: i64 = 12;
+
+/// Suivi du rythme : mémoire de l'estimateur (symboles) et boucle
+/// proportionnelle-intégrale. L'écart est corrigé en ≈ 250 symboles ;
+/// l'intégrateur apprend lentement la dérive (T par symbole, ≈ 4000
+/// symboles), qu'on continue d'appliquer pendant les silences de l'autre.
+/// Plus rapide, il apprendrait aussi le bruit de l'estimateur, et le
+/// prolongerait pendant ces silences. Dérive plafonnée à ±300 ppm.
+const TRACK_MEMORY: f64 = 200.0;
+const TRACK_KP: f64 = 0.004;
+const TRACK_KI: f64 = 1e-6;
+const TRACK_MAX_FREQ: f64 = 300e-6;
+/// Niveau reçu (relatif à celui du signal suivi) en dessous duquel on ne
+/// bouge plus la grille : silences de l'autre entre les phases, coupure.
+/// Le rythme estimé sur du bruit n'est que du bruit.
+const TRACK_MIN_LEVEL: f32 = 1.0 / 16.0;
+
+/// Ramène dans [−0,5 ; 0,5[ (fraction de symbole).
+fn wrap_half(x: f64) -> f64 {
+    x - x.round()
+}
 
 /// Un symbole en sortie du récepteur.
 #[derive(Clone, Copy, Debug)]
@@ -54,6 +78,13 @@ pub struct QamRx {
     /// Erreur quadratique moyenne de l'égaliseur (après entraînement)
     mse: f32,
     trained_syms: u64,
+    /// Suivi du rythme : écart de référence (fraction de symbole) entre la
+    /// phase estimée et notre grille au début du suivi
+    track_ref: Option<f64>,
+    /// Niveau du signal suivi (lentement mis à jour tant qu'il est là)
+    track_level: f32,
+    /// Dérive apprise du rythme de l'autre (T par symbole)
+    track_freq: f64,
     pub mu: f32,
     /// Apprentissage supervisé enregistré (mémoire de l'égaliseur, cible
     /// dans le domaine non tourné) pour le calcul des coefficients optimaux
@@ -69,7 +100,7 @@ impl QamRx {
         Self {
             d,
             sps,
-            te: TimingEstimator::new(symbol_rate, 24.0),
+            te: TimingEstimator::new(symbol_rate, TRACK_MEMORY),
             t_next: 0.0,
             // Grille d'échantillonnage fixe : les deux modems partagent la
             // même horloge (le réseau transporte des échantillons), il n'y a
@@ -87,6 +118,9 @@ impl QamRx {
             level: 0.0,
             mse: 1.0,
             trained_syms: 0,
+            track_ref: None,
+            track_level: 0.0,
+            track_freq: 0.0,
             mu: 0.25,
             ls: None,
         }
@@ -142,6 +176,11 @@ impl QamRx {
         self.grid_offset += shift;
         self.t_next += shift;
         self.reset_equalizer();
+        // la grille est au mieux : c'est la nouvelle référence du suivi
+        if self.track_ref.is_some() {
+            self.track_ref = None;
+            self.start_tracking();
+        }
         // La même corrélation donne la phase de porteuse et le gain du
         // canal (signal avant CAG) : y ≈ g·r·e^{jφ}, g = |Σ y·r*| / Σ|r|².
         self.phase = best_acc.arg();
@@ -176,6 +215,26 @@ impl QamRx {
         best
     }
 
+    /// Suit désormais le rythme de l'autre (son horloge peut différer de la
+    /// nôtre : vrai modem derrière un adaptateur). Rien ne saute : on garde
+    /// l'écart actuel entre la phase estimée (en boucle ouverte, sur les
+    /// derniers symboles reçus) et notre grille, et on corrige doucement ses
+    /// changements ; l'égaliseur suit. À appeler une fois la grille calée
+    /// (recalage fin sur PP) : l'entraînement voit alors un rythme stable.
+    pub fn start_tracking(&mut self) {
+        if self.track_ref.is_none() {
+            let (frac, _) = self.te.phase();
+            let pos = (self.grid_offset / self.sps).rem_euclid(1.0);
+            self.track_ref = Some(wrap_half(frac - pos));
+            self.track_level = self.level;
+        }
+    }
+
+    /// Le suivi du rythme est en marche.
+    pub fn tracking(&self) -> bool {
+        self.track_ref.is_some()
+    }
+
     /// Réactive l'estimation de rythme en boucle ouverte (utile si un jour
     /// les horloges des deux modems diffèrent, ex. liaison acoustique).
     pub fn unfreeze_timing(&mut self) {
@@ -202,9 +261,7 @@ impl QamRx {
     pub fn push(&mut self, x: f32) -> Option<RxSym> {
         let y0 = self.d.push(x);
         let t_now = self.d.latest();
-        if !self.timing_frozen {
-            self.te.push(t_now, y0);
-        }
+        self.te.push(t_now, y0);
         self.level = 0.998 * self.level + 0.002 * y0.norm_sqr();
         let mut out = None;
         while self.t_next <= t_now {
@@ -231,6 +288,22 @@ impl QamRx {
                 }
                 self.t_next += 0.2 * err * self.sps;
                 self.grid_offset += self.t_next - before;
+            }
+            // Suivi du rythme d'un modem à une autre horloge. Pendant un
+            // silence de l'autre (entre les phases, coupure), le rythme
+            // estimé sur du bruit n'est que du bruit : on continue seulement
+            // sur la dérive apprise.
+            if let Some(r) = self.track_ref {
+                let mut step = self.track_freq;
+                if self.signal_ok() && self.level >= TRACK_MIN_LEVEL * self.track_level {
+                    self.track_level += 0.001 * (self.level - self.track_level);
+                    let (frac, _) = self.te.phase();
+                    let err = wrap_half(frac - (t / self.sps).fract() - r);
+                    self.track_freq = (self.track_freq + TRACK_KI * err).clamp(-TRACK_MAX_FREQ, TRACK_MAX_FREQ);
+                    step += TRACK_KP * err;
+                }
+                self.t_next += step * self.sps;
+                self.grid_offset += step * self.sps;
             }
             let mut z = Cpx::ZERO;
             for (c, b) in self.eq.iter().zip(self.buf.iter()) {
