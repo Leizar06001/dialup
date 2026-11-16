@@ -84,9 +84,12 @@ impl CentralConfig {
             password: password.into(),
             local_port: 0,
             codec: Codec::Alaw,
-            // Modem : tampon profond et sans glissement (le Wi-Fi a facilement
-            // 50 ms de gigue ; un glissement de 20 ms fait dérailler le modem).
-            jitter_target_ms: 140,
+            // Modem : tampon profond et sans glissement (un glissement de
+            // 20 ms fait dérailler le modem). Le Wi-Fi d'un Mac a des pointes
+            // de 100 à 150 ms toutes les quelques secondes (la carte quitte
+            // son canal : AirDrop, recherche de réseaux) : à 140 ms, près de
+            // 3 % des paquets arrivaient trop tard, autant de trous.
+            jitter_target_ms: 200,
             concealment: Concealment::Modem,
         }
     }

@@ -443,6 +443,21 @@ G3 avec la TÉLÉCOPIE de l'appli (V.29) ; un Minitel avec le 3615 (V.23).
 L'ATA n'envoie qu'une copie de chaque trame : un paquet perdu entre la box
 et le VPS est un vrai trou dans la ligne (réapprentissage, ou pire).
 
+Le tampon de gigue d'un Cisco ATA est adaptatif : des paquets en retard,
+il les joue quand même, et toute la suite de l'appel glisse d'autant (écho
+de sa prise décalé, le modem d'en face réapprend tout). Le central lui
+envoie donc un flux parfaitement régulier : les trames de l'appli passent
+par un tampon de 200 ms et partent au rythme de l'ATA (extrapolé de ses
+propres trames, même quand son flux montant cale) ; une trame trop en
+retard devient un trou à sa place, jamais un glissement. Plus de tampon
+rallongerait l'aller-retour, que la phase 2 d'un vrai modem supporte mal
+(au-delà d'une seconde, un U.S. Robotics ne voit plus notre ton B).
+
+Une connexion par satellite (Starlink) cale de 0,5 à 0,7 s à intervalles
+réguliers (changements de satellite) : le vrai modem entend alors un
+silence et demande un réentraînement. Pour des essais suivis, mieux vaut
+une connexion filaire classique côté adaptateur.
+
 **Comment ça marche** : le central traite le poste comme un abonné. Le
 dialogue SIP (REGISTER et INVITE authentifiés en digest MD5, 100/180/200,
 ACK, BYE, CANCEL, re-INVITE) est traduit en messages du central, et l'audio

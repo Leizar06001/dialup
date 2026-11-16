@@ -35,8 +35,14 @@ pub(crate) enum St {
     C2WaitRev1,
     C2Rev1Sched,
     C2WaitRev2,
+    /// Après la « seconde » inversion de A : son L1 doit suivre (sinon,
+    /// c'était la première d'un nouveau cycle)
+    C2CheckL1,
     C2RxProbe,
     C2WaitA2,
+    /// Ton B coupé un instant, pour que l'appelé le voie arriver (voir
+    /// `phase2.rs`, C2WaitA2)
+    C2BPause,
     C2Rev2Sched,
     C2L1,
     C2L2,
@@ -105,6 +111,17 @@ pub struct Modem {
     pub(crate) info0_local: Option<Info0>,
     pub(crate) info0_remote: Option<Info0>,
     pub(crate) rtd: Option<u64>,
+    /// Phase 2 : ton B déjà relancé une fois (C2WaitA2)
+    pub(crate) b_relance: bool,
+    /// Phase 2 : instant de la seconde inversion de A (C2CheckL1), et
+    /// puissance reçue de son ton juste après
+    pub(crate) rev2_at: u64,
+    pub(crate) rev2_p: f32,
+    /// Puissance reçue récente (fenêtre de 5 ms)
+    pub(crate) p_now: f32,
+    /// Trou du réseau en cours (zéros exacts d'affilée) et instant du dernier
+    pub(crate) zero_run: u32,
+    pub(crate) hole_at: Option<u64>,
     pub(crate) probe_report: Option<ProbeReport>,
     pub(crate) info1c: Option<Info1c>,
     pub(crate) info1a: Option<Info1a>,
@@ -201,6 +218,12 @@ impl Modem {
             info0_local: None,
             info0_remote: None,
             rtd: None,
+            b_relance: false,
+            rev2_at: 0,
+            rev2_p: 0.0,
+            p_now: 0.0,
+            zero_run: 0,
+            hole_at: None,
             probe_report: None,
             info1c: None,
             info1a: None,
@@ -553,6 +576,13 @@ impl Modem {
     /// début d'une modulation DPSK, non). Renvoie l'instant de l'inversion.
     pub(crate) fn confirmed_reversal(&mut self, f: &RxFlags) -> Option<u64> {
         if let Some(t) = f.reversal {
+            // juste après un trou du réseau, le ton qui reprend n'a pas la
+            // phase que le détecteur attendait : ce n'est pas une inversion
+            // (sinon : délai aller-retour faux, 15 ms ou 1,9 s)
+            if self.hole_at.is_some_and(|h| self.n.saturating_sub(h) < 60 * MS) {
+                self.log(LogLevel::Detail, "Inversion ignorée : trou du réseau juste avant");
+                return None;
+            }
             if self.credible_reversal() && self.pending_rev.is_none() {
                 // Le ton ne dure que 10 ms après l'inversion (§11.2.1) : on
                 // vérifie à 9 ms, quand la fenêtre de 5 ms ne contient plus
@@ -603,15 +633,28 @@ impl Modem {
         // l'écho lointain apprend un aller-retour après l'écho proche
         let mu_far = self.far_ec.follow_delayed_mu();
         // écho proche et écho lointain, retirés ensemble et appris sur la
-        // même erreur
+        // même erreur. Le lointain est normalisé par la puissance des deux
+        // fenêtres (comme un seul filtre : réglage validé avec le vrai
+        // modem). Le proche, par la sienne seulement : normalisé par la
+        // somme, il apprenait deux fois moins vite dès que l'apprentissage
+        // du lointain chevauchait le sien (aller-retour plus court que notre
+        // TRN), et finissait 5 dB moins bon sur une ligne sans écho lointain.
+        //
+        // Un trou du réseau (trame perdue, coupure) arrive en zéros exacts,
+        // ce qu'un signal reçu ne donne pour ainsi dire jamais (la loi A n'a
+        // même pas de zéro) : rien à y apprendre ni à mesurer. Sinon une
+        // coupure pendant l'apprentissage du lointain lui donnait une
+        // atténuation négative, et on le coupait à tort.
         let x_near = x_line - self.ec.estimate();
         let x = x_near - self.far_ec.estimate();
-        if mu > 0.0 || mu_far > 0.0 {
-            let norm = if mu > 0.0 { self.ec.power() } else { 0.0 } + if mu_far > 0.0 { self.far_ec.power() } else { 0.0 };
+        if (mu > 0.0 || mu_far > 0.0) && x_line != 0.0 {
             if mu > 0.0 {
-                self.ec.adapt(x, norm);
+                self.ec.adapt(x, self.ec.power());
             }
-            self.far_ec.adapt(x, norm);
+            if mu_far > 0.0 {
+                let norm = if mu > 0.0 { self.ec.power() } else { 0.0 } + self.far_ec.power();
+                self.far_ec.adapt(x, norm);
+            }
             self.ec.note(x_line, x);
             if mu_far > 0.0 {
                 self.far_ec.note(x_near, x);
@@ -621,10 +664,26 @@ impl Modem {
             self.far_training = true;
         } else if std::mem::take(&mut self.far_training) {
             let erle = self.far_ec.erle_db();
-            self.log(LogLevel::Detail, &format!("Annuleur d'écho lointain entraîné (un aller-retour après le nôtre) : atténuation {erle:.1} dB"));
+            if erle < crate::dsp::echo::FAR_MIN_ERLE_DB {
+                self.far_ec.disable();
+                self.log(LogLevel::Detail, &format!("Pas d'écho lointain (atténuation {erle:.1} dB) : annuleur lointain coupé"));
+            } else {
+                self.log(LogLevel::Detail, &format!("Annuleur d'écho lointain entraîné (un aller-retour après le nôtre) : atténuation {erle:.1} dB"));
+            }
         }
         let mut f = RxFlags::default();
         let p_tot = self.power.push(x);
+        self.p_now = p_tot;
+        // Trou du réseau : une trame perdue arrive en zéros exacts (un
+        // signal reçu n'en donne jamais 2 ms d'affilée)
+        if x_line == 0.0 {
+            self.zero_run += 1;
+            if self.zero_run >= 2 * MS as u32 {
+                self.hole_at = Some(self.n);
+            }
+        } else {
+            self.zero_run = 0;
+        }
         if let Some(d) = self.ansam_det.as_mut() {
             f.ansam = d.push(x);
         }

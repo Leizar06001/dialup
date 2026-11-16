@@ -67,6 +67,12 @@ impl Pacer {
             self.settle = 0;
             return 0.0;
         };
+        // Tampon vide : coupure du réseau, la rafale n'est pas encore
+        // arrivée. Ce niveau ne dit rien de l'horloge de l'autre ; le suivre
+        // nous ferait sauter des blocs, à rattraper aussitôt après.
+        if depth == 0 {
+            return 0.0;
+        }
         let mut avg = self.avg.unwrap_or(depth as f32);
         avg += (depth as f32 - avg) * SMOOTH;
         self.avg = Some(avg);
@@ -166,5 +172,19 @@ mod tests {
             c += p.update(Some((depth, 7))).abs();
         }
         assert_eq!(c, 0.0);
+    }
+
+    #[test]
+    fn holds_during_an_outage() {
+        // Coupure du réseau d'une demi-seconde (tampon vide 27 tics), puis
+        // la rafale le remet à son niveau : aucune correction, ancré ou non.
+        for mut p in [Pacer::new(), Pacer::anchored(1.0)] {
+            let mut c = 0.0;
+            for t in 0..600 {
+                let depth = if (300..327).contains(&t) { 0 } else { 7 };
+                c += p.update(Some((depth, 7))).abs();
+            }
+            assert_eq!(c, 0.0);
+        }
     }
 }

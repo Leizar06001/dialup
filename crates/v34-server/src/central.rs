@@ -336,6 +336,8 @@ impl Server {
                 }
             }
             let now = Instant::now();
+            // trames vers les postes SIP, à leur cadence
+            self.sip_pump(now);
             if now >= next_hk {
                 self.housekeeping(now);
                 next_hk = now + HOUSEKEEPING;

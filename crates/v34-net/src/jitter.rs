@@ -27,8 +27,12 @@ const FRAME_MS: f32 = 20.0;
 const STABLE_FRAMES_BEFORE_SHRINK: u32 = 500;
 /// Au-delà de cet écart de séquence, on considère un nouveau flux.
 const RESYNC_GAP: i64 = 250;
-/// Mode modem : paquets en retard consécutifs avant de se recaler (l'autre
-/// côté s'est vraiment arrêté un moment ; le glissement est inévitable).
+/// Mode modem : paquets en retard consécutifs avant de se recaler, si leur
+/// retard ne se résorbe pas (l'autre côté s'est vraiment arrêté un moment,
+/// ou le délai du réseau a augmenté pour de bon : le glissement est
+/// inévitable). La rafale qui suit une coupure du réseau, elle, rattrape
+/// son retard paquet après paquet : ses premiers paquets, déjà joués en
+/// trous, sont jetés, et les suivants retombent à leur place, sans glisser.
 const LATE_RESYNC: u32 = 5;
 
 /// Que jouer quand une trame manque.
@@ -106,6 +110,8 @@ pub struct JitterBuffer {
     /// Mode modem : profondeur au-delà de laquelle on jette quand même
     hard_max: usize,
     late_run: u32,
+    /// Retard (trames) du premier paquet de la série en retard en cours
+    late_lag0: i64,
     /// Mode modem : re-remplissage après un recalage (on y jettera la rafale)
     after_resync: bool,
 }
@@ -113,7 +119,9 @@ pub struct JitterBuffer {
 impl JitterBuffer {
     /// `target_ms` : profondeur cible initiale (arrondie à 20 ms).
     pub fn new(target_ms: u32, concealment: Concealment) -> Self {
-        let target = ((target_ms as f32 / FRAME_MS).round() as usize).clamp(1, 25);
+        // jusqu'à 1,2 s : le tampon d'un poste SIP absorbe les calages du
+        // Wi-Fi d'en face (voir v34-server, central/sip.rs)
+        let target = ((target_ms as f32 / FRAME_MS).round() as usize).clamp(1, 60);
         Self {
             frames: BTreeMap::new(),
             next: None,
@@ -133,6 +141,7 @@ impl JitterBuffer {
             slip_free: concealment == Concealment::Modem,
             hard_max: target * 3 + 25,
             late_run: 0,
+            late_lag0: 0,
             after_resync: false,
         }
     }
@@ -201,10 +210,11 @@ impl JitterBuffer {
                         self.next = Some(k);
                         self.next_raw = seq;
                         k
-                    } else if self.slip_free && self.late_run + 1 >= LATE_RESYNC {
-                        // Tous les paquets arrivent « en retard » : l'autre
-                        // côté a pris du retard pour de bon. On se recale sur
-                        // lui (glissement inévitable) et on re-remplit.
+                    } else if self.slip_free && self.late_is_persistent(n - k) {
+                        // Tous les paquets arrivent « en retard », et ce
+                        // retard ne diminue pas : l'autre côté a pris du
+                        // retard pour de bon. On se recale sur lui
+                        // (glissement inévitable) et on re-remplit.
                         self.stats.late += 1;
                         self.stats.resyncs += 1;
                         self.late_run = 0;
@@ -217,7 +227,6 @@ impl JitterBuffer {
                         k
                     } else {
                         self.stats.late += 1;
-                        self.late_run += 1;
                         return;
                     }
                 } else {
@@ -241,6 +250,21 @@ impl JitterBuffer {
         s.resize(FRAME_SAMPLES, 0.0);
         self.frames.insert(key, s);
         self.update_depth();
+    }
+
+    /// Mode modem : compte un paquet en retard de `lag` trames, et dit s'il
+    /// faut se recaler. Après une coupure du réseau, la rafale des paquets
+    /// bloqués arrive plus vite que la lecture : le retard fond d'un paquet
+    /// à l'autre, la série finit par rattraper la lecture, rien ne glisse.
+    /// Un flux vraiment décalé, lui, arrive au rythme de la lecture : son
+    /// retard reste le même.
+    fn late_is_persistent(&mut self, lag: i64) -> bool {
+        if self.late_run == 0 {
+            self.late_lag0 = lag;
+        }
+        self.late_run += 1;
+        let caught_up = self.late_lag0 - lag;
+        self.late_run >= LATE_RESYNC && caught_up * 4 <= self.late_run as i64
     }
 
     /// Copie d'une trame précédente portée par un paquet (redondance) : prise
@@ -474,28 +498,44 @@ mod tests {
         assert_eq!((k, f[0]), (FrameKind::Audio, 2.0));
     }
 
-    /// Modem : coupure d'une demi-seconde puis rafale des paquets bloqués →
-    /// recalage, et le délai revient aussitôt à la cible (pas +500 ms).
+    /// Modem : coupure d'une demi-seconde puis rafale des paquets bloqués.
+    /// Ils ont déjà été joués en trous : jetés, sans recalage. Les suivants
+    /// retombent à leur place exacte, au délai d'avant : rien ne glisse,
+    /// ni le signal de l'autre ni notre propre écho (annuleur lointain).
     #[test]
-    fn modem_recalage_sans_garder_la_rafale() {
+    fn modem_coupure_puis_rafale_sans_glissement() {
         let mut jb = JitterBuffer::for_modem(140);
         let mut seq = 0u32;
+        // régime établi : un paquet arrive, une trame part, à chaque tic
+        let mut played = Vec::new();
+        for _ in 0..40 {
+            push(&mut jb, seq);
+            seq += 1;
+            played.push(jb.pop_frame());
+        }
+        let depth = jb.stats().depth_ms;
+        // coupure : 27 tics sans rien (le tampon se vide, puis des trous)…
+        let blocked: Vec<u32> = (seq..seq + 27).collect();
+        seq += 27;
+        let holes = (0..27).filter(|_| jb.pop_frame().1 == FrameKind::Concealed).count();
+        assert_eq!(holes as f32, 27.0 - depth / 20.0);
+        // … puis la rafale, et le flux reprend normalement
+        for &q in &blocked {
+            push(&mut jb, q);
+        }
+        assert_eq!(jb.stats().resyncs, 0, "pas de recalage sur une rafale");
+        assert!(jb.stats().late > 0);
+        assert_eq!(jb.stats().depth_ms, depth, "délai revenu tout de suite à celui d'avant");
+        // la trame jouée est exactement celle qu'on aurait jouée sans coupure
+        let lag = seq as f32 - 1.0 - played.last().unwrap().0[0] - 27.0;
         for _ in 0..20 {
             push(&mut jb, seq);
             seq += 1;
-            jb.pop_frame();
+            let (f, k) = jb.pop_frame();
+            assert_eq!(k, FrameKind::Audio);
+            assert_eq!(f[0], seq as f32 - 1.0 - lag, "décalage du flux après la coupure");
         }
-        // 27 trames sans rien (joués en trous), puis tout arrive d'un coup
-        for _ in 0..27 {
-            jb.pop_frame();
-        }
-        for _ in 0..33 {
-            push(&mut jb, seq);
-            seq += 1;
-        }
-        jb.pop_frame();
-        assert!(jb.stats().resyncs >= 1);
-        assert!(jb.stats().depth_ms <= 140.0, "délai après recalage : {} ms", jb.stats().depth_ms);
+        assert_eq!(jb.stats().resyncs, 0);
     }
 
     #[test]
@@ -586,18 +626,31 @@ mod tests {
         for _ in 1..20 {
             jb.pop_frame();
         }
-        // L'autre côté s'arrête 10 trames puis reprend là où il en était :
-        // tout arrive en retard, on finit par se recaler sur lui.
+        // L'autre côté s'arrête 10 trames puis reprend là où il en était, à
+        // son rythme : tout arrive en retard, du même retard, et ce retard
+        // ne se résorbe pas. On finit par se recaler sur lui.
         for _ in 0..10 {
             jb.pop_frame();
         }
-        for q in 20..30 {
+        let mut q = 20;
+        while jb.stats().resyncs == 0 && q < 40 {
             push(&mut jb, q);
+            q += 1;
+            jb.pop_frame();
         }
         assert_eq!(jb.stats().resyncs, 1);
-        // recalé sur le flux, au délai cible : les 3 dernières trames
-        let (f, k) = jb.pop_frame();
-        assert_eq!(k, FrameKind::Audio);
-        assert_eq!(f[0], 27.0, "recalé sur le flux : {}", f[0]);
+        assert!(q <= 20 + LATE_RESYNC + 1, "recalage tardif : {q}");
+        // recalé sur le flux : re-remplissage, puis ses trames dans l'ordre
+        let mut got = Vec::new();
+        for _ in 0..8 {
+            push(&mut jb, q);
+            q += 1;
+            let (f, k) = jb.pop_frame();
+            if k == FrameKind::Audio {
+                got.push(f[0]);
+            }
+        }
+        assert!(got.len() >= 4, "{got:?}");
+        assert!(got.windows(2).all(|w| w[1] == w[0] + 1.0), "{got:?}");
     }
 }

@@ -162,6 +162,8 @@ pub(crate) struct P34 {
     last_k: i64,
     /// Attente avant d'entraîner l'annuleur d'écho en phase 3 (échantillons)
     ec_wait: u64,
+    /// Délai aller-retour mesuré en phase 2 (échantillons)
+    pub(crate) rtd: u64,
     /// Rallonge de notre TRN de phase 3 (symboles) : avec un long
     /// aller-retour, l'annuleur d'écho lointain apprend sur l'écho de notre
     /// TRN, un aller-retour plus tard ; il lui faut plus que 0,4 s
@@ -199,6 +201,9 @@ pub(crate) struct P34 {
     /// y a du signal (les trous ne comptent pas) : sert à distinguer une
     /// ligne devenue bruyante (renégocier) de trous isolés (LAPM suffit).
     dec_mse: f32,
+    /// Fenêtre de surveillance : symboles reçus, dont pendant un trou
+    mon_syms: u32,
+    mon_holes: u32,
     /// Instant de fin du raccrochage propre
     hangup_at: Option<u64>,
     /// Mode V.90 (56k) : émetteur ou récepteur PCM et leur pilotage
@@ -268,6 +273,7 @@ impl P34 {
             rx_trn_count: 0,
             last_k: 0,
             ec_wait: 0,
+            rtd: 0,
             trn_extra: 0,
             ec_report: false,
             tx_rate: 0,
@@ -293,6 +299,8 @@ impl P34 {
             bad_windows: 0,
             good_windows: 0,
             dec_mse: 0.0,
+            mon_syms: 0,
+            mon_holes: 0,
             hangup_at: None,
             v90: None,
             s_run: 0,
@@ -464,7 +472,12 @@ impl P34 {
                         enc.configure(m.trellis, m.nonlinear, self.precoder_rx);
                     }
                     self.tx.set_constellation_power(enc.power);
-                    self.link.set_t401_bits((tx_rate as u64 * 6 / 10).max(2048));
+                    // T401 doit couvrir l'aller-retour plus une trame de
+                    // chaque côté : par Internet (tampons de gigue, ATA), il
+                    // dépasse souvent 0,6 s, et des relances inutiles
+                    // encombraient la liaison.
+                    let t401_s = (1.5 * self.rtd as f64 / 8000.0 + 0.3).max(0.6);
+                    self.link.set_t401_bits(((tx_rate as f64 * t401_s) as u64).max(2048));
                     let opts = match &want {
                         Some(m) => format!(
                             ", treillis {} états, Θ {}, façonnage {}{}",
@@ -730,6 +743,10 @@ impl P34 {
                 }
                 let Some(dec) = self.dec.as_mut() else { return };
                 let (d, bits) = dec.push(s.z);
+                self.mon_syms += 1;
+                if !self.rx.signal_ok() {
+                    self.mon_holes += 1;
+                }
                 if self.rx.signal_ok() {
                     // Erreur plafonnée à la frontière de décision : un
                     // parasite isolé (choc, clic) ne fait pas croire à une
@@ -1211,6 +1228,8 @@ impl P34 {
         self.bad_windows = 0;
         self.good_windows = 0;
         self.dec_mse = 0.0;
+        self.mon_syms = 0;
+        self.mon_holes = 0;
     }
 
     /// Surveillance de la qualité en mode données : renégocie vers le bas si
@@ -1235,6 +1254,15 @@ impl P34 {
         self.mon_fcs = st.fcs_errors;
         self.mon_frames = st.frames_rx;
         let err_rate = derr as f32 / d4 as f32;
+        let (syms, holes) = (std::mem::take(&mut self.mon_syms), std::mem::take(&mut self.mon_holes));
+        // Fenêtre touchée par un trou du réseau (coupure d'Internet, paquets
+        // perdus à la file) : ses erreurs ne disent rien de la ligne. Elle ne
+        // compte ni pour ni contre ; LAPM retransmet ce qui manque. (Une
+        // coupure d'une demi-seconde abîmait deux fenêtres, et le moindre
+        // écart sur la suivante renégociait vers le bas.)
+        if holes * 50 > syms {
+            return;
+        }
         // La ligne supporte-t-elle encore ce débit ? (SNR mesuré hors trous)
         let snr_vu = -10.0 * self.dec_mse.max(1e-6).log10();
         let ligne_ok = max_rate_for_snr(self.sr_rx_idx, snr_vu, 1.0) >= self.rx_rate;
@@ -1480,6 +1508,7 @@ impl Modem {
         let snr = self.status.params.snr_db.unwrap_or(0.0);
         p.rx16 = snr >= 30.0;
         p.ec_wait = (144.0 / SYMBOL_RATES[sr_tx] * 8000.0) as u64 + self.rtd.unwrap_or(0) + 60 * 8;
+        p.rtd = self.rtd.unwrap_or(0);
         p.n = self.n;
         p.t_step = self.n;
         self.log(LogLevel::Info, &format!(

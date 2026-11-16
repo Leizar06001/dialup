@@ -1,13 +1,16 @@
 //! Ligne « Orage » (SNR 20 dB, 3 clics/s, coupures) : grâce aux reprises
 //! (répétition des INFO0, réentraînements), la connexion doit aboutir dans
-//! la grande majorité des cas.
+//! la grande majorité des cas. Sur une ligne aussi bruitée, l'issue d'une
+//! graine dépend de chaque milliseconde du dialogue : 24 graines, pour que
+//! le test mesure la robustesse plutôt que la chance d'une poignée d'entre
+//! elles.
 use v34_core::{EchoPath, LineParams, LineSim, Modem, ModemCommand, ModemConfig, ModemEvent, Role};
 
 #[test]
 fn orage_connects_most_of_the_time() {
     let p = LineParams::preset("Orage").unwrap();
     let mut summary = Vec::new();
-    for seed in 1..=12u64 {
+    for seed in 1..=24u64 {
         let mut m = [Modem::new(Role::Call, ModemConfig::default()), Modem::new(Role::Answer, ModemConfig::default())];
         let mut lines = [LineSim::with_seed(p.clone(), seed), LineSim::with_seed(p.clone(), seed * 7919)];
         let mut echo = [EchoPath::new(p.clone()), EchoPath::new(p.clone())];
@@ -35,5 +38,7 @@ fn orage_connects_most_of_the_time() {
     }
     eprintln!("{}", summary.join("\n"));
     let ok = summary.iter().filter(|l| l.contains("CONNECT")).count();
-    assert!(ok >= 9, "seulement {ok}/12 connexions sur la ligne Orage\n{}", summary.join("\n"));
+    // ~80 % mesurés sur 80 graines ; 70 % exigés, pour laisser la marge du
+    // hasard sur 24
+    assert!(ok >= 17, "seulement {ok}/24 connexions sur la ligne Orage\n{}", summary.join("\n"));
 }

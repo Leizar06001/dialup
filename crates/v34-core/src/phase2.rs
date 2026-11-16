@@ -22,6 +22,15 @@ const L1_LEN: u64 = 160 * MS;
 const L2_B_MARGIN: u64 = 400 * MS;
 /// Durée d'analyse de L2 (≤ 500 ms autorisés).
 const L2_ANALYSIS: u32 = 20; // blocs de 20 ms = 400 ms
+/// … quand l'aller-retour est long (Internet, adaptateur téléphonique) :
+/// l'appelé n'attend notre ton B que 600 ms plus SON aller-retour depuis le
+/// début de son L2 (§11.2.2.2.3). Le nôtre vaut le sien à la gigue près ;
+/// écouter 400 ms de L2 ne lui laissait que ~180 ms pour détecter B, et un
+/// U.S. Robotics derrière un ATA le ratait un appel sur deux (puis restait
+/// sur son ton A sans l'inverser). 200 ms d'analyse suffisent au sondage.
+const L2_ANALYSIS_LONG_RTD: u32 = 10;
+/// Aller-retour à partir duquel on écourte l'analyse de L2
+const LONG_RTD: u64 = 250 * MS;
 
 impl Modem {
     pub(crate) fn start_phase2(&mut self) {
@@ -167,7 +176,8 @@ impl Modem {
             self.probe = Some(ProbeAnalyzer::new());
             self.rx_name("L2");
         }
-        matches!(&self.probe, Some(p) if p.blocks() >= L2_ANALYSIS)
+        let need = if self.rtd.unwrap_or(0) > LONG_RTD { L2_ANALYSIS_LONG_RTD } else { L2_ANALYSIS };
+        matches!(&self.probe, Some(p) if p.blocks() >= need)
     }
 
     fn finish_probe(&mut self) {
@@ -340,6 +350,54 @@ impl Modem {
                 }
                 if let Some(t) = self.confirmed_reversal(f) {
                     if t > self.t_mark {
+                        // confirmée 9 ms après : la fenêtre du mesureur ne
+                        // contient plus que le ton inversé, stable
+                        self.rev2_at = t;
+                        self.rev2_p = self.p_now;
+                        self.goto(St::C2CheckL1);
+                    }
+                } else if self.elapsed() > 2000 * MS {
+                    self.recover("seconde inversion du ton A non reçue");
+                }
+            }
+            St::C2CheckL1 => {
+                // §11.2.1.2.5 : après la seconde inversion, l'appelé émet son
+                // ton A encore un peu (10 ms selon la norme, ~65 ms pour un
+                // U.S. Robotics), puis L1, 6 dB plus fort. On guette L1 : il
+                // date le début de L2. Si le ton A dure, cette inversion
+                // était la PREMIÈRE d'un nouveau cycle : il n'avait pas vu la
+                // nôtre (un vrai modem derrière un ATA, quand la répétition
+                // des INFO0 l'a décalé d'un tour). On y répond comme telle.
+                let t = self.rev2_at;
+                if self.n < t + 12 * MS {
+                    return;
+                }
+                let l1 = self.p_now > 2.5 * self.rev2_p.max(1e-9);
+                if !l1 && self.n < t + 150 * MS {
+                    return;
+                }
+                if !l1 {
+                    self.log(LogLevel::Warn, "Ton A toujours là après son inversion : c'était sa première, on inverse B");
+                    let at = if let TxMode::Tone(tt) = &mut self.tx.mode {
+                        let at = (t + REV_DELAY).max(self.n);
+                        tt.schedule_reversal(at);
+                        at
+                    } else {
+                        // notre B s'est déjà tu : on le reprend, assez
+                        // longtemps pour qu'il le reconnaisse, et on l'inverse
+                        let at = (t + REV_DELAY).max(self.n + 60 * MS);
+                        let mut tt = ToneTx::tone_b();
+                        tt.schedule_reversal(at);
+                        self.set_tx(TxMode::Tone(tt), "B");
+                        at
+                    };
+                    self.t_mark = at;
+                    self.goto(St::C2Rev1Sched);
+                    return;
+                }
+                let l1_at = self.n.saturating_sub(5 * MS);
+                {
+                    {
                         let rtd = (t - self.t_mark).saturating_sub(REV_DELAY);
                         self.rtd = Some(rtd);
                         self.far_ec.set_round_trip(rtd as usize);
@@ -347,14 +405,11 @@ impl Modem {
                         self.params_changed();
                         self.rx_name("A");
                         self.log(LogLevel::Info, &format!("Délai aller-retour mesuré : {:.1} ms", self.ms(rtd)));
-                        // L1 commence 10 ms après l'inversion, dure 160 ms ; on
-                        // analyse L2 en laissant 10 ms de marge.
-                        self.start_probe_rx(t + 10 * MS + L1_LEN + 10 * MS);
+                        // L1 dure 160 ms ; on analyse L2 en laissant 15 ms de marge.
+                        self.start_probe_rx(l1_at + L1_LEN + 15 * MS);
                         self.rx_name("L1");
                         self.goto(St::C2RxProbe);
                     }
-                } else if self.elapsed() > 2000 * MS {
-                    self.recover("seconde inversion du ton A non reçue");
                 }
             }
             St::C2RxProbe => {
@@ -365,6 +420,16 @@ impl Modem {
                         t.rearm();
                     }
                     self.tone_on = 0;
+                    self.b_relance = false;
+                    self.goto(St::C2WaitA2);
+                }
+            }
+            St::C2BPause => {
+                if self.elapsed() >= 80 * MS {
+                    self.set_tx(TxMode::Tone(ToneTx::tone_b()), "B");
+                    if let Some(t) = self.tone_rx.as_mut() {
+                        t.rearm();
+                    }
                     self.goto(St::C2WaitA2);
                 }
             }
@@ -382,6 +447,15 @@ impl Modem {
                         self.t_mark = at;
                         self.goto(St::C2Rev2Sched);
                     }
+                } else if !self.b_relance && self.elapsed() > self.rtd.unwrap_or(0) + 450 * MS && self.tone_for(300) {
+                    // Son ton A dure sans s'inverser alors qu'il entend notre B
+                    // depuis longtemps : il l'a raté (parti avant la fin de son
+                    // attente, §11.2.2.2.3) et ne réagit qu'à un B qui arrive.
+                    // On le coupe 80 ms et on le relance, une fois.
+                    self.b_relance = true;
+                    self.log(LogLevel::Warn, "Ton A sans inversion : l'appelé n'a pas vu notre ton B, on le relance");
+                    self.set_tx(TxMode::Silence, "silence");
+                    self.goto(St::C2BPause);
                 } else if self.elapsed() > (900 * MS + self.rtd.unwrap_or(0)) {
                     // §11.2.2.1.4 : on fait comme si l'inversion était reçue
                     self.log(LogLevel::Warn, "Inversion de A non détectée, on continue (§11.2.2.1.4)");

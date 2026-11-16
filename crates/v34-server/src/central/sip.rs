@@ -8,8 +8,11 @@
 //!   HANGUP, BUSY…) en requêtes et réponses SIP ([`Server::sip_deliver`]) ;
 //! - les requêtes du poste (REGISTER, INVITE, ACK, BYE, CANCEL) en
 //!   enregistrement, numérotation, décroché et raccrochage ;
-//! - l'audio : RTP ↔ trames du central, une à une, sans recadencer
-//!   ([`Server::on_rtp`], [`Server::sip_send_audio`]).
+//! - l'audio : RTP ↔ trames du central, une à une, sans transcoder
+//!   ([`Server::on_rtp`], [`Server::sip_send_audio`]). Vers le poste, les
+//!   trames passent par un tampon et partent au rythme du poste lui-même :
+//!   une pour chaque trame reçue de lui. L'ATA voit un flux parfaitement
+//!   régulier, quoi que fasse le réseau de l'appli d'en face.
 //!
 //! Un poste a au plus un appel à la fois, comme un abonné : son « dialogue »
 //! SIP en cours (une [`Leg`]) se retrouve par sa session. Les dialogues
@@ -22,7 +25,7 @@ use std::time::{Duration, Instant};
 use v34_net::crypto::{ct_eq, hmac_sha256, random_bytes};
 use v34_net::packet::BACKUP_FRAMES;
 use v34_net::signal::{valid_number, HangupReason, Msg};
-use v34_net::{Codec, Packet, FRAME_SAMPLES};
+use v34_net::{Codec, JitterBuffer, Packet, FRAME_SAMPLES};
 
 use super::{is_transient, unix_now, Audio, CallState, Callee, Lien, Reg, Server};
 use crate::config::Config;
@@ -44,6 +47,25 @@ const ALLOW: &str = "INVITE, ACK, CANCEL, BYE, OPTIONS, NOTIFY, INFO";
 /// requête d'autant (sinon un REGISTER sobre n'aurait jamais de défi) ;
 /// les autres réponses à une source inconnue, jamais.
 const CHALLENGE_SLACK: usize = 256;
+
+/// Tampon des trames vers un poste quand elles viennent d'une appli, par
+/// Internet (Wi-Fi : pointes de 50 à 150 ms). Un adaptateur téléphonique a
+/// un tampon de gigue adaptatif : des paquets en retard, puis la rafale qui
+/// suit une coupure, il les joue tous, en retard, et tout le reste de
+/// l'appel glisse d'autant (un Cisco ATA : +520 ms après une coupure de
+/// 520 ms). L'écho de sa prise se décale, le modem d'en face réapprend
+/// tout. On absorbe donc la gigue ici, et un paquet trop en retard devient
+/// un trou à sa place, jamais un glissement. Plus profond, il rallonge
+/// d'autant l'aller-retour, que la phase 2 d'un vrai modem supporte mal
+/// (au-delà d'une seconde, un U.S. Robotics ne voit plus notre ton B).
+const TX_DEPTH_APPLI_MS: u32 = 200;
+/// Le rythme de l'ATA est extrapolé depuis sa dernière trame reçue pendant
+/// au plus ce temps : son flux montant peut caler (0,5 à 0,7 s mesurés)
+/// sans que le nôtre, vers lui, s'arrête. Au-delà (détection de silence de
+/// l'ATA), les trames partent au rythme de l'autre bout.
+const UPLINK_STALE: Duration = Duration::from_millis(1000);
+/// Rattrapage maximal d'un coup (trames)
+const MAX_CATCHUP: i32 = 50;
 
 /// Ce qu'un abonné SIP a de particulier (voir [`Lien::Sip`]).
 pub(super) struct Poste {
@@ -164,9 +186,18 @@ struct Leg {
     /// Destination déduite du dernier SDP du poste
     sdp_dest: Option<SocketAddr>,
     latched: bool,
-    /// Dernière trame envoyée au poste (pour combler un trou avec les
-    /// copies de redondance de l'appli)
-    tx_last: Option<u32>,
+    /// Trames vers le poste, en attente de leur créneau
+    tx_jb: Option<JitterBuffer>,
+    /// Numéro de notre prochaine trame vers le poste (le nôtre : régulier)
+    tx_out: u32,
+    /// Dernière trame reçue du poste, et quand : son horloge cadence l'envoi
+    up_last: Option<u32>,
+    up_at: Option<Instant>,
+    /// Trame du poste jusqu'à laquelle on a déjà envoyé la nôtre
+    tx_mark: u32,
+    /// Envoi cadencé par le poste (pas avec un modem du central, qui
+    /// envoie lui-même son RTP à la cadence du poste)
+    paced: bool,
     reframer: rtp::Reframer,
     numbering: rtp::Numbering,
     /// Trames reçues récemment (copies de redondance vers l'appli)
@@ -205,7 +236,12 @@ impl Leg {
             rtp_dest: None,
             sdp_dest: None,
             latched: false,
-            tx_last: None,
+            tx_jb: None,
+            tx_out: 0,
+            up_last: None,
+            up_at: None,
+            tx_mark: 0,
+            paced: false,
             reframer: rtp::Reframer::default(),
             numbering: rtp::Numbering::new(8),
             history: VecDeque::new(),
@@ -1083,7 +1119,24 @@ impl Server {
         }
         let (Some(call_id), session, law) = (leg.call, leg.session, leg.law) else { return };
         let mut pkts = Vec::new();
+        let now = Instant::now();
+        // Avec un modem du central (FAI, 3615, ligne de test), c'est son fil
+        // qui envoie le RTP au poste, déjà à la cadence du poste.
+        leg.paced = !matches!(self.calls.get(&call_id).map(|c| &c.callee), Some(Callee::Modem { .. }));
         for (seq, bytes) in leg.reframer.push(h.ssrc, h.ts, payload) {
+            // Son horloge donne la cadence de notre envoi (voir sip_pump)
+            match leg.up_last {
+                None => {
+                    leg.tx_mark = seq.wrapping_sub(1);
+                    leg.up_last = Some(seq);
+                    leg.up_at = Some(now);
+                }
+                Some(l) if (seq.wrapping_sub(l) as i32) > 0 => {
+                    leg.up_last = Some(seq);
+                    leg.up_at = Some(now);
+                }
+                Some(_) => {}
+            }
             let samples = rtp::decode_payload(law, &bytes);
             // les trames précédentes, si on les a, voyagent avec celle-ci
             let mut backup = Vec::new();
@@ -1097,6 +1150,7 @@ impl Server {
             leg.history.truncate(BACKUP_FRAMES + 2);
             pkts.push(Packet { codec: law, call_id, seq, timestamp: seq.wrapping_mul(FRAME_SAMPLES as u32), samples, backup });
         }
+
         for p in pkts {
             let Some(call) = self.calls.get(&call_id) else { return };
             if call.state != CallState::Active {
@@ -1112,34 +1166,84 @@ impl Server {
             };
             self.relay(call_id, dir, Audio::Decoded(p), from);
         }
+        self.sip_pump(now);
     }
 
-    /// Une trame du central vers un poste : un paquet RTP de 20 ms, numéroté
-    /// d'après la trame (un trou reste un trou).
+    /// Envoi vers les postes, à leur cadence : la trame du poste que nous
+    /// devrions avoir reçue à cet instant est extrapolée de la dernière
+    /// reçue (20 ms par trame, au plus [`UPLINK_STALE`]) ; on envoie la
+    /// nôtre pour chacune. Un calage de son flux montant n'arrête pas le
+    /// nôtre ; quand sa rafale arrive, l'extrapolation retombe sur ses pieds
+    /// sans rien envoyer en double. Appelé à chaque tour de la boucle.
+    pub(super) fn sip_pump(&mut self, now: Instant) {
+        let Some(st) = self.sip.as_mut() else { return };
+        for leg in st.legs.iter_mut() {
+            if !leg.paced || !leg.media_live() {
+                continue;
+            }
+            let (Some(last), Some(at), Some(dest)) = (leg.up_last, leg.up_at, leg.rtp_dest) else { continue };
+            let since = now.saturating_duration_since(at);
+            if since > UPLINK_STALE {
+                continue;
+            }
+            let target = last.wrapping_add((since.as_millis() / 20) as u32);
+            let mut due = target.wrapping_sub(leg.tx_mark) as i32;
+            if due <= 0 {
+                continue;
+            }
+            if due > MAX_CATCHUP {
+                // très en retard (reprise du flux après un long silence) :
+                // ces créneaux sont passés
+                for _ in 0..due - MAX_CATCHUP {
+                    if let Some(jb) = leg.tx_jb.as_mut() {
+                        jb.pop_frame();
+                    }
+                    leg.tx_out = leg.tx_out.wrapping_add(1);
+                }
+                due = MAX_CATCHUP;
+            }
+            for k in 0..due {
+                let frame = leg.tx_jb.as_mut().map_or_else(|| vec![0.0; FRAME_SAMPLES], |jb| jb.pop_frame().0);
+                let n = leg.tx_out;
+                leg.tx_out = n.wrapping_add(1);
+                // un retard de plus de 2 trames : les plus anciennes sont
+                // déjà passées chez lui, seules les dernières partent
+                if due - k <= 2 {
+                    let bytes = leg.numbering.packet(leg.law, n, n.wrapping_mul(FRAME_SAMPLES as u32), &frame);
+                    if let Err(e) = self.sock.send_to(&bytes, dest) {
+                        if !is_transient(&e) {
+                            debug!("envoi RTP vers {dest} : {e}");
+                        }
+                    }
+                }
+            }
+            leg.tx_mark = target;
+        }
+    }
+
+    /// Une trame du central vers un poste : elle attend son créneau dans le
+    /// tampon du poste (voir [`TX_DEPTH_APPLI_MS`]) ; c'est l'arrivée de
+    /// ses propres trames qui la fait partir ([`Server::on_rtp`]). Les copies
+    /// de redondance de l'appli comblent les trames perdues en route.
     pub(super) fn sip_send_audio(&mut self, session: u32, p: &Packet) {
         let Some(st) = self.sip.as_mut() else { return };
         let Some(leg) = st.legs.iter_mut().find(|l| l.session == session && l.media_live()) else { return };
         let Some(dest) = leg.rtp_dest else { return };
-        // Trames perdues entre l'appli et le central, dont ce paquet porte
-        // une copie : envoyées d'abord, à leur place (l'ATA, lui, n'a pas de
-        // redondance pour les rattraper).
-        let gap = leg.tx_last.map_or(1, |l| p.seq.wrapping_sub(l));
-        let mut out = Vec::new();
-        if (2..=1 + p.backup.len() as u32).contains(&gap) {
-            for k in (1..gap).rev() {
-                let ts = p.timestamp.wrapping_sub(k * FRAME_SAMPLES as u32);
-                out.push(leg.numbering.packet(leg.law, p.seq.wrapping_sub(k), ts, &p.backup[k as usize - 1]));
-            }
+        let t = leg.since.elapsed().as_secs_f64();
+        let jb = leg.tx_jb.get_or_insert_with(|| JitterBuffer::for_modem(TX_DEPTH_APPLI_MS));
+        jb.push_with_backup(p.seq, p.timestamp, p.samples.clone(), &p.backup, t);
+        // Le poste se tait (pas encore de RTP, ou détection de silence) :
+        // rien ne cadence l'envoi, la trame part au rythme de l'autre bout.
+        if leg.up_at.is_some_and(|at| at.elapsed() < UPLINK_STALE) {
+            return;
         }
-        out.push(leg.numbering.packet(leg.law, p.seq, p.timestamp, &p.samples));
-        if leg.tx_last.is_none_or(|l| (p.seq.wrapping_sub(l) as i32) > 0) {
-            leg.tx_last = Some(p.seq);
-        }
-        for bytes in out {
-            if let Err(e) = self.sock.send_to(&bytes, dest) {
-                if !is_transient(&e) {
-                    debug!("envoi RTP vers {dest} : {e}");
-                }
+        let (frame, _) = jb.pop_frame();
+        let n = leg.tx_out;
+        leg.tx_out = n.wrapping_add(1);
+        let bytes = leg.numbering.packet(leg.law, n, n.wrapping_mul(FRAME_SAMPLES as u32), &frame);
+        if let Err(e) = self.sock.send_to(&bytes, dest) {
+            if !is_transient(&e) {
+                debug!("envoi RTP vers {dest} : {e}");
             }
         }
     }

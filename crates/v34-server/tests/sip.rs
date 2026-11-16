@@ -370,13 +370,18 @@ fn l_appli_appelle_le_poste_et_l_audio_passe_bit_a_bit() {
     let from_ata = rtp::encode_payload(Codec::Alaw, &[-0.5; FRAME_SAMPLES]);
     let (mut got_ata, mut got_alice) = (0, 0);
     let mut out = vec![0.0f32; FRAME_SAMPLES];
-    for seq in 0..40u16 {
+    for seq in 0..90u16 {
         a.send_block(&[0.25; FRAME_SAMPLES]).unwrap();
         ua.send_rtp(srv_media, seq, &from_ata);
         std::thread::sleep(Duration::from_millis(20));
         a.poll().unwrap();
         for (h, p) in ua.drain_rtp() {
             assert_eq!(h.pt, 8);
+            // d'abord du silence, le temps que le tampon vers le poste se
+            // remplisse ; ensuite les trames d'alice, telles quelles
+            if p.iter().all(|&b| b == 0xD5) {
+                continue;
+            }
             assert_eq!(p, from_alice, "le poste reçoit les codes d'alice tels quels");
             got_ata += 1;
         }
@@ -386,7 +391,7 @@ fn l_appli_appelle_le_poste_et_l_audio_passe_bit_a_bit() {
             got_alice += 1;
         }
     }
-    assert!(got_ata >= 25 && got_alice >= 15, "trop peu de trames relayées : vers le poste {got_ata}, vers alice {got_alice}");
+    assert!(got_ata >= 30 && got_alice >= 40, "trop peu de trames relayées : vers le poste {got_ata}, vers alice {got_alice}");
 
     // alice raccroche : BYE au poste
     a.hangup().unwrap();
@@ -590,8 +595,10 @@ fn re_invites_t38_refuse_et_audio_accepte_quand_on_appelle_le_poste() {
     let from = format!("{};tag={}", inv.header("To").unwrap(), ua.tag);
     re_invites(&ua, &mut a, &target, &from, inv.header("From").unwrap(), inv.call_id().unwrap(), 1);
     let want = rtp::encode_payload(Codec::Alaw, &[0.25; FRAME_SAMPLES]);
+    // (le poste n'envoie rien ici : l'audio d'alice part à son rythme,
+    // après le remplissage du tampon vers le poste, 0,8 s)
     let mut got = 0;
-    for _ in 0..30 {
+    for _ in 0..80 {
         a.send_block(&[0.25; FRAME_SAMPLES]).unwrap();
         std::thread::sleep(Duration::from_millis(20));
         got += ua.drain_rtp().iter().filter(|(_, p)| *p == want).count();

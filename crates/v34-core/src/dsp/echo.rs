@@ -24,6 +24,9 @@ const FAR_BEFORE: usize = 448;
 const FAR_SPAN: usize = 16000;
 /// Pas minimal de l'écho lointain pendant son apprentissage
 const FAR_MU_MIN: f32 = 0.2;
+/// Atténuation (dB) en dessous de laquelle il n'y a pas d'écho lointain :
+/// l'annuleur est alors coupé (voir [`FarEchoCanceller::disable`])
+pub const FAR_MIN_ERLE_DB: f32 = 3.0;
 
 pub struct EchoCanceller {
     w: Vec<f32>,
@@ -199,6 +202,15 @@ impl FarEchoCanceller {
     /// Délai du début de la fenêtre, s'il y en a une.
     pub fn delay(&self) -> Option<usize> {
         self.delay
+    }
+
+    /// Pas d'écho lointain sur cette ligne (entre deux de nos modems, ou
+    /// une ligne sans adaptateur) : le filtre n'a appris que du bruit, qu'il
+    /// ajouterait au signal reçu. On l'oublie jusqu'au prochain
+    /// [`set_round_trip`](Self::set_round_trip) (réentraînement).
+    pub fn disable(&mut self) {
+        self.delay = None;
+        self.ec = EchoCanceller::with_taps(FAR_TAPS);
     }
 
     /// Note les puissances avant / après l'annulation de l'écho lointain.
