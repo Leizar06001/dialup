@@ -273,6 +273,61 @@ impl Trellis16 {
     }
 }
 
+/// Codeur convolutionnel de l'émetteur, au choix du récepteur d'en face
+/// (bits 29:30 de sa MP) : 16 états (Figure 10), 32 états (Figure 11) ou
+/// 64 états (Figure 12). Notre récepteur, lui, lit U0 dans la parité des
+/// rotations : il décode n'importe lequel des trois.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Trellis {
+    /// 0 : 16 états, 1 : 32 états, 2 : 64 états
+    select: u8,
+    w: [bool; 6],
+}
+
+impl Trellis {
+    pub fn new(select: u8) -> Self {
+        Self { select: select.min(2), w: [false; 6] }
+    }
+
+    pub fn states(&self) -> u32 {
+        16 << self.select
+    }
+
+    /// Sortie Y0(m) (ne dépend que des entrées passées).
+    pub fn y0(&self) -> bool {
+        self.w[3 + self.select as usize]
+    }
+
+    /// Avance d'un intervalle 4D avec les deux points de sortie du canal
+    /// y(2m), y(2m + 1).
+    pub fn update(&mut self, y0pt: (i32, i32), y1pt: (i32, i32)) {
+        let s0 = subset_label(y0pt.0, y0pt.1) as usize;
+        let s1 = subset_label(y1pt.0, y1pt.1) as usize;
+        let yb = TABLE13[s0][s1];
+        let (y1, y2, y3, y4) = (yb & 1 != 0, yb & 2 != 0, yb & 4 != 0, yb & 8 != 0);
+        let y0 = self.y0();
+        let [w1, w2, w3, w4, w5, w6] = self.w;
+        self.w = match self.select {
+            // Figure 10
+            0 => [y0, w1 ^ y2 ^ y0, w2 ^ y2, w3 ^ y1, false, false],
+            // Figure 11 : seul retour, Y0 vers la première cellule
+            1 => [y0, w1 ^ y2, w2 ^ y1, w3 ^ y4, w4 ^ y2, false],
+            // Figure 12 : deux portes ET (Y2·w3 et w3·(w2 ⊕ Y1))
+            _ => {
+                let a = w1 ^ w2;
+                let b = w2 ^ y1;
+                [y4 ^ a ^ (w3 & b), a ^ y3 ^ (y2 & w3) ^ w4, b ^ w3, w3, w6, w5 ^ y2 ^ w3]
+            }
+        };
+    }
+}
+
+/// Arrondi au multiple de `step` le plus proche, à égalité vers le plus
+/// petit module (§9.6.2, étapes 2 et 3).
+fn round_half_down(v: f64, step: f64) -> f64 {
+    v.signum() * ((v.abs() / step - 0.5).ceil() * step)
+}
+
 /// Motifs d'inversion de bit pour la synchro de supertrame (Table 12).
 fn inversion_pattern(j: usize) -> &'static [bool] {
     const P8: [bool; 16] = [false, true, true, true, false, true, true, true, true, true, true, true, true, false, true, false];
@@ -320,7 +375,13 @@ pub struct DataEncoder {
     shell: Shell,
     scr: Scrambler,
     z: u32,
-    trellis: Trellis16,
+    trellis: Trellis,
+    /// Codeur non linéaire (§9.7) : Θ = 0 ou 0,3125, au choix d'en face
+    theta: f64,
+    /// Coefficients du précodeur (§9.6.2), fournis par la MP d'en face
+    precoder: [(f64, f64); 3],
+    /// Trois derniers symboles précodés x(n − p)
+    xhist: [(f64, f64); 3],
     /// Intervalle 4D courant depuis le début de B1
     m4d: u64,
     /// Indice de la trame de mise en correspondance dans la trame de données
@@ -334,7 +395,20 @@ impl DataEncoder {
     /// `call` : brouilleur de l'appelant (GPC) ou de l'appelé (GPA).
     pub fn new(prm: DataParams, call: bool) -> Self {
         let power = average_power(&prm);
-        Self { shell: Shell::new(prm.m), b1_left: prm.p, prm, scr: Scrambler::new(call), z: 0, trellis: Trellis16::default(), m4d: 0, frame_in_df: 0, power }
+        Self {
+            shell: Shell::new(prm.m),
+            b1_left: prm.p,
+            prm,
+            scr: Scrambler::new(call),
+            z: 0,
+            trellis: Trellis::new(0),
+            theta: 0.0,
+            precoder: [(0.0, 0.0); 3],
+            xhist: [(0.0, 0.0); 3],
+            m4d: 0,
+            frame_in_df: 0,
+            power,
+        }
     }
 
     pub fn in_b1(&self) -> bool {
@@ -346,10 +420,60 @@ impl DataEncoder {
         if self.prm.swp[self.frame_in_df] { self.prm.b } else { self.prm.b - 1 }
     }
 
-    /// Produit les 8 points (coordonnées entières) de la trame suivante.
-    /// `src` fournit les bits utilisateur (non brouillés) ; pendant B1 il
-    /// n'est pas appelé (on émet des uns).
+    /// Ce qu'exige le récepteur d'en face dans sa MP (§10.1.3.9) : codeur en
+    /// treillis (0 : 16, 1 : 32, 2 : 64 états), codeur non linéaire
+    /// (Θ = 0,3125) et coefficients du précodeur (format 2.14, nuls sans MP
+    /// de type 1).
+    pub fn configure(&mut self, trellis: u8, nonlinear: bool, precoder: [(i16, i16); 3]) {
+        self.trellis = Trellis::new(trellis);
+        self.theta = if nonlinear { 0.3125 } else { 0.0 };
+        self.precoder = precoder.map(|(re, im)| (re as f64 / 16384.0, im as f64 / 16384.0));
+    }
+
+    pub fn trellis_states(&self) -> u32 {
+        self.trellis.states()
+    }
+
+    /// Filtre du précodeur pour le symbole à venir : p(n) arrondi à 2⁻⁷,
+    /// c(n) quantifié à 2^w (§9.6.2, étapes 1 à 3). Nuls sans précodage.
+    fn precode_pc(&self) -> ((f64, f64), (f64, f64)) {
+        let mut q = (0.0f64, 0.0f64);
+        for (k, &(hr, hi)) in self.precoder.iter().enumerate() {
+            let (xr, xi) = self.xhist[k];
+            q.0 += xr * hr - xi * hi;
+            q.1 += xr * hi + xi * hr;
+        }
+        let p = (round_half_down(q.0, 1.0 / 128.0), round_half_down(q.1, 1.0 / 128.0));
+        let wq = if self.prm.b >= 56 { 4.0 } else { 2.0 };
+        let c = (round_half_down(p.0, wq), round_half_down(p.1, wq));
+        (p, c)
+    }
+
+    fn push_x(&mut self, x: (f64, f64)) {
+        self.xhist = [x, self.xhist[0], self.xhist[1]];
+    }
+
+    /// Codeur non linéaire (§9.7) : x′ = Φ·x, Φ = 1 + ζ/6 + ζ²/120,
+    /// ζ = Θ·|x|² / (énergie moyenne de x).
+    fn nonlinear(&self, x: (f64, f64)) -> Cpx {
+        if self.theta == 0.0 {
+            return Cpx::new(x.0 as f32, x.1 as f32);
+        }
+        let zeta = self.theta * (x.0 * x.0 + x.1 * x.1) / self.power.max(1e-9) as f64;
+        let phi = 1.0 + zeta / 6.0 + zeta * zeta / 120.0;
+        Cpx::new((phi * x.0) as f32, (phi * x.1) as f32)
+    }
+
+    /// Produit les 8 points (coordonnées entières) de la trame suivante,
+    /// sans précodage ni codeur non linéaire (essais du décodeur).
     pub fn frame(&mut self, src: &mut dyn FnMut() -> bool) -> [(i32, i32); 8] {
+        self.frame_tx(src).map(|p| (p.re.round() as i32, p.im.round() as i32))
+    }
+
+    /// Produit les 8 points émis de la trame suivante (après précodeur et
+    /// codeur non linéaire). `src` fournit les bits utilisateur (non
+    /// brouillés) ; pendant B1 il n'est pas appelé (on émet des uns).
+    pub fn frame_tx(&mut self, src: &mut dyn FnMut() -> bool) -> [Cpx; 8] {
         let p = &self.prm;
         let high = p.swp[self.frame_in_df];
         let nb = if high { p.b } else { p.b - 1 };
@@ -400,14 +524,24 @@ impl DataEncoder {
             }
         }
         let _ = &mut bits;
-        let mut out = [(0i32, 0i32); 8];
+        let mut out = [Cpx::ZERO; 8];
         let inv = inversion_pattern(p.j);
         for (jj, &(i1, i2, i3, q)) in groups.iter().enumerate() {
             let i = i2 as u32 + 2 * i3 as u32;
             self.z = (self.z + i) & 3;
             let lbl0 = (q[0] as usize) | (rings[2 * jj] << p.q);
             let lbl1 = (q[1] as usize) | (rings[2 * jj + 1] << p.q);
-            let u0 = quarter_point(lbl0).rot_cw(self.z);
+            // Ordre de la Table 11 : u(2m), précodeur, c(2m+1), C0, U0,
+            // u(2m+1), précodeur, treillis sur y(2m), y(2m+1).
+            let ua = quarter_point(lbl0).rot_cw(self.z);
+            let (pa, ca) = self.precode_pc();
+            let ya = (ua.re as f64 + ca.0, ua.im as f64 + ca.1);
+            let xa = (ya.0 - pa.0, ya.1 - pa.1);
+            self.push_x(xa);
+            let (pb, cb) = self.precode_pc();
+            // Codeur modulo (§9.6.3.3) : parités de (cr + ci)/2
+            let par = |c: (f64, f64)| ((c.0 / 2.0) as i64 + (c.1 / 2.0) as i64).rem_euclid(2) == 1;
+            let c0 = par(ca) != par(cb);
             // V0 : inversion au début de chaque demi-trame de données.
             // B1 joue le rôle de la dernière trame d'une supertrame.
             let half = 2 * p.p as u64;
@@ -417,13 +551,14 @@ impl DataEncoder {
             } else {
                 false
             };
-            let u0bit = self.trellis.y0() ^ v0;
-            let u1 = quarter_point(lbl1).rot_cw(self.z + 2 * i1 as u32 + u0bit as u32);
-            let a = (u0.re as i32, u0.im as i32);
-            let b = (u1.re as i32, u1.im as i32);
-            self.trellis.update(a, b);
-            out[2 * jj] = a;
-            out[2 * jj + 1] = b;
+            let u0bit = self.trellis.y0() ^ c0 ^ v0;
+            let ub = quarter_point(lbl1).rot_cw(self.z + 2 * i1 as u32 + u0bit as u32);
+            let yb = (ub.re as f64 + cb.0, ub.im as f64 + cb.1);
+            let xb = (yb.0 - pb.0, yb.1 - pb.1);
+            self.push_x(xb);
+            self.trellis.update((ya.0 as i32, ya.1 as i32), (yb.0 as i32, yb.1 as i32));
+            out[2 * jj] = self.nonlinear(xa);
+            out[2 * jj + 1] = self.nonlinear(xb);
             self.m4d += 1;
         }
         self.frame_in_df = (self.frame_in_df + 1) % p.p;
@@ -539,12 +674,15 @@ impl DataDecoder {
             } else {
                 false
             };
-            let u0bit = self.trellis.y0() ^ v0;
+            // U0 se lit dans la parité de (rot1 − rot0) : I1 en sort sans
+            // dépendre du treillis de l'émetteur. Notre modèle 16 états (ce
+            // que notre MP exige d'en face) sert à compter les erreurs.
             let z = rot0 as u32;
-            let t = (rot1 as u32 + 8 - z - u0bit as u32) & 3;
-            if t & 1 == 1 {
+            let u0_obs = (rot1 as u32 + 4 - z) & 1 == 1;
+            if u0_obs != (self.trellis.y0() ^ v0) {
                 self.errors += 1;
             }
+            let t = (rot1 as u32 + 8 - z - u0_obs as u32) & 3;
             let i1 = t >> 1 == 1;
             let i = (z + 4 - self.z_prev) & 3;
             self.z_prev = z;
@@ -699,6 +837,113 @@ mod tests {
             // Puissance réellement émise ≈ estimation
             assert!(enc.power > 1.0);
         }
+    }
+
+    /// Le récepteur d'en face peut exiger le treillis 32 ou 64 états (et le
+    /// façonnage étendu) : notre décodeur lit U0 dans la parité des
+    /// rotations, il décode les trois sans changer.
+    #[test]
+    fn treillis_32_et_64_etats_decodes() {
+        for select in [1u8, 2] {
+            for &(sr, rate, expanded) in &[(5usize, 33600u32, false), (5, 28800, true), (3, 14400, false)] {
+                let prm = DataParams::new(sr, rate, expanded);
+                let mut enc = DataEncoder::new(prm.clone(), true);
+                enc.configure(select, false, [(0, 0); 3]);
+                let mut dec = DataDecoder::new(prm.clone(), true);
+                let (mut seed, mut sent, mut got) = (11u32, Vec::new(), Vec::new());
+                for _ in 0..(prm.p * 3) {
+                    let pts = enc.frame(&mut || {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 17;
+                        seed ^= seed << 5;
+                        sent.push(seed & 1 == 1);
+                        seed & 1 == 1
+                    });
+                    for p in pts {
+                        if let (_, Some(b)) = dec.push(Cpx::new(p.0 as f32 * dec.scale, p.1 as f32 * dec.scale)) {
+                            got.extend(b);
+                        }
+                    }
+                }
+                assert_eq!(got, sent, "{} états, S={sr} R={rate} étendu={expanded}", 16 << select);
+            }
+        }
+    }
+
+    /// Un codeur mal câblé (une porte ou un retour oubliés sur les figures
+    /// 11 et 12) n'atteint pas tous ses états.
+    #[test]
+    fn treillis_atteignent_tous_leurs_etats() {
+        let pts: Vec<(i32, i32)> = [-3, -1, 1, 3].iter().flat_map(|&x| [-3, -1, 1, 3].map(|y| (x, y))).collect();
+        for select in 0u8..3 {
+            let mut t = Trellis::new(select);
+            let mut seen = std::collections::HashSet::new();
+            let mut seed = 5u32;
+            for _ in 0..20000 {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                let a = pts[(seed % 16) as usize];
+                let b = pts[((seed >> 8) % 16) as usize];
+                t.update(a, b);
+                seen.insert(t.w);
+            }
+            assert_eq!(seen.len() as u32, t.states(), "{} états attendus", t.states());
+        }
+    }
+
+    /// §9.6.2 : x filtré par (1 + Σ h(p)·z⁻ᵖ) redonne y à 2⁻⁷ près (les
+    /// arrondis du filtre), et y − u est sur la grille 2^w.
+    #[test]
+    fn precodeur_conforme() {
+        let prm = DataParams::new(5, 28800, false);
+        let mut enc = DataEncoder::new(prm.clone(), true);
+        // h(1) = 0,5 − 0,25j, h(2) = −0,125, h(3) = 0,0625j (format 2.14)
+        let h = [(8192i16, -4096i16), (-2048, 0), (0, 1024)];
+        enc.configure(0, false, h);
+        let hf: Vec<(f64, f64)> = h.iter().map(|&(r, i)| (r as f64 / 16384.0, i as f64 / 16384.0)).collect();
+        let mut hist: Vec<(f64, f64)> = vec![(0.0, 0.0); 3];
+        let mut seed = 3u32;
+        for _ in 0..(prm.p * 4) {
+            let pts = enc.frame_tx(&mut || {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                seed & 1 == 1
+            });
+            for x in pts {
+                let x = (x.re as f64, x.im as f64);
+                // y ≈ x + Σ h(p)·x(n−p)
+                let mut y = x;
+                for (k, &(hr, hi)) in hf.iter().enumerate() {
+                    let (xr, xi) = hist[k];
+                    y.0 += xr * hr - xi * hi;
+                    y.1 += xr * hi + xi * hr;
+                }
+                // y est sur la grille des entiers impairs (u impair + c pair)
+                for v in [y.0, y.1] {
+                    let r = v.round();
+                    assert!((v - r).abs() <= 1.0 / 128.0 + 1e-6, "y hors grille : {v}");
+                    assert!((r as i64).rem_euclid(2) == 1, "y doit être impair : {r}");
+                }
+                hist = vec![x, hist[0], hist[1]];
+            }
+        }
+    }
+
+    /// §9.7 : Φ = 1 + ζ/6 + ζ²/120, ζ = Θ·|x|²/E.
+    #[test]
+    fn codeur_non_lineaire_conforme() {
+        let prm = DataParams::new(5, 28800, false);
+        let mut enc = DataEncoder::new(prm, true);
+        enc.configure(0, true, [(0, 0); 3]);
+        let e = enc.power as f64;
+        let x = (e.sqrt() * 0.6, e.sqrt() * 0.8); // |x|² = E → ζ = Θ
+        let y = enc.nonlinear(x);
+        let phi = 1.0 + 0.3125 / 6.0 + 0.3125f64.powi(2) / 120.0;
+        assert!((y.re as f64 - phi * x.0).abs() < 1e-3 && (y.im as f64 - phi * x.1).abs() < 1e-3);
+        enc.configure(0, false, [(0, 0); 3]);
+        assert_eq!(enc.nonlinear(x), Cpx::new(x.0 as f32, x.1 as f32));
     }
 
     #[test]

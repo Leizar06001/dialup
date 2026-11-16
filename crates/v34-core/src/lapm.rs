@@ -77,6 +77,8 @@ const U_UA: u8 = 0x63;
 const U_DISC: u8 = 0x43;
 const U_DM: u8 = 0x0F;
 const U_PF: u8 = 0x10;
+/// XID (échange d'identification, V.42 §8.2.4.13), bit P/F à 0
+const U_XID: u8 = 0xAF;
 
 // ---------------------------------------------------------------------------
 // FCS 16 bits (CRC-CCITT version HDLC / X.25, traitement LSB en premier)
@@ -437,6 +439,11 @@ pub struct Lapm {
     disc_retries: u32,
     /// Réponse U à émettre (code, bit F).
     u_resp: Option<(u8, bool)>,
+    /// V.42 strict, face à un vrai modem : bit C/R de la Table 6/V.42
+    /// (l'inverse de notre convention d'origine) et réponse aux XID
+    standard: bool,
+    /// Champ d'information de la réponse XID à émettre
+    xid_resp: Option<Vec<u8>>,
 
     /// Compteurs (les champs `established` et `tx_queue` sont calculés).
     counters: LapmStats,
@@ -477,6 +484,8 @@ impl Lapm {
             disc_due: false,
             disc_retries: 0,
             u_resp: None,
+            standard: false,
+            xid_resp: None,
             counters: LapmStats::default(),
         }
     }
@@ -618,10 +627,63 @@ impl Lapm {
         self.tx_queue.len() + self.window.iter().map(|e| e.data.len()).sum::<usize>()
     }
 
-    /// Octet d'adresse d'une trame émise (commande ou réponse).
+    /// V.42 strict (face à un vrai modem) : bit C/R de la Table 6/V.42 et
+    /// réponse aux XID. Sinon, notre convention d'origine (C/R inversé), que
+    /// nos modems d'avant attendent.
+    pub fn set_standard(&mut self, standard: bool) {
+        self.standard = standard;
+    }
+
+    /// Octet d'adresse d'une trame émise (commande ou réponse). V.42 : les
+    /// commandes de l'appelant portent C/R = 1, ses réponses C/R = 0 (et
+    /// l'inverse pour l'appelé) ; notre convention d'origine est l'inverse.
     fn addr(&self, command: bool) -> u8 {
-        let cr = command != self.originator;
+        let cr = (command != self.originator) != self.standard;
         0x01 | ((cr as u8) << 1)
+    }
+
+    /// Réponse à une XID de négociation (V.42 §8.10, §12.2) : fonctions
+    /// optionnelles HDLC sans SREJ ni FCS 32 bits, longueur de trame et
+    /// fenêtre demandées ramenées à nos limites, pas de V.42 bis (aucun
+    /// sous-champ privé : pas de compression).
+    fn xid_response(&self, cmd: &[u8]) -> Vec<u8> {
+        // paramètres demandés : PI → valeur
+        let mut asked: Vec<(u8, u32)> = Vec::new();
+        if cmd.first() == Some(&0x82) {
+            let mut i = 1;
+            while i + 3 <= cmd.len() {
+                let (gi, gl) = (cmd[i], u16::from_be_bytes([cmd[i + 1], cmd[i + 2]]) as usize);
+                let body = &cmd[i + 3..(i + 3 + gl).min(cmd.len())];
+                if gi == 0x80 {
+                    let mut j = 0;
+                    while j + 2 <= body.len() {
+                        let (pi, pl) = (body[j], body[j + 1] as usize);
+                        let pv = &body[(j + 2).min(body.len())..(j + 2 + pl).min(body.len())];
+                        asked.push((pi, pv.iter().fold(0u32, |a, &b| a << 8 | b as u32)));
+                        j += 2 + pl;
+                    }
+                }
+                i += 3 + gl;
+            }
+        }
+        let mut params: Vec<u8> = vec![3, 4, 0x8A, 0x89, 0x00, 0x00];
+        let n401_bits = (self.n401 * 8) as u32;
+        for (pi, v) in asked {
+            let ours = match pi {
+                5 | 6 => v.min(n401_bits),
+                7 | 8 => v.min(self.k as u32),
+                _ => continue,
+            };
+            let bytes: Vec<u8> = ours.to_be_bytes().into_iter().skip_while(|&b| b == 0).collect();
+            let bytes = if bytes.is_empty() { vec![0] } else { bytes };
+            params.push(pi);
+            params.push(bytes.len() as u8);
+            params.extend(bytes);
+        }
+        let mut info = vec![0x82, 0x80];
+        info.extend((params.len() as u16).to_be_bytes());
+        info.extend(params);
+        info
     }
 
     fn arm_t401(&mut self) {
@@ -738,6 +800,12 @@ impl Lapm {
             out.push(code | if f { U_PF } else { 0 });
             return Some(if code == U_UA { SentKind::Ua } else { SentKind::Other });
         }
+        if let Some(info) = self.xid_resp.take() {
+            out.push(self.addr(false));
+            out.push(U_XID);
+            out.extend(info);
+            return Some(SentKind::Other);
+        }
         match self.state {
             LapmState::Establishing if self.sabme_due => {
                 self.sabme_due = false;
@@ -843,7 +911,7 @@ impl Lapm {
             return;
         }
         let cr = addr & 0x02 != 0;
-        let is_cmd = cr == self.originator;
+        let is_cmd = (cr == self.originator) != self.standard;
         let c0 = f[1];
         if c0 & 0x01 == 0 {
             // Trame I : toujours une commande.
@@ -857,6 +925,11 @@ impl Lapm {
                 return;
             }
             self.on_s_frame(c0, f[2] >> 1, f[2] & 1 != 0, is_cmd);
+        } else if c0 & !U_PF == U_XID {
+            // XID de négociation d'un vrai modem (V.42) : on répond
+            if is_cmd && self.standard {
+                self.xid_resp = Some(self.xid_response(&f[2..]));
+            }
         } else {
             // Trame U : sans champ d'information pour celles qu'on traite.
             if f.len() != 2 {
@@ -1052,6 +1125,59 @@ impl Lapm {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// V.42 strict (face à un vrai modem) : C/R de la Table 6/V.42 — le
+    /// SABME de l'appelant porte C/R = 1 — et la liaison s'établit et
+    /// transporte les données comme avec notre convention d'origine.
+    #[test]
+    fn v42_strict_bit_cr_et_donnees() {
+        let a = Lapm::new(true);
+        let mut s = Lapm::new(true);
+        s.set_standard(true);
+        assert_eq!(a.addr(true), 0x01, "convention d'origine : commande de l'appelant C/R = 0");
+        assert_eq!(s.addr(true), 0x03, "V.42 : commande de l'appelant C/R = 1");
+        assert_eq!(s.addr(false), 0x01, "V.42 : réponse de l'appelant C/R = 0");
+        let mut pair = Pair::new(40, 3);
+        pair.a.set_standard(true);
+        pair.b.set_standard(true);
+        let da: Vec<u8> = (0..900u32).map(|i| (i * 7) as u8).collect();
+        let db: Vec<u8> = (0..700u32).map(|i| (i * 13) as u8).collect();
+        transfer(&mut pair, &da, &db, 400_000);
+    }
+
+    /// XID de négociation typique d'un modem V.42 bis (N401 = 256 octets,
+    /// k = 15, compression demandée) : réponse dans nos limites, sans
+    /// sous-champ privé (pas de V.42 bis), avec les bits obligatoires.
+    #[test]
+    fn reponse_xid_v42() {
+        let mut b = Lapm::new(false);
+        b.set_standard(true);
+        let params: Vec<u8> = vec![3, 4, 0x8A, 0x89, 0, 0, 5, 2, 0x08, 0x00, 6, 2, 0x08, 0x00, 7, 1, 15, 8, 1, 15];
+        let mut info = vec![0x82, 0x80];
+        info.extend((params.len() as u16).to_be_bytes());
+        info.extend(&params);
+        // sous-champ privé V.42 bis : « V42 », P0 = 3, P1 = 2048, P2 = 32
+        info.extend([0xF0, 0, 14, 0, 3, b'V', b'4', b'2', 1, 1, 3, 2, 2, 0x08, 0x00, 3, 1, 32]);
+        let mut frame = vec![0x03, U_XID]; // commande de l'appelant (C/R = 1)
+        frame.extend(&info);
+        b.handle_frame(&frame);
+        let resp = b.xid_resp.clone().expect("réponse XID");
+        assert_eq!(&resp[..2], &[0x82, 0x80]);
+        let gl = u16::from_be_bytes([resp[2], resp[3]]) as usize;
+        assert_eq!(resp.len(), 4 + gl, "pas de sous-champ privé (pas de compression)");
+        let body = &resp[4..];
+        assert_eq!(&body[..6], &[3, 4, 0x8A, 0x89, 0, 0]);
+        // N401 ramené à 128 octets = 1024 bits, k = 15
+        assert!(body.windows(4).any(|w| w == [5, 2, 0x04, 0x00]) && body.windows(4).any(|w| w == [6, 2, 0x04, 0x00]));
+        assert!(body.windows(3).any(|w| w == [7, 1, 15]) && body.windows(3).any(|w| w == [8, 1, 15]));
+        let mut out = Vec::new();
+        b.select_frame(&mut out);
+        assert_eq!(&out[..2], &[0x03, U_XID], "réponse de l'appelé : C/R = 1");
+        // notre convention d'origine n'y répond pas (nos modems n'en envoient pas)
+        let mut legacy = Lapm::new(false);
+        legacy.handle_frame(&frame);
+        assert!(legacy.xid_resp.is_none());
+    }
 
     /// Générateur pseudo-aléatoire xorshift64* (déterministe, sans dépendance).
     struct Rng(u64);

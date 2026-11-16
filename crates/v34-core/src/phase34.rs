@@ -144,6 +144,9 @@ pub(crate) struct P34 {
     // MP
     our_mp: Mp,
     mp_bits: Vec<bool>,
+    /// Coefficients du précodeur de la dernière MP de type 1 reçue (une MP
+    /// de type 0 ne les change pas, §10.1.3.9)
+    precoder_rx: [(i16, i16); 3],
     /// Ordre du CRC de nos MP, et ordres acceptés (voir `CrcMode`)
     pub(crate) crc_legacy: bool,
     pub(crate) crc_mode: crate::api::CrcMode,
@@ -252,6 +255,7 @@ impl P34 {
             n: 0,
             our_mp,
             mp_bits: Vec::new(),
+            precoder_rx: [(0, 0); 3],
             crc_legacy: false,
             crc_mode: crate::api::CrcMode::Auto,
             mp_pos: 0,
@@ -450,11 +454,28 @@ impl P34 {
                         Some(v) => (v.up_rate, 0),
                         None => self.negotiated_rates(),
                     };
-                    let prm = DataParams::new(self.sr_tx_idx, tx_rate, false);
-                    let enc = DataEncoder::new(prm.clone(), !self.answer);
+                    // Ce qu'exige le récepteur d'en face dans sa MP : façonnage,
+                    // treillis, codeur non linéaire, précodeur (V.34 §10.1.3.9)
+                    let want = if self.v90.is_some() { None } else { self.mp_rx.clone() };
+                    let expanded = want.as_ref().is_some_and(|m| m.shaping_expanded);
+                    let prm = DataParams::new(self.sr_tx_idx, tx_rate, expanded);
+                    let mut enc = DataEncoder::new(prm.clone(), !self.answer);
+                    if let Some(m) = &want {
+                        enc.configure(m.trellis, m.nonlinear, self.precoder_rx);
+                    }
                     self.tx.set_constellation_power(enc.power);
                     self.link.set_t401_bits((tx_rate as u64 * 6 / 10).max(2048));
-                    self.detail(format!("Émission en mode données : {tx_rate} bit/s, constellation {} points, {} bits/trame", prm.l, prm.b));
+                    let opts = match &want {
+                        Some(m) => format!(
+                            ", treillis {} états, Θ {}, façonnage {}{}",
+                            enc.trellis_states(),
+                            if m.nonlinear { "0,3125" } else { "0" },
+                            if expanded { "étendu" } else { "minimal" },
+                            if self.precoder_rx != [(0, 0); 3] { ", précodage" } else { "" }
+                        ),
+                        None => String::new(),
+                    };
+                    self.detail(format!("Émission en mode données : {tx_rate} bit/s, constellation {} points, {} bits/trame{opts}", prm.l, prm.b));
                     self.enc = Some(enc);
                     self.tx_st = TxSt::Data;
                     self.act(P34Action::Tx("B1 / données".into()));
@@ -464,8 +485,7 @@ impl P34 {
                     // bits viennent de la couche liaison (fanions au repos).
                     let link = &mut self.link;
                     let enc = self.enc.as_mut().expect("codeur de données");
-                    let pts = enc.frame(&mut || link.next_tx_bit());
-                    let syms: Vec<Cpx> = pts.iter().map(|&(x, y)| Cpx::new(x as f32, y as f32)).collect();
+                    let syms = enc.frame_tx(&mut || link.next_tx_bit());
                     self.tx.push(&syms);
                 }
             }
@@ -898,11 +918,18 @@ impl P34 {
         if self.mp_rx.is_none() {
             self.act(P34Action::Rx(if mp.ack { "MP′".into() } else { "MP".into() }));
             self.detail(format!(
-                "MP reçue : max appelant→appelé {} bit/s, appelé→appelant {} bit/s, treillis {} états",
+                "MP reçue (type {}) : max appelant→appelé {} bit/s, appelé→appelant {} bit/s ; elle exige de notre émetteur : treillis {} états, Θ {}, façonnage {}{}",
+                mp.type1 as u8,
                 mp.rate_c2a as u32 * 2400,
                 mp.rate_a2c as u32 * 2400,
-                [16, 32, 64, 0][mp.trellis as usize & 3]
+                [16, 32, 64, 0][mp.trellis as usize & 3],
+                if mp.nonlinear { "0,3125" } else { "0" },
+                if mp.shaping_expanded { "étendu" } else { "minimal" },
+                if mp.type1 { format!(", précodage {:?}", mp.precoder) } else { String::new() }
             ));
+        }
+        if mp.type1 {
+            self.precoder_rx = mp.precoder;
         }
         if mp.ack && !self.mp_ack_rx {
             self.mp_ack_rx = true;
@@ -1109,7 +1136,9 @@ impl P34 {
 
     /// Récupère la couche liaison (pour la conserver pendant un réentraînement).
     pub fn take_link(&mut self) -> Lapm {
-        std::mem::replace(&mut self.link, Lapm::new(!self.answer))
+        let mut fresh = Lapm::new(!self.answer);
+        fresh.set_standard(!self.crc_legacy);
+        std::mem::replace(&mut self.link, fresh)
     }
 
     /// Démarre une renégociation de débit (§11.6) ou un raccrochage propre
@@ -1358,6 +1387,8 @@ impl Modem {
         let mut p = P34::new(answer, up, high, up, high, mp);
         p.crc_legacy = self.crc_legacy;
         p.crc_mode = self.cfg.crc_mode;
+        // un vrai modem (CRC dans l'ordre de la norme) parle V.42 strict
+        p.link.set_standard(!self.crc_legacy);
         p.ec_wait = 0;
         p.n = self.n;
         p.t_step = self.n;
@@ -1424,6 +1455,8 @@ impl Modem {
         let mut p = P34::new(answer, sr_tx, tx_high, sr_rx, rx_high, mp);
         p.crc_legacy = self.crc_legacy;
         p.crc_mode = self.cfg.crc_mode;
+        // un vrai modem (CRC dans l'ordre de la norme) parle V.42 strict
+        p.link.set_standard(!self.crc_legacy);
         // Long aller-retour (Internet, adaptateur téléphonique) : un écho
         // lointain est possible, on rallonge notre TRN de 0,8 s pour que son
         // annuleur ait le temps d'apprendre (l'autre attend notre J)
