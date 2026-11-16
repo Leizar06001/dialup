@@ -106,6 +106,8 @@ pub struct JitterBuffer {
     /// Mode modem : profondeur au-delà de laquelle on jette quand même
     hard_max: usize,
     late_run: u32,
+    /// Mode modem : re-remplissage après un recalage (on y jettera la rafale)
+    after_resync: bool,
 }
 
 impl JitterBuffer {
@@ -131,6 +133,7 @@ impl JitterBuffer {
             slip_free: concealment == Concealment::Modem,
             hard_max: target * 3 + 25,
             late_run: 0,
+            after_resync: false,
         }
     }
 
@@ -210,6 +213,7 @@ impl JitterBuffer {
                         self.next = Some(k);
                         self.next_raw = seq;
                         self.state = State::Buffering;
+                        self.after_resync = true;
                         k
                     } else {
                         self.stats.late += 1;
@@ -300,6 +304,19 @@ impl JitterBuffer {
         if self.state == State::Buffering {
             if self.frames.len() >= self.target {
                 self.state = State::Playing;
+                // Mode modem, après un recalage : la rafale des paquets
+                // bloqués arrive d'un coup. Tout garder ajouterait sa durée
+                // au délai (+500 ms après une coupure d'une demi-seconde),
+                // et il ne se résorberait qu'en secondes, pendant le
+                // réentraînement qui mesure l'aller-retour. Il y a déjà une
+                // discontinuité : on jette l'excédent tout de suite.
+                if self.slip_free && std::mem::take(&mut self.after_resync) {
+                    while self.frames.len() > self.target {
+                        let (&first, _) = self.frames.iter().next().unwrap();
+                        self.frames.remove(&first);
+                        self.stats.dropped += 1;
+                    }
+                }
                 // Commence à la plus ancienne trame disponible.
                 if let Some((&first, _)) = self.frames.iter().next() {
                     if let Some(n) = self.next {
@@ -457,6 +474,30 @@ mod tests {
         assert_eq!((k, f[0]), (FrameKind::Audio, 2.0));
     }
 
+    /// Modem : coupure d'une demi-seconde puis rafale des paquets bloqués →
+    /// recalage, et le délai revient aussitôt à la cible (pas +500 ms).
+    #[test]
+    fn modem_recalage_sans_garder_la_rafale() {
+        let mut jb = JitterBuffer::for_modem(140);
+        let mut seq = 0u32;
+        for _ in 0..20 {
+            push(&mut jb, seq);
+            seq += 1;
+            jb.pop_frame();
+        }
+        // 27 trames sans rien (joués en trous), puis tout arrive d'un coup
+        for _ in 0..27 {
+            jb.pop_frame();
+        }
+        for _ in 0..33 {
+            push(&mut jb, seq);
+            seq += 1;
+        }
+        jb.pop_frame();
+        assert!(jb.stats().resyncs >= 1);
+        assert!(jb.stats().depth_ms <= 140.0, "délai après recalage : {} ms", jb.stats().depth_ms);
+    }
+
     #[test]
     fn excess_depth_is_trimmed() {
         let mut jb = JitterBuffer::new(60, Concealment::Silence);
@@ -554,11 +595,9 @@ mod tests {
             push(&mut jb, q);
         }
         assert_eq!(jb.stats().resyncs, 1);
-        for _ in 0..3 {
-            jb.pop_frame();
-        }
+        // recalé sur le flux, au délai cible : les 3 dernières trames
         let (f, k) = jb.pop_frame();
         assert_eq!(k, FrameKind::Audio);
-        assert!(f[0] >= 24.0, "recalé sur le flux : {}", f[0]);
+        assert_eq!(f[0], 27.0, "recalé sur le flux : {}", f[0]);
     }
 }
