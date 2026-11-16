@@ -1410,11 +1410,15 @@ impl Modem {
         if let Some(link) = self.saved_link.take() {
             p.link = link;
         }
-        // Liaison 56k : les deux bouts sont récents, on peut élargir la
-        // couche de correction d'erreurs pour encaisser l'aller-retour du
-        // réseau (trames de 256 octets, fenêtre de 31, T401 d'une seconde).
-        p.link.set_n401(256);
-        p.link.set_window(31);
+        // Liaison 56k entre deux de nos modems : on peut élargir la couche de
+        // correction d'erreurs pour encaisser l'aller-retour du réseau
+        // (trames de 256 octets, fenêtre de 31). Pas face à un vrai modem
+        // (CRC dans l'ordre de la norme) : ses valeurs sont celles de la
+        // négociation XID. T401 d'une seconde dans tous les cas.
+        if self.crc_legacy {
+            p.link.set_n401(256);
+            p.link.set_window(31);
+        }
         p.link.set_t401_bits(if answer { 33600 } else { 56000 });
         if !answer {
             p.ec_wait = self.rtd.unwrap_or(0) + 100 * MS;

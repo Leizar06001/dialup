@@ -770,7 +770,7 @@ impl Lapm {
     /// fenêtre demandées ramenées à nos limites, et pas de V.42 bis, dit
     /// explicitement (sous-champ privé « V42 », P0 = 0) : l'absence vaut
     /// refus d'après la norme, mais un U.S. Robotics s'est cru en V.42 bis.
-    fn xid_response(&self, cmd: &[u8]) -> Vec<u8> {
+    fn xid_response(&mut self, cmd: &[u8]) -> Vec<u8> {
         // paramètres demandés : PI → valeur ; longueur du masque des
         // fonctions optionnelles ; sous-champ privé (V.42 bis) présent ?
         let mut asked: Vec<(u8, u32)> = Vec::new();
@@ -804,9 +804,23 @@ impl Lapm {
         params.extend(&[0x8A, 0x89, 0x00, 0x00][..pl3]);
         let n401_bits = (self.n401 * 8) as u32;
         for (pi, v) in asked {
+            // valeurs retenues, qui plafonnent aussi nos propres trames
+            // émises (taille, fenêtre)
             let ours = match pi {
-                5 | 6 => v.min(n401_bits),
-                7 | 8 => v.min(self.k as u32),
+                5 | 6 => {
+                    let n = v.min(n401_bits);
+                    if n >= 8 {
+                        self.n401_tx = Some(self.n401_tx.unwrap_or(self.n401).min(n as usize / 8));
+                    }
+                    n
+                }
+                7 | 8 => {
+                    let k = v.min(self.k as u32);
+                    if k >= 1 {
+                        self.k_tx = Some(self.k_tx.unwrap_or(self.k).min(k as usize));
+                    }
+                    k
+                }
                 _ => continue,
             };
             let bytes: Vec<u8> = ours.to_be_bytes().into_iter().skip_while(|&b| b == 0).collect();
@@ -1496,6 +1510,27 @@ mod tests {
         c.handle_frame(&usr);
         let resp = c.xid_resp.clone().expect("réponse XID");
         assert_eq!(resp, [0x82, 0x80, 0x00, 0x13, 0x03, 0x03, 0x8A, 0x89, 0x00, 0x05, 0x02, 0x04, 0x00, 0x06, 0x02, 0x04, 0x00, 0x07, 0x01, 0x0F, 0x08, 0x01, 0x0F]);
+        // un appelé élargi (liaison 56k) : il annonce 128 octets et 15
+        // trames, et s'y tient pour ses propres trames
+        let mut w = Lapm::new(false);
+        w.set_standard(true);
+        w.set_n401(256);
+        w.set_window(31);
+        w.handle_frame(&usr);
+        let resp = w.xid_resp.clone().expect("réponse XID");
+        assert!(resp.windows(4).any(|x| x == [5, 2, 0x04, 0x00]) && resp.windows(3).any(|x| x == [8, 1, 15]));
+        assert_eq!((w.n401_tx, w.k_tx), (Some(128), Some(15)));
+        w.handle_frame(&[0x03, U_SABME | U_PF]);
+        w.handle_frame(&[0x03, 0x01, 0x00]); // RR de l'appelant : confirmation
+        w.send(&[0x55; 600]);
+        let mut out = Vec::new();
+        let mut sizes = Vec::new();
+        for _ in 0..8 {
+            if w.select_frame(&mut out).is_some() && out[1] & 1 == 0 {
+                sizes.push(out.len() - 3);
+            }
+        }
+        assert!(!sizes.is_empty() && sizes.iter().all(|&n| n <= 128), "{sizes:?}");
         // notre convention d'origine n'y répond pas (nos modems n'en envoient pas)
         let mut legacy = Lapm::new(false);
         legacy.handle_frame(&frame);
