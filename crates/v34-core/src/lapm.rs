@@ -61,9 +61,10 @@ pub const T401_MIN_BITS: u64 = 2048;
 /// Nombre d'expirations de T401 tolérées pendant la déconnexion (N400).
 const N400_DISC: u32 = 10;
 /// XID de négociation émises sans réponse avant de passer au SABME (N400).
-/// Deux seulement : un U.S. Robotics ne répond jamais aux XID d'un
-/// appelant, et raccroche s'il n'a pas reçu de SABME au bout de ~2 s.
-const N400_XID: u32 = 2;
+/// Trois seulement : un modem qui ne les comprend pas peut raccrocher s'il
+/// n'a pas reçu de SABME au bout de ~2 s (un U.S. Robotics ignorait nos
+/// XID tant que leur masque faisait 4 octets).
+const N400_XID: u32 = 3;
 
 /// Fanion HDLC.
 const FLAG: u8 = 0x7E;
@@ -87,6 +88,28 @@ const U_PF: u8 = 0x10;
 const U_XID: u8 = 0xAF;
 /// FRMR (rejet de trame, V.42 §8.2.4.11)
 const U_FRMR: u8 = 0x87;
+
+/// Phase de détection (V.42 §7.2.1) : caractères arythmiques (départ 0,
+/// 7 bits poids faible d'abord, parité, arrêt 1) séparés de uns. Un
+/// U.S. Robotics qui appelle émet l'ODP (DC1 parité paire, DC1 parité
+/// impaire) et attend l'ADP : sans lui, il passe sans correction d'erreurs.
+/// ADP de l'appelé (Table 3/V.42) : « E », « C » (V.42 pris en charge).
+const ADP: [u8; 38] = [0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+/// Répétitions de l'ADP (« au moins dix fois », §7.2.1.3)
+const ADP_REPEATS: u32 = 10;
+
+/// Un caractère arythmique (10 bits, le plus ancien en poids fort).
+const fn char10(b: [u8; 10]) -> u16 {
+    let mut v = 0u16;
+    let mut i = 0;
+    while i < 10 {
+        v = (v << 1) | b[i] as u16;
+        i += 1;
+    }
+    v
+}
+const DC1_EVEN: u16 = char10([0, 1, 0, 0, 0, 1, 0, 0, 0, 1]);
+const DC1_ODD: u16 = char10([0, 1, 0, 0, 0, 1, 0, 0, 1, 1]);
 
 /// Octets en hexadécimal, pour le journal
 fn hex(b: &[u8]) -> String {
@@ -461,6 +484,15 @@ pub struct Lapm {
     /// V.42 strict : trames de service échangées (XID, SABME, UA, DISC, DM,
     /// FRMR), pour le journal — c'est tout ce qu'on voit d'un vrai modem
     notes: Vec<String>,
+    /// Appelé en V.42 strict, phase de détection (§7.2.1.3) : des uns tant
+    /// qu'elle dure ; l'ODP reconnu (quatre DC1 de parités alternées), l'ADP
+    /// est émis dix fois. Finie dès l'ADP émis ou une trame reçue.
+    det_done: bool,
+    det_pos: usize,
+    adp_left: u32,
+    rx_sh: u16,
+    det_seen: u8,
+    det_last: u16,
     /// Appelant en V.42 strict : notre XID de négociation est à émettre
     /// (avant SABME), ou émise et sa réponse attendue (essais déjà faits)
     xid_due: bool,
@@ -512,6 +544,12 @@ impl Lapm {
             standard: false,
             xid_resp: None,
             notes: Vec::new(),
+            det_done: false,
+            det_pos: 0,
+            adp_left: 0,
+            rx_sh: 0,
+            det_seen: 0,
+            det_last: 0,
             xid_due: false,
             xid_wait: false,
             xid_tries: 0,
@@ -554,6 +592,19 @@ impl Lapm {
     /// Prochain bit à émettre ; à appeler une fois par bit émis par le modem.
     pub fn next_tx_bit(&mut self) -> bool {
         self.clock += 1;
+        if self.adp_left > 0 {
+            let b = ADP[self.det_pos];
+            self.det_pos += 1;
+            if self.det_pos == ADP.len() {
+                self.det_pos = 0;
+                self.adp_left -= 1;
+            }
+            return b == 1;
+        }
+        // appelé face à un vrai modem : des uns pendant la détection
+        if self.standard && !self.originator && !self.det_done && self.htx.done() && self.u_resp.is_none() && self.xid_resp.is_none() {
+            return true;
+        }
 
         if let Some(deadline) = self.t401_deadline {
             // T401 n'expire pas pendant la réception d'une trame : elle porte
@@ -583,11 +634,16 @@ impl Lapm {
 
     /// Traite un bit reçu ; à appeler une fois par bit reçu par le modem.
     pub fn rx_bit(&mut self, bit: bool) {
+        if self.standard && !self.originator && !self.det_done {
+            self.detect_rx(bit);
+        }
         match self.hrx.push(bit) {
             RxOutcome::Nothing => {}
             RxOutcome::Rejected => self.counters.fcs_errors += 1,
             RxOutcome::Frame => {
                 self.counters.frames_rx += 1;
+                // une trame : la phase de protocole a commencé
+                self.det_done = true;
                 let frame = std::mem::take(&mut self.hrx.frame);
                 // On retire le FCS (2 octets) avant l'analyse.
                 self.handle_frame(&frame[..frame.len() - 2]);
@@ -673,6 +729,23 @@ impl Lapm {
         }
     }
 
+    /// Appelé, phase de détection : un bit reçu de plus (ODP de l'appelant).
+    fn detect_rx(&mut self, bit: bool) {
+        self.rx_sh = ((self.rx_sh << 1) | bit as u16) & 0x3FF;
+        if self.rx_sh != DC1_EVEN && self.rx_sh != DC1_ODD {
+            return;
+        }
+        // DC1 de parités alternées (le premier quelconque)
+        self.det_seen = if self.det_last != 0 && self.rx_sh != self.det_last { self.det_seen + 1 } else { 1 };
+        self.det_last = self.rx_sh;
+        if self.det_seen >= 4 {
+            self.det_done = true;
+            self.adp_left = ADP_REPEATS;
+            self.det_pos = 0;
+            self.note("V.42 : ODP reçu : envoi de l'ADP (« EC »)".into());
+        }
+    }
+
     /// Trames de service échangées depuis le dernier appel (V.42 strict).
     pub fn take_notes(&mut self) -> Vec<String> {
         std::mem::take(&mut self.notes)
@@ -698,8 +771,11 @@ impl Lapm {
     /// explicitement (sous-champ privé « V42 », P0 = 0) : l'absence vaut
     /// refus d'après la norme, mais un U.S. Robotics s'est cru en V.42 bis.
     fn xid_response(&self, cmd: &[u8]) -> Vec<u8> {
-        // paramètres demandés : PI → valeur
+        // paramètres demandés : PI → valeur ; longueur du masque des
+        // fonctions optionnelles ; sous-champ privé (V.42 bis) présent ?
         let mut asked: Vec<(u8, u32)> = Vec::new();
+        let mut pl3 = 3;
+        let mut private_asked = false;
         if cmd.first() == Some(&0x82) {
             let mut i = 1;
             while i + 3 <= cmd.len() {
@@ -710,14 +786,22 @@ impl Lapm {
                     while j + 2 <= body.len() {
                         let (pi, pl) = (body[j], body[j + 1] as usize);
                         let pv = &body[(j + 2).min(body.len())..(j + 2 + pl).min(body.len())];
+                        if pi == 3 {
+                            pl3 = pl.clamp(2, 4);
+                        }
                         asked.push((pi, pv.iter().fold(0u32, |a, &b| a << 8 | b as u32)));
                         j += 2 + pl;
                     }
+                } else if gi == 0xF0 {
+                    private_asked = true;
                 }
                 i += 3 + gl;
             }
         }
-        let mut params: Vec<u8> = vec![3, 4, 0x8A, 0x89, 0x00, 0x00];
+        // Masque de la même longueur que celui de l'initiateur (la Table 11a
+        // dit 4 octets, un U.S. Robotics en envoie 3 et n'accepte que ça)
+        let mut params: Vec<u8> = vec![3, pl3 as u8];
+        params.extend(&[0x8A, 0x89, 0x00, 0x00][..pl3]);
         let n401_bits = (self.n401 * 8) as u32;
         for (pi, v) in asked {
             let ours = match pi {
@@ -734,12 +818,14 @@ impl Lapm {
         let mut info = vec![0x82, 0x80];
         info.extend((params.len() as u16).to_be_bytes());
         info.extend(params);
-        // Table 11b/V.42 : identification « V42 », puis P0 = 0 (compression
-        // dans aucun sens)
-        let private = [0u8, 3, b'V', b'4', b'2', 1, 1, 0];
-        info.push(0xF0);
-        info.extend((private.len() as u16).to_be_bytes());
-        info.extend(private);
+        // V.42 bis demandé : refus explicite (Table 11b/V.42 : identification
+        // « V42 », puis P0 = 0, compression dans aucun sens)
+        if private_asked {
+            let private = [0u8, 3, b'V', b'4', b'2', 1, 1, 0];
+            info.push(0xF0);
+            info.extend((private.len() as u16).to_be_bytes());
+            info.extend(private);
+        }
         info
     }
 
@@ -748,7 +834,9 @@ impl Lapm {
     fn xid_command(&self) -> Vec<u8> {
         let n401_bits = ((self.n401 * 8) as u16).to_be_bytes();
         let k = self.k as u8;
-        let params: Vec<u8> = vec![3, 4, 0x8A, 0x89, 0, 0, 5, 2, n401_bits[0], n401_bits[1], 6, 2, n401_bits[0], n401_bits[1], 7, 1, k, 8, 1, k];
+        // masque des fonctions optionnelles sur 3 octets, comme un
+        // U.S. Robotics (la Table 11a en annonce 4 ; il ignore une XID ainsi)
+        let params: Vec<u8> = vec![3, 3, 0x8A, 0x89, 0, 5, 2, n401_bits[0], n401_bits[1], 6, 2, n401_bits[0], n401_bits[1], 7, 1, k, 8, 1, k];
         let private = [0u8, 3, b'V', b'4', b'2', 1, 1, 0];
         let mut info = vec![0x82, 0x80];
         info.extend((params.len() as u16).to_be_bytes());
@@ -760,11 +848,14 @@ impl Lapm {
     }
 
     /// Réponse à notre XID : on retient les plafonds (N401, k) pour nos
-    /// trames émises, puis on établit la liaison.
+    /// trames émises, puis on établit la liaison (si on ne l'a pas déjà
+    /// fait sans attendre une réponse tardive).
     fn on_xid_answer(&mut self, info: &[u8]) {
-        self.xid_wait = false;
-        self.t401_deadline = None;
-        self.sabme_due = true;
+        if self.xid_wait {
+            self.xid_wait = false;
+            self.t401_deadline = None;
+            self.sabme_due = true;
+        }
         if info.first() != Some(&0x82) {
             return;
         }
@@ -1062,12 +1153,12 @@ impl Lapm {
             self.on_s_frame(c0, f[2] >> 1, f[2] & 1 != 0, is_cmd);
         } else if c0 & !U_PF == U_XID {
             // XID de négociation d'un vrai modem (V.42) : on répond
-            self.note(format!("V.42 : XID {} reçue : {}", if is_cmd { "commande" } else { "réponse" }, hex(&f[2..])));
+            self.note(format!("V.42 : XID {} reçue ({}={}) : {}", if is_cmd { "commande" } else { "réponse" }, if is_cmd { "P" } else { "F" }, (c0 & U_PF != 0) as u8, hex(&f[2..])));
             if is_cmd && self.standard {
                 let resp = self.xid_response(&f[2..]);
                 self.note(format!("V.42 : notre réponse XID : {}", hex(&resp)));
                 self.xid_resp = Some(resp);
-            } else if !is_cmd && self.xid_wait {
+            } else if !is_cmd && self.standard && self.originator {
                 self.on_xid_answer(&f[2..]);
             }
         } else {
@@ -1305,6 +1396,29 @@ mod tests {
         assert!(nb.iter().any(|n| n.contains("XID commande reçue")) && nb.iter().any(|n| n.contains("SABME reçue")), "{nb:?}");
     }
 
+    /// Appelé face à un vrai modem : des uns pendant la phase de détection,
+    /// puis l'ADP dix fois en réponse à l'ODP (tel qu'émis par un
+    /// U.S. Robotics : DC1 pair, 9 uns, DC1 impair, 9 uns…).
+    #[test]
+    fn appele_repond_adp_a_l_odp() {
+        let mut b = Lapm::new(false);
+        b.set_standard(true);
+        assert!((0..200).all(|_| b.next_tx_bit()), "des uns tant que dure la détection");
+        let odp = "0100010001111111110100010011111111110";
+        for _ in 0..3 {
+            for c in odp.chars() {
+                b.rx_bit(c == '1');
+            }
+        }
+        assert_eq!(b.adp_left, ADP_REPEATS);
+        let sent: Vec<u8> = (0..ADP.len() * ADP_REPEATS as usize).map(|_| b.next_tx_bit() as u8).collect();
+        assert!(sent.chunks(ADP.len()).all(|c| c == ADP), "ADP ×10");
+        assert!(b.take_notes().iter().any(|n| n.contains("ODP reçu")));
+        // ensuite : des fanions (la phase de protocole commence)
+        let after: Vec<u8> = (0..16).map(|_| b.next_tx_bit() as u8).collect();
+        assert!(after.windows(8).any(|w| w == [0, 1, 1, 1, 1, 1, 1, 0]), "{after:?}");
+    }
+
     /// Appelant face à un vrai modem : XID (sans V.42 bis : sous-champ privé,
     /// P0 = 0) avant SABME ; la réponse fixe nos plafonds d'émission. Un
     /// modem qui ne répond pas aux XID : SABME après N400 essais.
@@ -1373,6 +1487,15 @@ mod tests {
         assert_eq!(&out[..2], &[0x03, U_XID], "réponse de l'appelé : C/R = 1");
         let notes = b.take_notes();
         assert!(notes.len() == 2 && notes[0].contains("XID commande reçue") && notes[1].contains("notre réponse XID"), "{notes:?}");
+        // XID réelle d'un U.S. Robotics qui appelle (compression coupée) :
+        // masque sur 3 octets, pas de sous-champ privé → même longueur en
+        // réponse, et rien sur V.42 bis
+        let usr = [0x03u8, U_XID, 0x82, 0x80, 0x00, 0x13, 0x03, 0x03, 0x8E, 0x89, 0x00, 0x05, 0x02, 0x04, 0x00, 0x06, 0x02, 0x04, 0x00, 0x07, 0x01, 0x0F, 0x08, 0x01, 0x0F];
+        let mut c = Lapm::new(false);
+        c.set_standard(true);
+        c.handle_frame(&usr);
+        let resp = c.xid_resp.clone().expect("réponse XID");
+        assert_eq!(resp, [0x82, 0x80, 0x00, 0x13, 0x03, 0x03, 0x8A, 0x89, 0x00, 0x05, 0x02, 0x04, 0x00, 0x06, 0x02, 0x04, 0x00, 0x07, 0x01, 0x0F, 0x08, 0x01, 0x0F]);
         // notre convention d'origine n'y répond pas (nos modems n'en envoient pas)
         let mut legacy = Lapm::new(false);
         legacy.handle_frame(&frame);

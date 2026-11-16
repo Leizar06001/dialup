@@ -15,6 +15,11 @@ const GAP_DB: f32 = 9.0;
 /// Délai entre réception d'une inversion et émission de la réponse : 40 ms.
 const REV_DELAY: u64 = 40 * MS;
 const L1_LEN: u64 = 160 * MS;
+/// Marge sur l'attente du ton B après notre L2 (§11.2.2.2.3 : 600 ms plus
+/// un aller-retour) : derrière un adaptateur téléphonique, l'aller-retour
+/// réel dépasse celui mesuré sur les inversions (un U.S. Robotics répond
+/// ~1 s après le début de L2, pour 960 ms permises).
+const L2_B_MARGIN: u64 = 400 * MS;
 /// Durée d'analyse de L2 (≤ 500 ms autorisés).
 const L2_ANALYSIS: u32 = 20; // blocs de 20 ms = 400 ms
 
@@ -540,7 +545,7 @@ impl Modem {
                     self.set_tx(TxMode::Tone(a), "A");
                     self.t_mark = at;
                     self.goto(St::A2ToneA);
-                } else if self.elapsed() > 600 * MS + self.rtd.unwrap_or(0) {
+                } else if self.elapsed() > 600 * MS + self.rtd.unwrap_or(0) + L2_B_MARGIN {
                     self.recover("ton B non reçu après L2");
                 }
             }
