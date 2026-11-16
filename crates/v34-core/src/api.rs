@@ -175,6 +175,31 @@ pub struct ModemConfig {
     /// TINYVERSE), l'appelé l'accepte ; sinon l'appel continue en V.34/V.90
     #[serde(default)]
     pub morse: bool,
+    /// Ordre des bits du CRC des séquences de la poignée de main (INFO, MP,
+    /// séquences du V.90). Laisser `Auto` : les autres valeurs servent aux
+    /// essais (imiter un de nos modems d'avant, ou un vrai modem).
+    #[serde(default)]
+    pub crc_mode: CrcMode,
+}
+
+/// Ordre des bits du CRC des séquences de la poignée de main.
+///
+/// La norme (V.34 §10.1.2.3) émet le CRC poids fort en premier, comme les
+/// vrais modems (vérifié sur un U.S. Robotics 56K de 1998). Nos modems
+/// d'avant (appli 0.1.6 et plus anciennes, centraux de 2026 jusqu'en
+/// novembre) l'émettaient poids faible en premier : deux de nos
+/// modems s'entendaient, mais pas avec du vrai matériel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CrcMode {
+    /// Accepte les deux ordres ; émet dans l'ancien tant que l'autre n'a pas
+    /// montré qu'il suit la norme (un modem d'avant reste compris), puis
+    /// comme lui.
+    #[default]
+    Auto,
+    /// Comme nos modems d'avant : l'ancien ordre seulement
+    Legacy,
+    /// Comme un vrai modem : l'ordre de la norme seulement
+    Standard,
 }
 
 impl Default for ModemConfig {
@@ -192,6 +217,7 @@ impl Default for ModemConfig {
             ident: String::new(),
             minitel: false,
             morse: false,
+            crc_mode: CrcMode::Auto,
         }
     }
 }

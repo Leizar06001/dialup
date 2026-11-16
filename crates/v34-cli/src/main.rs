@@ -59,6 +59,8 @@ Via le central téléphonique (v34-server, défaut dialup.tinyverse.fr:3434) :
         au 0836672253, les numéros cachés), les questions partent au
         clavier du Minitel (puis ENVOI), l'écran 40 × 25 s'affiche après
         chaque silence, et l'appel finit par CONNEXION/FIN.
+        --wav fichier.wav : enregistre la ligne (gauche = ce qu'on reçoit,
+        droite = ce qu'on émet), pour analyser une négociation.
         Sans --password, le mot de passe est lu dans V34_PASSWORD ou
         demandé au clavier (il n'apparaît alors pas dans `ps`).
 
@@ -603,6 +605,11 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
     let preset = args.preset()?;
     let seconds: Option<f64> = args.get("seconds").map(|s| s.parse().map_err(|_| format!("--seconds invalide : {s}"))).transpose()?;
     let rings: f64 = args.num("rings", 1.0)?;
+    // --wav : la ligne pendant l'appel (gauche = reçu, droite = émis)
+    let mut wav = match args.get("wav") {
+        Some(p) => Some(WavWriter::create(&PathBuf::from(p), SAMPLE_RATE, 2).map_err(|e| format!("WAV : {e}"))?),
+        None => None,
+    };
     let server = cfg.server.clone();
     let user = cfg.user.clone();
     let mut client = CentralClient::connect(cfg).map_err(|e| format!("central {server} : {e}"))?;
@@ -628,6 +635,16 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
         .or_else(|| client.isp_number().map(str::to_string))
         .unwrap_or_else(|| "0836154286".into());
     println!("Connecté : {user}, votre numéro est le {number}.");
+    // l'annuaire (abonnés et postes SIP, présents ou non)
+    client.refresh_directory();
+    let t1 = Instant::now();
+    while client.directory().is_empty() && t1.elapsed() < Duration::from_secs(2) {
+        client.poll().map_err(|e| format!("socket UDP : {e}"))?;
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    for e in client.directory() {
+        println!("  annuaire : {:<20} {:<24} {:?}", e.number, e.name, e.status);
+    }
     if !services.is_empty() {
         let list: Vec<String> = services.iter().map(|(n, k)| format!("{n} ({k})")).collect();
         println!("Numéros spéciaux : {}", list.join(", "));
@@ -748,6 +765,10 @@ fn run_central(args: &Args, dial: Option<String>) -> Result<(), String> {
                 }
                 None => &tx,
             };
+            if let Some(w) = wav.as_mut() {
+                let stereo: Vec<f32> = input.iter().zip(out).flat_map(|(&r, &e)| [r, e]).collect();
+                w.write_interleaved(&stereo).map_err(|e| format!("WAV : {e}"))?;
+            }
             client.send_block(out).map_err(|e| format!("envoi UDP : {e}"))?;
             prev_tx.copy_from_slice(&tx);
             let role = c.modem.role();

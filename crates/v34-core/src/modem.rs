@@ -121,6 +121,13 @@ pub struct Modem {
     pub(crate) recoveries: u32,
     /// INFO0 reçus de l'autre pendant la phase en cours
     pub(crate) info0_count: u32,
+    /// Nos séquences portent leur CRC dans l'ancien ordre (voir `CrcMode`)
+    pub(crate) crc_legacy: bool,
+    /// Ordre du CRC du dernier INFO0 reçu de l'autre
+    pub(crate) crc_seen: Option<crate::info::CrcSeen>,
+    /// Un INFO1 de l'autre est arrivé abîmé (CRC faux) : il en émet, il le
+    /// répétera, on l'attend plus longtemps
+    pub(crate) info1_bad: bool,
     /// Durée du dernier « ton pur » avant sa rupture, et instant de la rupture
     pub(crate) tone_run_prev: u64,
     pub(crate) tone_drop_at: u64,
@@ -151,6 +158,9 @@ pub struct Modem {
 
 impl Modem {
     pub fn new(role: Role, cfg: ModemConfig) -> Self {
+        // Sans rien savoir de l'autre : l'ancien ordre de CRC (nos modems
+        // d'avant restent compris), sauf si l'on imite un vrai modem.
+        let crc_legacy_initial = cfg.crc_mode != crate::api::CrcMode::Standard;
         let status = ModemStatus {
             role,
             phase: Phase::Idle,
@@ -198,6 +208,9 @@ impl Modem {
             rt_initiator: false,
             recoveries: 0,
             info0_count: 0,
+            crc_legacy: crc_legacy_initial,
+            crc_seen: None,
+            info1_bad: false,
             tone_run_prev: 0,
             tone_drop_at: 0,
             tone_amp_ref: 0.0,

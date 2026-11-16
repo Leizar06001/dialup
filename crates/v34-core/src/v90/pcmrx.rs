@@ -194,6 +194,8 @@ fn value(s: &Symbol, law: Law) -> f64 {
 }
 
 pub struct PcmRx {
+    /// Ordres de CRC acceptés pour Jd et MP (voir `CrcMode`)
+    pub crc_mode: crate::api::CrcMode,
     law: Law,
     uinfo: u8,
     st: St,
@@ -270,6 +272,7 @@ impl PcmRx {
             v
         });
         PcmRx {
+            crc_mode: crate::api::CrcMode::Auto,
             law,
             uinfo,
             st: St::WaitSd,
@@ -535,7 +538,7 @@ impl PcmRx {
         let n = self.bits.len();
         if n >= Jd::LEN {
             let w: Vec<bool> = self.bits.range(n - Jd::LEN..).copied().collect();
-            if let Some(jd) = Jd::from_bits(&w) {
+            if let Some(jd) = Jd::from_bits_crc(&w, self.crc_mode) {
                 if !self.jd_seen {
                     self.jd_seen = true;
                     self.events.push(RxEvent::Signal("Jd"));
@@ -546,7 +549,7 @@ impl PcmRx {
         // J′d : douze zéros juste après un Jd complet
         if self.jd_seen && n >= Jd::LEN + 12 && self.bits.range(n - 12..).all(|&b| !b) {
             let w: Vec<bool> = self.bits.range(n - 12 - Jd::LEN..n - 12).copied().collect();
-            if Jd::from_bits(&w).is_some() {
+            if Jd::from_bits_crc(&w, self.crc_mode).is_some() {
                 self.events.push(RxEvent::Signal("J′d"));
                 self.events.push(RxEvent::JdPrime);
                 self.dil_k0 = k + 1;
@@ -712,7 +715,7 @@ impl PcmRx {
             // MP + bit de remplissage 85
             if n >= Mp90::LEN {
                 let w: Vec<bool> = self.bits.range(n - Mp90::LEN..).copied().collect();
-                if let Some(mp) = Mp90::from_bits(&w) {
+                if let Some(mp) = Mp90::from_bits_crc(&w, self.crc_mode) {
                     self.mp_frame = Some(fi);
                     self.events.push(RxEvent::Signal(if mp.ack { "MP′" } else { "MP" }));
                     self.events.push(RxEvent::Mp(mp));

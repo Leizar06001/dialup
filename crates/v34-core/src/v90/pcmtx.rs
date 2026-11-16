@@ -51,6 +51,8 @@ enum St {
 }
 
 pub struct PcmTx {
+    /// CRC de nos séquences (Jd) dans l'ancien ordre (voir `CrcMode`)
+    pub crc_legacy: bool,
     law: Law,
     uinfo: u8,
     st: St,
@@ -90,6 +92,7 @@ impl PcmTx {
             scr: Scrambler::new(true),
             last_sign: true,
             jd_bits: Vec::new(),
+            crc_legacy: false,
             finish_jd: false,
             dil: None,
             stop_dil: false,
@@ -118,7 +121,7 @@ impl PcmTx {
 
     /// Phase 3, après réception de Ja : Sd, S̄d, TRN1d, puis Jd en boucle.
     pub fn start_phase3(&mut self, jd: &super::seq::Jd, dil: Option<DilDescriptor>) {
-        self.jd_bits = jd.to_bits();
+        self.jd_bits = jd.to_bits_crc(self.crc_legacy);
         self.dil = dil.filter(|d| !d.train.is_empty());
         self.finish_jd = false;
         self.stop_dil = false;

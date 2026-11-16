@@ -1,7 +1,7 @@
 //! Séquences INFO de la phase 2 (V.34 §10.1.2.3) : codage binaire, CRC,
 //! et modem DPSK 600 bit/s qui les transporte.
 
-use crate::api::NOMINAL_RMS;
+use crate::api::{CrcMode, NOMINAL_RMS};
 use crate::dsp::osc::Osc;
 use crate::dsp::shaping::{Downconverter, PassbandMod};
 use crate::dsp::Cpx;
@@ -22,6 +22,55 @@ pub fn crc16(bits: &[bool]) -> u16 {
     reg
 }
 
+/// Ajoute le CRC à la trame : bit de poids FORT en premier (contrairement
+/// aux champs numériques, émis poids faible en premier). Vérifié sur un
+/// vrai modem (U.S. Robotics 56K, 1998) : son INFO0 n'a un CRC juste que
+/// lu ainsi. Vaut pour toutes les séquences qui utilisent ce CRC (INFO,
+/// MP de V.34, Ja/Jd/CP/MP de V.90). Voir [`CrcMode`] pour l'ancien ordre.
+pub fn push_crc(bits: &mut Vec<bool>, crc: u16) {
+    for i in (0..16).rev() {
+        bits.push((crc >> i) & 1 == 1);
+    }
+}
+
+/// Relit un CRC émis par [`push_crc`].
+pub fn read_crc(bits: &[bool], start: usize) -> u16 {
+    bits[start..start + 16].iter().fold(0, |a, &b| a << 1 | b as u16)
+}
+
+/// Passe le CRC (16 bits à partir de `pos`) d'une trame à l'ancien ordre
+/// (poids faible en premier), ou l'inverse : il suffit de le retourner.
+pub fn swap_crc(bits: &mut [bool], pos: usize) {
+    bits[pos..pos + 16].reverse();
+}
+
+/// Ordre dans lequel le CRC d'une trame reçue était juste.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CrcSeen {
+    Standard,
+    Legacy,
+    /// Les deux (CRC palindrome) : on ne peut rien en conclure
+    Either,
+}
+
+/// Vérifie le CRC d'une trame (`crc` = CRC calculé sur la charge utile,
+/// lu à partir de `pos`) dans les ordres que `mode` accepte.
+pub fn check_crc(crc: u16, frame: &[bool], pos: usize, mode: CrcMode) -> Option<CrcSeen> {
+    let std = mode != CrcMode::Legacy && read_crc(frame, pos) == crc;
+    let leg = mode != CrcMode::Standard && read_crc(frame, pos) == crc.reverse_bits();
+    match (std, leg) {
+        (true, true) => Some(CrcSeen::Either),
+        (true, false) => Some(CrcSeen::Standard),
+        (false, true) => Some(CrcSeen::Legacy),
+        (false, false) => None,
+    }
+}
+
+/// Position du CRC dans une trame INFO complète (suivi de 4 bits de remplissage).
+pub fn info_crc_pos(frame_len: usize) -> usize {
+    frame_len - 20
+}
+
 fn push_field(bits: &mut Vec<bool>, value: u32, n: usize) {
     for i in 0..n {
         bits.push((value >> i) & 1 == 1);
@@ -37,8 +86,7 @@ fn frame(info: &[bool]) -> Vec<bool> {
     let mut b = vec![true; 4];
     b.extend_from_slice(&INFO_SYNC);
     b.extend_from_slice(info);
-    let crc = crc16(info);
-    push_field(&mut b, crc as u32, 16);
+    push_crc(&mut b, crc16(info));
     b.extend_from_slice(&[true; 4]);
     b
 }
@@ -305,13 +353,17 @@ pub struct InfoFramer {
     pre: u8,
     /// Nombre de bits d'information attendus (17, 77 ou 38)
     pub info_bits: usize,
+    /// Ordres de CRC acceptés
+    pub crc_mode: CrcMode,
+    /// Ordre du CRC de la dernière trame acceptée
+    pub seen: Option<CrcSeen>,
 }
 
 const SYNC_HDR: [bool; 10] = [true, true, false, true, true, true, false, false, true, false];
 
 impl InfoFramer {
     pub fn new(info_bits: usize) -> Self {
-        Self { win: Default::default(), pre: 0, info_bits }
+        Self { win: Default::default(), pre: 0, info_bits, crc_mode: CrcMode::Auto, seen: None }
     }
 
     /// Renvoie les bits d'information d'une trame dont le CRC est bon, ou
@@ -329,8 +381,8 @@ impl InfoFramer {
         }
         let bits: Vec<bool> = self.win.iter().copied().collect();
         let info = &bits[10..10 + self.info_bits];
-        let crc = field(&bits, 10 + self.info_bits, 16) as u16;
-        if crc == crc16(info) {
+        if let Some(seen) = check_crc(crc16(info), &bits, 10 + self.info_bits, self.crc_mode) {
+            self.seen = Some(seen);
             let out = info.to_vec();
             self.win.clear();
             self.pre = 0;
@@ -446,6 +498,9 @@ pub struct InfoRx {
     holdoff_until: f64,
     info_bits: usize,
     pending_err: Option<f64>,
+    crc_mode: CrcMode,
+    /// Ordre du CRC de la dernière trame rendue
+    seen: Option<CrcSeen>,
 }
 
 struct InfoPhase {
@@ -461,7 +516,30 @@ impl InfoRx {
         let fc = if answer_signal { 2400.0 } else { 1200.0 };
         let sps = 8000.0 / INFO_BAUD;
         let phases = (0..4).map(|k| InfoPhase { t_next: k as f64 * sps / 4.0, prev: Cpx::ZERO, framer: InfoFramer::new(info_bits) }).collect();
-        Self { d: Downconverter::new(INFO_BAUD, fc, INFO_ALPHA, INFO_SPAN), sps, phases, holdoff_until: -1.0, info_bits, pending_err: None }
+        Self {
+            d: Downconverter::new(INFO_BAUD, fc, INFO_ALPHA, INFO_SPAN),
+            sps,
+            phases,
+            holdoff_until: -1.0,
+            info_bits,
+            pending_err: None,
+            crc_mode: CrcMode::Auto,
+            seen: None,
+        }
+    }
+
+    /// Ordres de CRC acceptés (voir [`CrcMode`]).
+    pub fn with_crc_mode(mut self, mode: CrcMode) -> Self {
+        self.crc_mode = mode;
+        for p in &mut self.phases {
+            p.framer.crc_mode = mode;
+        }
+        self
+    }
+
+    /// Ordre du CRC de la dernière trame rendue.
+    pub fn crc_seen(&self) -> Option<CrcSeen> {
+        self.seen
     }
 
     /// Change la longueur de trame attendue (ex. INFO0 → INFO1).
@@ -469,6 +547,7 @@ impl InfoRx {
         self.info_bits = info_bits;
         for p in &mut self.phases {
             p.framer = InfoFramer::new(info_bits);
+            p.framer.crc_mode = self.crc_mode;
         }
     }
 
@@ -501,6 +580,7 @@ impl InfoRx {
             match ph.framer.push(dot < 0.0) {
                 Some(Ok(bits)) => {
                     if t > self.holdoff_until && out.is_none() {
+                        self.seen = ph.framer.seen;
                         out = Some(Ok(bits));
                         self.holdoff_until = t + 8.0 * self.sps;
                     }
@@ -531,6 +611,23 @@ impl InfoRx {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// INFO0 émis par un vrai modem (U.S. Robotics 56K Voice, firmware
+    /// 12.1.0 de 1998), capté à travers un adaptateur téléphonique : il
+    /// fixe l'ordre des bits du CRC (poids fort en premier).
+    #[test]
+    fn info0_d_un_vrai_usr_56k() {
+        let s = "1111".to_owned() + "01110010" + "11111111100001000" + "1000111111011001" + "1111";
+        let bits: Vec<bool> = s.chars().map(|c| c == '1').collect();
+        let mut f = InfoFramer::new(Info0::INFO_BITS);
+        let got = bits.iter().find_map(|&b| f.push(b)).expect("trame repérée");
+        let i0 = Info0::from_info(&got.expect("CRC juste"));
+        assert!(i0.sr2743 && i0.sr2800 && i0.sr3429 && i0.low3000 && i0.high3000 && i0.low3200 && i0.high3200 && i0.allow3429);
+        assert!(i0.power_reduction && i0.c1664 && !i0.cme && !i0.ack);
+        assert_eq!((i0.max_asym, i0.tx_clock), (0, 0));
+        // notre encodage des mêmes capacités redonne exactement la trame
+        assert_eq!(i0.to_bits(), bits);
+    }
 
     #[test]
     fn info0d_et_info1a_du_v90() {

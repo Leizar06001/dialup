@@ -4,7 +4,7 @@
 
 use crate::api::*;
 use crate::dsp::tone::ToneDetector;
-use crate::info::{Info0, Info1a, Info1c, InfoRx, InfoTx};
+use crate::info::{CrcSeen, Info0, Info1a, Info1c, InfoRx, InfoTx};
 use crate::modem::{Modem, RxFlags, St, MS};
 use crate::probe::{carrier_hz, ProbeAnalyzer, ProbeGen, SYMBOL_RATES_NOMINAL};
 use crate::tx::{ToneTx, TxMode};
@@ -25,7 +25,7 @@ impl Modem {
         let info0 = self.our_info0();
         self.info0_local = Some(info0.clone());
         let mut itx = InfoTx::new(answer);
-        itx.queue(&info0.to_bits());
+        itx.queue(&self.info_out(info0.to_bits()));
         self.set_tx(TxMode::Info(itx), if answer { "INFO0a" } else { "INFO0c" });
         if self.info_rx.is_none() {
             self.prepare_phase2_rx();
@@ -39,7 +39,7 @@ impl Modem {
     pub(crate) fn prepare_phase2_rx(&mut self) {
         let answer = self.p2_answer();
         // On reçoit les INFO de l'autre : 2400 Hz si on est l'appelant.
-        self.info_rx = Some(InfoRx::new(!answer, self.remote_info0_bits()));
+        self.info_rx = Some(self.new_info_rx(!answer, self.remote_info0_bits()));
         let f = if answer { 1200.0 } else { 2400.0 };
         self.tone_rx = Some(ToneDetector::new(f, 40));
         self.tone_presence = Some(ToneDetector::new(f, 160));
@@ -65,6 +65,45 @@ impl Modem {
         }
     }
 
+    /// Une de nos trames INFO, avec son CRC dans l'ordre en vigueur.
+    pub(crate) fn info_out(&self, mut bits: Vec<bool>) -> Vec<bool> {
+        if self.crc_legacy {
+            let pos = crate::info::info_crc_pos(bits.len());
+            crate::info::swap_crc(&mut bits, pos);
+        }
+        bits
+    }
+
+    /// Récepteur des trames INFO de l'autre (ordres de CRC selon la config).
+    pub(crate) fn new_info_rx(&self, answer_signal: bool, info_bits: usize) -> InfoRx {
+        InfoRx::new(answer_signal, info_bits).with_crc_mode(self.cfg.crc_mode)
+    }
+
+    /// Un INFO0 valide de l'autre vient d'arriver : en mode `Auto`, on émet
+    /// désormais dans l'ordre de CRC qu'il utilise. Vrai si on a changé
+    /// (notre INFO0 précédent lui était illisible : il faut le répéter).
+    fn follow_crc(&mut self) -> bool {
+        let seen = self.info_rx.as_ref().and_then(InfoRx::crc_seen);
+        self.crc_seen = seen;
+        if self.cfg.crc_mode != crate::api::CrcMode::Auto {
+            return false;
+        }
+        let legacy = match seen {
+            Some(CrcSeen::Standard) => false,
+            Some(CrcSeen::Legacy) => true,
+            _ => return false,
+        };
+        if legacy == self.crc_legacy {
+            return false;
+        }
+        self.crc_legacy = legacy;
+        self.log(
+            LogLevel::Info,
+            if legacy { "L'autre modem met le CRC poids faible en premier (nos modems d'avant) : on fait comme lui" } else { "L'autre modem suit la norme (CRC poids fort en premier) : on fait comme lui" },
+        );
+        true
+    }
+
     fn info_tx_done(&self) -> bool {
         matches!(&self.tx.mode, TxMode::Info(i) if i.done())
     }
@@ -73,13 +112,12 @@ impl Modem {
         if let Some(Ok(bits)) = &f.info {
             self.info0_count += 1;
             let ack = Info0::from_info(bits).ack;
-            if self.info0_remote.is_some() && (self.info0_count >= 2 || ack) && self.st != St::X2Info0Rep {
-                // INFO0 répété par l'autre : il n'a pas eu le nôtre → on
-                // répète aussi, avec l'acquittement (§11.2.2.x.1).
-                if !ack {
-                    self.start_info0_repeat("l'autre répète son INFO0");
-                }
-            }
+            // INFO0 répété par l'autre : il n'a pas eu le nôtre → on répète
+            // aussi, avec l'acquittement (§11.2.2.x.1).
+            let repeated = self.info0_remote.is_some() && (self.info0_count >= 2 || ack) && self.st != St::X2Info0Rep && !ack;
+            // L'autre suit un autre ordre de CRC que le nôtre : notre INFO0
+            // lui était illisible, on le répète dans son ordre.
+            let switched = self.follow_crc();
             if let Some(r) = self.info0_remote.as_mut() {
                 r.ack = ack;
             }
@@ -103,6 +141,11 @@ impl Modem {
                     t.rearm();
                 }
                 self.tone_on = 0;
+            }
+            if switched && self.st != St::X2Info0Rep {
+                self.start_info0_repeat("ordre du CRC changé");
+            } else if repeated {
+                self.start_info0_repeat("l'autre répète son INFO0");
             }
         } else if let Some(Err(())) = &f.info {
             self.log(LogLevel::Warn, "INFO0 reçu avec CRC faux");
@@ -165,7 +208,7 @@ impl Modem {
         i0.ack = self.info0_remote.is_some();
         self.info0_local = Some(i0.clone());
         let mut itx = InfoTx::new(answer);
-        itx.queue(&i0.to_bits());
+        itx.queue(&self.info_out(i0.to_bits()));
         self.set_tx(TxMode::Info(itx), if answer { "INFO0a ×" } else { "INFO0c ×" });
         self.t_mark = 0; // drapeau « INFO0 acquitté reçu »
         self.goto(St::X2Info0Rep);
@@ -175,6 +218,7 @@ impl Modem {
         let answer = self.p2_answer();
         if let Some(Ok(bits)) = &f.info {
             let r = Info0::from_info(bits);
+            self.follow_crc();
             if self.info0_remote.is_none() {
                 self.rx_name(if answer { "INFO0c" } else { "INFO0a" });
                 self.log(LogLevel::Info, "INFO0 de l'autre reçu (répétition)");
@@ -210,8 +254,14 @@ impl Modem {
             }
             let mut i0 = self.info0_local.clone().unwrap();
             i0.ack = self.info0_remote.is_some();
+            // L'autre répète sans acquitter, et on n'a pu déduire son ordre
+            // de CRC (trame palindrome) : il ne lit peut-être pas le nôtre,
+            // on essaie l'autre ordre.
+            if self.cfg.crc_mode == crate::api::CrcMode::Auto && self.crc_seen == Some(CrcSeen::Either) && self.t_mark != 1 {
+                self.crc_legacy = !self.crc_legacy;
+            }
             let mut itx = InfoTx::new(answer);
-            itx.queue(&i0.to_bits());
+            itx.queue(&self.info_out(i0.to_bits()));
             self.tx.mode = TxMode::Info(itx);
         }
         if self.elapsed() > 6000 * MS {
@@ -363,18 +413,25 @@ impl Modem {
             }
             St::C2L2 => {
                 let max = 550 * MS + self.rtd.unwrap_or(0);
-                if self.tone_for(20) || self.elapsed() > max {
-                    if self.tone_for(20) {
+                // L'appelé n'a pu analyser notre L2 avant de l'avoir reçu :
+                // un ton A entendu moins d'un aller-retour après le début de
+                // L2 est le sien d'avant (un vrai modem qui n'a pas inversé
+                // son A), pas sa réponse. Sans cette garde, L2 durait 20 ms.
+                let fresh = self.elapsed() >= self.rtd.unwrap_or(0) + 100 * MS;
+                let a_now = self.tone_for(20) && fresh;
+                if a_now || self.elapsed() > max {
+                    if a_now {
                         self.rx_name("A");
                     }
                     let r = self.probe_report.as_ref().unwrap();
                     let i1c = Info1c { min_power_red: 0, add_power_red: 0, md_len: 0, results: r.results, freq_offset: self.freq_offset_field() };
                     let mut itx = InfoTx::new(false);
-                    itx.queue(&i1c.to_bits());
+                    itx.queue(&self.info_out(i1c.to_bits()));
                     self.set_tx(TxMode::Info(itx), "INFO1c");
                     self.log(LogLevel::Info, "Envoi INFO1c (résultats du sondage)");
                     self.info1c = Some(i1c);
-                    self.info_rx = Some(InfoRx::new(true, Info1a::INFO_BITS));
+                    self.info_rx = Some(self.new_info_rx(true, Info1a::INFO_BITS));
+                    self.info1_bad = false;
                     self.goto(St::C2Info1c);
                 }
             }
@@ -387,7 +444,9 @@ impl Modem {
             }
             St::C2WaitInfo1a => {
                 self.check_info1a(f);
-                if self.st == St::C2WaitInfo1a && self.elapsed() > (1500 * MS + self.rtd.unwrap_or(0)) {
+                // INFO1a abîmé déjà vu : l'appelé en émet, il le répétera
+                let extra = if self.info1_bad { 3000 * MS } else { 0 };
+                if self.st == St::C2WaitInfo1a && self.elapsed() > (1500 * MS + self.rtd.unwrap_or(0) + extra) {
                     self.recover("INFO1a non reçu");
                 }
             }
@@ -513,7 +572,8 @@ impl Modem {
                 if self.probe_feed_ready() {
                     self.finish_probe();
                     self.set_tx(TxMode::Tone(ToneTx::tone_a()), "A");
-                    self.info_rx = Some(InfoRx::new(false, Info1c::INFO_BITS));
+                    self.info_rx = Some(self.new_info_rx(false, Info1c::INFO_BITS));
+                    self.info1_bad = false;
                     self.goto(St::A2WaitInfo1c);
                 }
             }
@@ -526,9 +586,15 @@ impl Modem {
                         self.info1c = Some(i1c);
                         self.decide_info1a();
                     }
-                    Some(Err(())) => self.log(LogLevel::Warn, "INFO1c reçu avec CRC faux"),
+                    Some(Err(())) => {
+                        self.info1_bad = true;
+                        self.log(LogLevel::Warn, "INFO1c reçu avec CRC faux");
+                    }
                     None => {
-                        if self.elapsed() > 2000 * MS + 2 * self.rtd.unwrap_or(0) {
+                        // INFO1c abîmé déjà vu : l'appelant en émet, il le
+                        // répétera (un vrai modem, ~3,5 s plus tard)
+                        let extra = if self.info1_bad { 3000 * MS } else { 0 };
+                        if self.elapsed() > 2000 * MS + 2 * self.rtd.unwrap_or(0) + extra {
                             self.recover("INFO1c non reçu");
                         }
                     }
@@ -583,7 +649,10 @@ impl Modem {
                 self.tone_presence = None;
                 self.start_phase3();
             }
-            Some(Err(())) => self.log(LogLevel::Warn, "INFO1a reçu avec CRC faux"),
+            Some(Err(())) => {
+                self.info1_bad = true;
+                self.log(LogLevel::Warn, "INFO1a reçu avec CRC faux");
+            }
             None => {}
         }
     }
@@ -654,7 +723,7 @@ impl Modem {
                 self.status.params.carrier_rx_hz = None;
                 self.status.params.preemphasis_tx = Some(i1c.results[up].preemph);
                 let mut itx = InfoTx::new(true);
-                itx.queue(&i1a.to_bits());
+                itx.queue(&self.info_out(i1a.to_bits()));
                 self.set_tx(TxMode::Info(itx), "INFO1a");
                 self.info1a = Some(i1a);
                 self.goto(St::A2Info1a);
@@ -720,7 +789,7 @@ impl Modem {
         self.apply_symbol_rates(a2c, i1c.results[a2c].high_carrier, c2a, i1a.high_carrier);
         self.status.params.preemphasis_tx = Some(i1c.results[a2c].preemph);
         let mut itx = InfoTx::new(true);
-        itx.queue(&i1a.to_bits());
+        itx.queue(&self.info_out(i1a.to_bits()));
         self.set_tx(TxMode::Info(itx), "INFO1a");
         self.info1a = Some(i1a);
         self.goto(St::A2Info1a);

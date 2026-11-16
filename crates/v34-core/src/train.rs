@@ -261,8 +261,7 @@ impl Mp {
         b.push(false); // start
         // CRC sur tous les bits sauf synchro de trame et bits de start
         let crc_in: Vec<bool> = mp_crc_bits(&b);
-        let crc = crate::info::crc16(&crc_in);
-        push(&mut b, crc as u32, 16);
+        crate::info::push_crc(&mut b, crate::info::crc16(&crc_in));
         if self.type1 {
             b.push(false);
         } else {
@@ -271,8 +270,19 @@ impl Mp {
         b
     }
 
-    /// Décode une trame complète (à partir du premier bit de synchro).
+    /// Position du CRC dans la trame.
+    pub fn crc_pos(type1: bool) -> usize {
+        if type1 { 171 } else { 69 }
+    }
+
+    /// Décode une trame complète (à partir du premier bit de synchro), CRC
+    /// dans l'un ou l'autre ordre.
     pub fn from_bits(b: &[bool]) -> Option<Mp> {
+        Self::from_bits_crc(b, crate::api::CrcMode::Auto)
+    }
+
+    /// Comme [`Mp::from_bits`], en n'acceptant que les ordres de CRC de `mode`.
+    pub fn from_bits_crc(b: &[bool], mode: crate::api::CrcMode) -> Option<Mp> {
         if b.len() < 88 || b[..17].iter().any(|&x| !x) || b[17] {
             return None;
         }
@@ -281,11 +291,9 @@ impl Mp {
         if b.len() < len {
             return None;
         }
-        let crc_pos = if type1 { 171 } else { 69 };
+        let crc_pos = Self::crc_pos(type1);
         let crc_in = mp_crc_bits(&b[..crc_pos]);
-        if crate::info::crc16(&crc_in) != get(b, crc_pos, 16) as u16 {
-            return None;
-        }
+        crate::info::check_crc(crate::info::crc16(&crc_in), b, crc_pos, mode)?;
         let mut precoder = [(0i16, 0i16); 3];
         if type1 {
             for (k, c) in precoder.iter_mut().enumerate() {

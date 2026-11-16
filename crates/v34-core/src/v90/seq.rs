@@ -6,7 +6,8 @@
 //! calculé sur tout sauf la synchro et les bits de start), lui aussi
 //! précédé d'un start, puis des bits de remplissage.
 
-use crate::info::crc16;
+use crate::api::CrcMode;
+use crate::info::{check_crc, crc16, push_crc, swap_crc};
 
 /// Synchro de trame.
 const SYNC: usize = 17;
@@ -24,6 +25,11 @@ fn get(b: &[bool], start: usize, n: usize) -> u32 {
 /// Encadre une charge utile (longueur multiple de 16) : synchro, blocs,
 /// CRC. Sans remplissage final.
 pub fn frame(payload: &[bool]) -> Vec<bool> {
+    frame_crc(payload, false)
+}
+
+/// Comme [`frame`], CRC dans l'ancien ordre si `legacy` (voir [`CrcMode`]).
+pub fn frame_crc(payload: &[bool], legacy: bool) -> Vec<bool> {
     assert_eq!(payload.len() % 16, 0, "charge utile par blocs de 16 bits");
     let mut b = vec![true; SYNC];
     for chunk in payload.chunks(16) {
@@ -31,13 +37,22 @@ pub fn frame(payload: &[bool]) -> Vec<bool> {
         b.extend_from_slice(chunk);
     }
     b.push(false);
-    push(&mut b, crc16(payload) as u32, 16);
+    let pos = b.len();
+    push_crc(&mut b, crc16(payload));
+    if legacy {
+        swap_crc(&mut b, pos);
+    }
     b
 }
 
 /// Relit une trame de `chunks` blocs (sans compter le CRC) au début de
 /// `b` ; renvoie la charge utile si synchro, starts et CRC sont bons.
 pub fn unframe(b: &[bool], chunks: usize) -> Option<Vec<bool>> {
+    unframe_crc(b, chunks, CrcMode::Auto)
+}
+
+/// Comme [`unframe`], en n'acceptant que les ordres de CRC de `mode`.
+pub fn unframe_crc(b: &[bool], chunks: usize, mode: CrcMode) -> Option<Vec<bool>> {
     let len = SYNC + 17 * (chunks + 1);
     if b.len() < len || b[..SYNC].iter().any(|&x| !x) {
         return None;
@@ -51,9 +66,10 @@ pub fn unframe(b: &[bool], chunks: usize) -> Option<Vec<bool>> {
         payload.extend_from_slice(&b[o + 1..o + 17]);
     }
     let o = SYNC + 17 * chunks;
-    if b[o] || get(b, o + 1, 16) as u16 != crc16(&payload) {
+    if b[o] {
         return None;
     }
+    check_crc(crc16(&payload), b, o + 1, mode)?;
     Some(payload)
 }
 
@@ -102,6 +118,11 @@ impl Jd {
     }
 
     pub fn to_bits(&self) -> Vec<bool> {
+        self.to_bits_crc(false)
+    }
+
+    /// Comme `to_bits`, CRC dans l'ancien ordre si `legacy` (voir `CrcMode`).
+    pub fn to_bits_crc(&self, legacy: bool) -> Vec<bool> {
         let mut p = Vec::new();
         push(&mut p, self.rates & 0xFFFF, 16); // bits 18:33 = 28 000 … 48 000
         push(&mut p, self.rates >> 16, 6); // bits 35:40 = 49 333 … 56 000
@@ -109,13 +130,18 @@ impl Jd {
         p.push(self.cp16_train);
         p.push(self.cp16_reneg);
         push(&mut p, self.lookahead as u32, 2);
-        let mut b = frame(&p);
+        let mut b = frame_crc(&p, legacy);
         b.extend_from_slice(&[false; 4]); // remplissage 68:71
         b
     }
 
     pub fn from_bits(b: &[bool]) -> Option<Jd> {
-        let p = unframe(b, 2)?;
+        Self::from_bits_crc(b, CrcMode::Auto)
+    }
+
+    /// Comme `from_bits`, en n'acceptant que les ordres de CRC de `mode`.
+    pub fn from_bits_crc(b: &[bool], mode: CrcMode) -> Option<Jd> {
+        let p = unframe_crc(b, 2, mode)?;
         Some(Jd { rates: get(&p, 0, 16) | get(&p, 16, 6) << 16, cp16_train: p[28], cp16_reneg: p[29], lookahead: get(&p, 30, 2) as u8 })
     }
 
@@ -165,6 +191,11 @@ impl DilDescriptor {
     }
 
     pub fn to_bits(&self) -> Vec<bool> {
+        self.to_bits_crc(false)
+    }
+
+    /// Comme `to_bits`, CRC dans l'ancien ordre si `legacy` (voir `CrcMode`).
+    pub fn to_bits_crc(&self, legacy: bool) -> Vec<bool> {
         let n = self.train.len();
         let mut p = Vec::new();
         push(&mut p, n as u32, 8);
@@ -189,7 +220,7 @@ impl DilDescriptor {
         if n % 2 == 1 {
             push(&mut p, 0, 8);
         }
-        let mut b = frame(&p);
+        let mut b = frame_crc(&p, legacy);
         b.push(false);
         if b.len() % 2 == 1 {
             b.push(false);
@@ -199,6 +230,11 @@ impl DilDescriptor {
 
     /// Relit un descripteur au début de `b`.
     pub fn from_bits(b: &[bool]) -> Option<DilDescriptor> {
+        Self::from_bits_crc(b, CrcMode::Auto)
+    }
+
+    /// Comme `from_bits`, en n'acceptant que les ordres de CRC de `mode`.
+    pub fn from_bits_crc(b: &[bool], mode: CrcMode) -> Option<DilDescriptor> {
         // l'en-tête (2 blocs) donne les longueurs, donc le nombre de blocs
         if b.len() < framed_len(2) || b[..SYNC].iter().any(|&x| !x) || b[SYNC] || b[SYNC + 17] {
             return None;
@@ -209,7 +245,7 @@ impl DilDescriptor {
         let lsp = get(h1, 0, 7) as usize + 1;
         let ltp = get(h1, 8, 7) as usize + 1;
         let chunks = 2 + lsp.div_ceil(16) + ltp.div_ceil(16) + 4 + 4 + n.div_ceil(2);
-        let p = unframe(b, chunks)?;
+        let p = unframe_crc(b, chunks, mode)?;
         let mut o = 32;
         let sp = p[o..o + lsp].to_vec();
         o += lsp.div_ceil(16) * 16;
@@ -271,6 +307,11 @@ impl Cp {
     }
 
     pub fn to_bits(&self) -> Vec<bool> {
+        self.to_bits_crc(false)
+    }
+
+    /// Comme `to_bits`, CRC dans l'ancien ordre si `legacy` (voir `CrcMode`).
+    pub fn to_bits_crc(&self, legacy: bool) -> Vec<bool> {
         let mut p = Vec::new();
         p.push(false);
         p.push(self.data);
@@ -296,7 +337,7 @@ impl Cp {
                 p.push((c >> u) & 1 == 1);
             }
         }
-        let mut b = frame(&p);
+        let mut b = frame_crc(&p, legacy);
         b.extend_from_slice(&[false; 3]);
         b
     }
@@ -304,6 +345,11 @@ impl Cp {
     /// Relit un CP au début de `b`, d'après le nombre de constellations
     /// annoncé.
     pub fn from_bits(b: &[bool]) -> Option<Cp> {
+        Self::from_bits_crc(b, CrcMode::Auto)
+    }
+
+    /// Comme `from_bits`, en n'acceptant que les ordres de CRC de `mode`.
+    pub fn from_bits_crc(b: &[bool], mode: CrcMode) -> Option<Cp> {
         if b.len() < framed_len(7) || b[..SYNC].iter().any(|&x| !x) {
             return None;
         }
@@ -314,7 +360,7 @@ impl Cp {
             return None;
         }
         let chunks = 7 + 8 * (max_index as usize + 1);
-        let p = unframe(b, chunks)?;
+        let p = unframe_crc(b, chunks, mode)?;
         let data = p[1];
         let drn = get(&p, 2, 5);
         let d = if drn == 0 { 0 } else if data { drn + 20 } else { drn + 8 };
@@ -407,6 +453,11 @@ pub struct Mp90 {
 
 impl Mp90 {
     pub fn to_bits(&self) -> Vec<bool> {
+        self.to_bits_crc(false)
+    }
+
+    /// Comme `to_bits`, CRC dans l'ancien ordre si `legacy` (voir `CrcMode`).
+    pub fn to_bits_crc(&self, legacy: bool) -> Vec<bool> {
         let mut p = Vec::new();
         p.push(false); // type 0
         push(&mut p, 0, 5);
@@ -420,13 +471,18 @@ impl Mp90 {
         push(&mut p, self.up_rates as u32, 13);
         push(&mut p, 0, 2);
         push(&mut p, 0, 16); // réservés 52:67
-        let mut b = frame(&p);
+        let mut b = frame_crc(&p, legacy);
         b.push(false); // remplissage 85
         b
     }
 
     pub fn from_bits(b: &[bool]) -> Option<Mp90> {
-        let p = unframe(b, 3)?;
+        Self::from_bits_crc(b, CrcMode::Auto)
+    }
+
+    /// Comme `from_bits`, en n'acceptant que les ordres de CRC de `mode`.
+    pub fn from_bits_crc(b: &[bool], mode: CrcMode) -> Option<Mp90> {
+        let p = unframe_crc(b, 3, mode)?;
         if p[0] {
             return None; // type 1 : non géré
         }

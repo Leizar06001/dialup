@@ -219,6 +219,7 @@ impl P34 {
         let power = info0d.map_or(0, |d| d.max_power);
         let mut v = V90::new(false, law, max_pcm, max_up, power, express);
         let mut prx = PcmRx::new(law, UINFO, Some(v.dil.clone()));
+        prx.crc_mode = self.crc_mode;
         prx.set_dil_passes(1);
         v.prx = Some(prx);
         v.t_progress = self.n;
@@ -236,7 +237,9 @@ impl P34 {
     /// (S, S̄, PP, TRN, puis Ja).
     pub(crate) fn start_v90_digital(&mut self, max_pcm: u32, max_up: u32) {
         let mut v = V90::new(true, Law::A, max_pcm, max_up, 0, true);
-        v.ptx = Some(PcmTx::new(Law::A, UINFO));
+        let mut ptx = PcmTx::new(Law::A, UINFO);
+        ptx.crc_legacy = self.crc_legacy;
+        v.ptx = Some(ptx);
         v.t_progress = self.n;
         self.v90 = Some(Box::new(v));
         self.rx_st = RxSt::WaitS;
@@ -364,13 +367,14 @@ impl P34 {
 
     /// Fin de notre TRN de phase 3 : Ja (descripteur du DIL) en boucle.
     pub(crate) fn v90_on_trn_sent(&mut self) {
+        let legacy = self.crc_legacy;
         let v = self.v90_mut();
         if v.digital {
             self.tx_st = TxSt::Silence;
             return;
         }
         v.ec_done = true;
-        let bits = v.dil.to_bits();
+        let bits = v.dil.to_bits_crc(legacy);
         self.v90_start_seq(bits, false, "Ja", false);
     }
 
@@ -415,8 +419,9 @@ impl P34 {
 
     /// Fin du SCR (mode d'époque) : CP, ou CP′ si la MP est déjà là.
     pub(crate) fn v90_scr_done(&mut self) {
+        let legacy = self.crc_legacy;
         let v = self.v90.as_mut().unwrap();
-        let next = v.next_seq.take().or_else(|| v.cp.clone().map(|c| (c.to_bits(), false)));
+        let next = v.next_seq.take().or_else(|| v.cp.clone().map(|c| (c.to_bits_crc(legacy), false)));
         let Some((bits, ack)) = next else {
             self.tx_st = TxSt::Silence;
             return;
@@ -496,10 +501,11 @@ impl P34 {
                 self.v90_design(sigma);
             }
             RxEvent::RiBar => {
+                let legacy = self.crc_legacy;
                 let v = self.v90_mut();
                 if v.express {
                     if let Some(cp) = v.cp.clone() {
-                        v.next_seq = Some((cp.to_bits(), false));
+                        v.next_seq = Some((cp.to_bits_crc(legacy), false));
                     }
                 } else {
                     // §9.4.2.2 : fin du CPt en cours, puis SCR le temps de
@@ -512,6 +518,7 @@ impl P34 {
                 self.detail(format!("Récepteur 56k réentraîné sur TRN2d : bruit {sigma:.0}"));
             }
             RxEvent::Mp(mp) => {
+                let legacy = self.crc_legacy;
                 let v = self.v90.as_mut().unwrap();
                 if v.mp_rx.is_none() {
                     let cp = v.cp.clone().unwrap();
@@ -520,7 +527,7 @@ impl P34 {
                     // CP′ (acquittement) dès la fin du CP en cours
                     let mut ack = cp.clone();
                     ack.ack = true;
-                    v.next_seq = Some((ack.to_bits(), true));
+                    v.next_seq = Some((ack.to_bits_crc(legacy), true));
                     self.detail(format!("MP reçue : montant jusqu'à {} bit/s → {up} bit/s", mp.up_drn as u32 * 2400));
                 }
                 let v = self.v90.as_mut().unwrap();
@@ -585,8 +592,9 @@ impl P34 {
         self.v90_mut().next_seq = None;
         self.after_burst = Some(TxSt::V90Seq);
         self.mapper.reset_diff();
+        let legacy = self.crc_legacy;
         let v = self.v90_mut();
-        v.seq = cpt.to_bits();
+        v.seq = cpt.to_bits_crc(legacy);
         v.seq_pos = 0;
         v.seq_ack = false;
         self.goto(Step::P4Trn);
@@ -652,6 +660,7 @@ impl P34 {
     /// Bit reçu de l'abonné (V.34 désembrouillé).
     pub(crate) fn v90_on_bit(&mut self, b: bool) {
         self.ones_run = if b { self.ones_run + 1 } else { 0 };
+        let mode = self.crc_mode;
         let v = self.v90.as_mut().unwrap();
         if !v.digital {
             return;
@@ -662,7 +671,7 @@ impl P34 {
         }
         match self.step {
             Step::C3WaitS => {
-                if let Some(dil) = find_frame(&v.bitbuf, DilDescriptor::from_bits, 1200) {
+                if let Some(dil) = find_frame(&v.bitbuf, |b| DilDescriptor::from_bits_crc(b, mode), 1200) {
                     v.bitbuf.clear();
                     let jd = Jd::upto(v.max_pcm);
                     let n = dil.train.len();
@@ -678,7 +687,7 @@ impl P34 {
                 }
             }
             Step::P4Mp => {
-                if let Some(cp) = find_frame(&v.bitbuf, Cp::from_bits, 1200) {
+                if let Some(cp) = find_frame(&v.bitbuf, |b| Cp::from_bits_crc(b, mode), 1200) {
                     v.bitbuf.clear();
                     self.v90_on_cp(cp);
                 }
@@ -710,6 +719,7 @@ impl P34 {
 
     fn v90_on_cp(&mut self, cp: Cp) {
         let law = self.v90.as_ref().unwrap().law;
+        let legacy = self.crc_legacy;
         if !cp.data {
             let v = self.v90.as_mut().unwrap();
             if v.our_mp.is_some() {
@@ -720,7 +730,7 @@ impl P34 {
             let snr = self.rx.snr_db();
             let cap = max_rate_for_snr(self.sr_rx_idx, snr, 1.5).min(v.max_up).min(MAX_RATE_FOR_SR[self.sr_rx_idx]).max(4800);
             let mp = Mp90 { up_drn: (cap / 2400) as u8, trellis: 0, nonlinear: false, shaping_expanded: false, ack: false, up_rates: up_mask_upto(v.max_up.min(MAX_RATE_FOR_SR[self.sr_rx_idx])) };
-            v.ptx.as_mut().unwrap().start_trn2d(cp.mapping(law), mp.to_bits());
+            v.ptx.as_mut().unwrap().start_trn2d(cp.mapping(law), mp.to_bits_crc(legacy));
             v.our_mp = Some(mp);
             self.act(P34Action::Rx("CPt".into()));
             self.log(format!("CPt reçu : apprentissage à {} bit/s — envoi R̄i, TRN2d, MP (montant jusqu'à {cap} bit/s, SNR {snr:.1} dB)", crate::v90::frame::rate_for(cp.d.saturating_sub(6), 6)));
@@ -735,7 +745,7 @@ impl P34 {
                 v.up_rate = up_rate(mp.up_rates & cp.up_rates, mp.up_drn as u32 * 2400);
                 v.down_rate = crate::v90::frame::rate_for(cp.d.saturating_sub(6), 6);
                 let ack = Mp90 { ack: true, ..mp };
-                v.ptx.as_mut().unwrap().set_mp(ack.to_bits(), true);
+                v.ptx.as_mut().unwrap().set_mp(ack.to_bits_crc(legacy), true);
                 (v.down_rate, v.up_rate)
             };
             self.act(P34Action::Rx("CP".into()));

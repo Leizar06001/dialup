@@ -8,6 +8,7 @@ pub struct WavWriter {
     out: BufWriter<File>,
     channels: u16,
     frames: u32,
+    done: bool,
 }
 
 impl WavWriter {
@@ -26,7 +27,7 @@ impl WavWriter {
         out.write_all(&16u16.to_le_bytes())?;
         out.write_all(b"data")?;
         out.write_all(&0u32.to_le_bytes())?;
-        Ok(Self { out, channels, frames: 0 })
+        Ok(Self { out, channels, frames: 0, done: false })
     }
 
     /// Écrit des trames entrelacées (`samples.len()` multiple de `channels`).
@@ -40,6 +41,15 @@ impl WavWriter {
     }
 
     pub fn finish(mut self) -> io::Result<()> {
+        self.finalize()
+    }
+
+    /// Complète l'en-tête (tailles) ; appelé aussi à la destruction, pour
+    /// qu'un fichier interrompu (erreur, Ctrl-C non compris) reste lisible.
+    fn finalize(&mut self) -> io::Result<()> {
+        if std::mem::replace(&mut self.done, true) {
+            return Ok(());
+        }
         let data_len = self.frames * self.channels as u32 * 2;
         self.out.flush()?;
         let f = self.out.get_mut();
@@ -48,5 +58,11 @@ impl WavWriter {
         f.seek(SeekFrom::Start(40))?;
         f.write_all(&data_len.to_le_bytes())?;
         f.flush()
+    }
+}
+
+impl Drop for WavWriter {
+    fn drop(&mut self) {
+        let _ = self.finalize();
     }
 }

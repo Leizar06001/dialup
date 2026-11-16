@@ -144,6 +144,9 @@ pub(crate) struct P34 {
     // MP
     our_mp: Mp,
     mp_bits: Vec<bool>,
+    /// Ordre du CRC de nos MP, et ordres acceptés (voir `CrcMode`)
+    pub(crate) crc_legacy: bool,
+    pub(crate) crc_mode: crate::api::CrcMode,
     mp_pos: usize,
     mp_rx: Option<Mp>,
     mp_ack_rx: bool,
@@ -198,6 +201,15 @@ pub(crate) struct P34 {
 }
 
 impl P34 {
+    /// Notre MP, CRC dans l'ordre en vigueur.
+    fn mp_frame(&self) -> Vec<bool> {
+        let mut b = self.our_mp.to_bits();
+        if self.crc_legacy {
+            crate::info::swap_crc(&mut b, Mp::crc_pos(self.our_mp.type1));
+        }
+        b
+    }
+
     fn new(answer: bool, sr_tx: usize, tx_high: bool, sr_rx: usize, rx_high: bool, our_mp: Mp) -> Self {
         let st = SYMBOL_RATES[sr_tx];
         let srr = SYMBOL_RATES[sr_rx];
@@ -236,6 +248,8 @@ impl P34 {
             n: 0,
             our_mp,
             mp_bits: Vec::new(),
+            crc_legacy: false,
+            crc_mode: crate::api::CrcMode::Auto,
             mp_pos: 0,
             mp_rx: None,
             mp_ack_rx: false,
@@ -344,7 +358,7 @@ impl P34 {
             let f = *field as u32 * 2400;
             self.detail(format!("Débit max en réception d'après le SNR mesuré ({snr:.1} dB) : {f} bit/s"));
         }
-        self.mp_bits = self.our_mp.to_bits();
+        self.mp_bits = self.mp_frame();
         self.mp_pos = 0;
         self.tx_st = TxSt::Mp;
         self.act(P34Action::Tx(if self.our_mp.ack { "MP′".into() } else { "MP".into() }));
@@ -509,7 +523,7 @@ impl P34 {
         }
         if self.mp_rx.is_some() && !self.our_mp.ack {
             self.our_mp.ack = true;
-            self.mp_bits = self.our_mp.to_bits();
+            self.mp_bits = self.mp_frame();
             self.act(P34Action::Tx("MP′".into()));
             return;
         }
@@ -816,7 +830,7 @@ impl P34 {
                     }
                 }
                 if self.mp_rx.is_none() || !self.mp_ack_rx {
-                    if let Some(mp) = detect_mp(&self.bits) {
+                    if let Some(mp) = detect_mp(&self.bits, self.crc_mode) {
                         self.on_mp(mp);
                     }
                 }
@@ -1290,7 +1304,7 @@ fn detect_j(bits: &VecDeque<bool>) -> Option<bool> {
 }
 
 /// Recherche d'une séquence MP valide dans les derniers bits reçus.
-fn detect_mp(bits: &VecDeque<bool>) -> Option<Mp> {
+fn detect_mp(bits: &VecDeque<bool>, mode: crate::api::CrcMode) -> Option<Mp> {
     let n = bits.len();
     for len in [88usize, 188] {
         if n < len {
@@ -1298,7 +1312,7 @@ fn detect_mp(bits: &VecDeque<bool>) -> Option<Mp> {
         }
         let w: Vec<bool> = bits.range(n - len..).copied().collect();
         if w[..17].iter().all(|&b| b) && !w[17] && w[18] == (len == 188) {
-            if let Some(mp) = Mp::from_bits(&w) {
+            if let Some(mp) = Mp::from_bits_crc(&w, mode) {
                 return Some(mp);
             }
         }
@@ -1337,6 +1351,8 @@ impl Modem {
             precoder: [(0, 0); 3],
         };
         let mut p = P34::new(answer, up, high, up, high, mp);
+        p.crc_legacy = self.crc_legacy;
+        p.crc_mode = self.cfg.crc_mode;
         p.ec_wait = 0;
         p.n = self.n;
         p.t_step = self.n;
@@ -1401,6 +1417,8 @@ impl Modem {
             precoder: [(0, 0); 3],
         };
         let mut p = P34::new(answer, sr_tx, tx_high, sr_rx, rx_high, mp);
+        p.crc_legacy = self.crc_legacy;
+        p.crc_mode = self.cfg.crc_mode;
         // Taille demandée à l'autre pour la phase 4 : l'appelé décide sur le
         // SNR du sondage (il n'a pas encore entraîné son égaliseur) avec
         // une forte marge ; l'appelant re-décidera sur le SNR mesuré.
@@ -1474,7 +1492,7 @@ impl Modem {
                     self.pending_rev = None;
                     // On écoute aussi les INFO0 : si l'autre les répète, on
                     // rejoint la répétition (§11.5.1.1 / §11.5.2.1).
-                    self.info_rx = Some(crate::info::InfoRx::new(!answer, self.remote_info0_bits()));
+                    self.info_rx = Some(self.new_info_rx(!answer, self.remote_info0_bits()));
                     self.probe = None;
                     if answer {
                         self.set_tx(TxMode::Tone(ToneTx::tone_a()), "A");
