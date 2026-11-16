@@ -159,6 +159,10 @@ pub(crate) struct P34 {
     last_k: i64,
     /// Attente avant d'entraîner l'annuleur d'écho en phase 3 (échantillons)
     ec_wait: u64,
+    /// Rallonge de notre TRN de phase 3 (symboles) : avec un long
+    /// aller-retour, l'annuleur d'écho lointain apprend sur l'écho de notre
+    /// TRN, un aller-retour plus tard ; il lui faut plus que 0,4 s
+    pub(crate) trn_extra: usize,
     /// Demande d'afficher l'atténuation d'écho obtenue
     pub ec_report: bool,
     pub tx_rate: u32,
@@ -260,6 +264,7 @@ impl P34 {
             rx_trn_count: 0,
             last_k: 0,
             ec_wait: 0,
+            trn_extra: 0,
             ec_report: false,
             tx_rate: 0,
             rx_rate: 0,
@@ -866,7 +871,7 @@ impl P34 {
                 // attend J pour en voir la fin : V.34 le permet).
                 let deja = v.len() as f64;
                 let besoin = ((self.ec_wait as f64 / 8000.0) + 0.4) * self.sym_rate_tx - deja;
-                let trn = TRN3_LEN.max(besoin.ceil().max(0.0) as usize);
+                let trn = TRN3_LEN.max(besoin.ceil().max(0.0) as usize) + self.trn_extra;
                 self.send_burst(v, TxSt::Trn { left: trn }, "S S̄ PP");
                 self.goto(Step::C3Send);
                 self.rx_st = RxSt::WaitS;
@@ -1419,6 +1424,12 @@ impl Modem {
         let mut p = P34::new(answer, sr_tx, tx_high, sr_rx, rx_high, mp);
         p.crc_legacy = self.crc_legacy;
         p.crc_mode = self.cfg.crc_mode;
+        // Long aller-retour (Internet, adaptateur téléphonique) : un écho
+        // lointain est possible, on rallonge notre TRN de 0,8 s pour que son
+        // annuleur ait le temps d'apprendre (l'autre attend notre J)
+        if self.rtd.unwrap_or(0) >= 200 * 8 {
+            p.trn_extra = (0.8 * SYMBOL_RATES[sr_tx]) as usize;
+        }
         // Taille demandée à l'autre pour la phase 4 : l'appelé décide sur le
         // SNR du sondage (il n'a pas encore entraîné son égaliseur) avec
         // une forte marge ; l'appelant re-décidera sur le SNR mesuré.
@@ -1438,7 +1449,8 @@ impl Modem {
             v.extend(seq_s(128, false));
             v.extend(seq_s(16, true));
             v.extend(seq_pp().iter().map(|x| *x * std::f32::consts::SQRT_2));
-            p.send_burst(v, TxSt::Trn { left: TRN3_LEN }, "S S̄ PP");
+            let trn = TRN3_LEN + p.trn_extra;
+            p.send_burst(v, TxSt::Trn { left: trn }, "S S̄ PP");
             p.rx_st = RxSt::WaitS;
         } else {
             p.act(P34Action::Tx("silence".into()));

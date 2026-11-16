@@ -337,6 +337,7 @@ impl Modem {
                     if t > self.t_mark {
                         let rtd = (t - self.t_mark).saturating_sub(REV_DELAY);
                         self.rtd = Some(rtd);
+                        self.far_ec.set_round_trip(rtd as usize);
                         self.status.params.rtd_ms = Some(self.ms(rtd));
                         self.params_changed();
                         self.rx_name("A");
@@ -490,6 +491,7 @@ impl Modem {
                         self.rx_name("B̄");
                         let rtd = (t - self.t_mark).saturating_sub(REV_DELAY);
                         self.rtd = Some(rtd);
+                        self.far_ec.set_round_trip(rtd as usize);
                         self.status.params.rtd_ms = Some(self.ms(rtd));
                         self.params_changed();
                         self.log(LogLevel::Info, &format!("Délai aller-retour mesuré : {:.1} ms", self.ms(rtd)));

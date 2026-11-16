@@ -111,6 +111,10 @@ pub struct Modem {
     pub(crate) p34: Option<Box<crate::phase34::P34>>,
     /// Annuleur d'écho (notre émission qui revient dans notre récepteur)
     pub(crate) ec: crate::dsp::echo::EchoCanceller,
+    /// Écho lointain (à travers un adaptateur téléphonique : un aller-retour
+    /// Internet plus tard), entraîné avec `ec` sur la même erreur
+    pub(crate) far_ec: crate::dsp::echo::FarEchoCanceller,
+    far_training: bool,
     /// Couche liaison conservée pendant un réentraînement
     pub(crate) saved_link: Option<crate::lapm::Lapm>,
     /// Détecteur du ton de réentraînement de l'autre (A si on appelle, B sinon)
@@ -202,6 +206,8 @@ impl Modem {
             info1a: None,
             p34: None,
             ec: crate::dsp::echo::EchoCanceller::new(),
+            far_ec: crate::dsp::echo::FarEchoCanceller::new(),
+            far_training: false,
             saved_link: None,
             retrain_det: None,
             retrain_on: 0,
@@ -577,16 +583,46 @@ impl Modem {
     // Boucle principale
     // ------------------------------------------------------------------
 
+    /// Notre échantillon émis, pour les deux annuleurs d'écho.
+    #[inline]
+    fn push_tx_ec(&mut self, y: f32) {
+        self.ec.push_tx(y);
+        self.far_ec.push_tx(y, self.ec.mu);
+    }
+
     fn step(&mut self, x_line: f32) -> f32 {
         // Annuleur d'écho : il s'entraîne pendant nos signaux large bande
         // émis quand l'autre se tait (L1/L2 en phase 2, S/PP/TRN en phase 3).
         // (Pas en phase 2 : L1/L2 est périodique, l'annuleur n'y apprendrait
         // l'écho qu'aux 21 fréquences du sondage — V.34 l'entraîne en phase 3.)
-        self.ec.mu = match self.st {
+        let mu = match self.st {
             St::P3 => self.p34.as_ref().map(|p| p.ec_mu()).unwrap_or(0.0),
             _ => 0.0,
         };
-        let x = self.ec.process(x_line);
+        self.ec.mu = mu;
+        // l'écho lointain apprend un aller-retour après l'écho proche
+        let mu_far = self.far_ec.follow_delayed_mu();
+        // écho proche et écho lointain, retirés ensemble et appris sur la
+        // même erreur
+        let x_near = x_line - self.ec.estimate();
+        let x = x_near - self.far_ec.estimate();
+        if mu > 0.0 || mu_far > 0.0 {
+            let norm = if mu > 0.0 { self.ec.power() } else { 0.0 } + if mu_far > 0.0 { self.far_ec.power() } else { 0.0 };
+            if mu > 0.0 {
+                self.ec.adapt(x, norm);
+            }
+            self.far_ec.adapt(x, norm);
+            self.ec.note(x_line, x);
+            if mu_far > 0.0 {
+                self.far_ec.note(x_near, x);
+            }
+        }
+        if mu_far > 0.0 {
+            self.far_training = true;
+        } else if std::mem::take(&mut self.far_training) {
+            let erle = self.far_ec.erle_db();
+            self.log(LogLevel::Detail, &format!("Annuleur d'écho lointain entraîné (un aller-retour après le nôtre) : atténuation {erle:.1} dB"));
+        }
         let mut f = RxFlags::default();
         let p_tot = self.power.push(x);
         if let Some(d) = self.ansam_det.as_mut() {
@@ -650,7 +686,7 @@ impl Modem {
                         self.retrain_on = 0;
                         self.initiate_retrain("l'autre modem demande un réentraînement", false);
                         let y = self.tx.next_sample(self.n);
-                        self.ec.push_tx(y);
+                        self.push_tx_ec(y);
                         self.n += 1;
                         return y;
                     }
@@ -664,7 +700,7 @@ impl Modem {
                     self.log(LogLevel::Detail, &format!("Annuleur d'écho entraîné sur notre TRN : atténuation {erle:.1} dB"));
                 }
                 self.apply_p34_actions(actions);
-                self.ec.push_tx(out);
+                self.push_tx_ec(out);
                 self.n += 1;
                 return out;
             }
@@ -672,7 +708,7 @@ impl Modem {
         }
 
         let y = self.tx.next_sample(self.n);
-        self.ec.push_tx(y);
+        self.push_tx_ec(y);
         self.n += 1;
         y
     }

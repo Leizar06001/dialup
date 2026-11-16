@@ -132,7 +132,9 @@ impl LineParams {
             freq_offset_hz: c(self.freq_offset_hz, -50.0, 50.0, 0.0),
             delay_ms: c(self.delay_ms, 0.0, 1000.0, 0.0),
             echo_db: c(self.echo_db, -100.0, 0.0, -100.0),
-            echo_delay_ms: c(self.echo_delay_ms, 0.0, 200.0, 0.0),
+            // jusqu'à 2 s : l'écho lointain d'un adaptateur téléphonique revient
+            // après tout l'aller-retour sur Internet
+            echo_delay_ms: c(self.echo_delay_ms, 0.0, 2000.0, 0.0),
             dropouts_per_s: c(self.dropouts_per_s, 0.0, 10.0, 0.0),
         };
         if p.band_low_hz > p.band_high_hz - 200.0 {
