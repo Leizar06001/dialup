@@ -32,6 +32,10 @@ pub struct Config {
     pub web1998: Web1998,
     /// 3615 ORACLE : l'IA qui se croit en 1998
     pub oracle: Oracle,
+    /// Passerelle SIP (adaptateurs téléphoniques, vrais modems et fax)
+    pub sip: Sip,
+    /// Postes SIP : comme des abonnés, avec une empreinte pour le digest SIP
+    pub postes_sip: Vec<PosteSip>,
 }
 
 impl Default for Config {
@@ -49,6 +53,8 @@ impl Default for Config {
             fai: Fai::default(),
             web1998: Web1998::default(),
             oracle: Oracle::default(),
+            sip: Sip::default(),
+            postes_sip: Vec::new(),
         }
     }
 }
@@ -149,6 +155,66 @@ pub struct Abonne {
 
 fn oui() -> bool {
     true
+}
+
+/// Passerelle SIP : un adaptateur téléphonique (ATA) ou un téléphone IP
+/// s'enregistre comme un abonné, sur le même port UDP que le central, et
+/// reçoit son numéro de l'annuaire (voir [`crate::sip`]).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Sip {
+    pub actif: bool,
+    /// Domaine d'authentification (« realm » du digest) : les empreintes
+    /// des postes en dépendent
+    pub domaine: String,
+    /// Adresse IP annoncée pour l'audio (SDP) ; vide = celle de l'interface
+    /// qui mène au poste
+    pub adresse_publique: String,
+    /// Durée d'enregistrement accordée au plus (s)
+    pub enregistrement_max_s: u32,
+}
+
+impl Default for Sip {
+    fn default() -> Self {
+        Self { actif: false, domaine: "v34net".into(), adresse_publique: String::new(), enregistrement_max_s: 120 }
+    }
+}
+
+impl Sip {
+    pub fn public_ip(&self) -> Result<Option<std::net::IpAddr>, String> {
+        match self.adresse_publique.trim() {
+            "" => Ok(None),
+            a => a.parse().map(Some).map_err(|_| format!("sip.adresse_publique invalide : {a} (une adresse IP)")),
+        }
+    }
+}
+
+/// Un poste SIP de l'annuaire (une ligne d'ATA).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PosteSip {
+    /// Identifiant SIP (« User ID » de l'adaptateur)
+    pub nom: String,
+    pub numero: String,
+    /// `sip-md5$<domaine>$<HA1>` : MD5(nom:domaine:mot de passe), en hexadécimal
+    pub empreinte: String,
+    /// Accès Internet (FAI) autorisé
+    #[serde(default = "oui")]
+    pub fai: bool,
+}
+
+/// Empreinte d'un poste SIP : `sip-md5$<domaine>$<HA1>`.
+pub fn empreinte_sip(nom: &str, domaine: &str, mot_de_passe: &str) -> String {
+    format!("sip-md5${domaine}${}", crate::sip::digest::ha1(nom, domaine, mot_de_passe))
+}
+
+/// Analyse une empreinte de poste SIP : (domaine, HA1 en hexadécimal minuscule).
+pub fn parse_empreinte_sip(e: &str) -> Result<(&str, String), String> {
+    let mut it = e.splitn(3, '$');
+    match (it.next(), it.next(), it.next()) {
+        (Some("sip-md5"), Some(dom), Some(h)) if h.len() == 32 && h.chars().all(|c| c.is_ascii_hexdigit()) => Ok((dom, h.to_ascii_lowercase())),
+        _ => Err("empreinte invalide (attendu sip-md5$<domaine>$<32 chiffres hexadécimaux>)".into()),
+    }
 }
 
 /// Ce qu'un numéro spécial fait quand on l'appelle.
@@ -362,35 +428,49 @@ impl Oracle {
 #[derive(Clone, Debug, Default)]
 pub struct Annuaire {
     par_nom: HashMap<String, (String, PasswordHash)>,
-    /// Abonnés sans accès Internet (FAI)
+    /// Postes SIP : nom → (numéro, HA1)
+    postes: HashMap<String, (String, String)>,
+    /// Abonnés et postes sans accès Internet (FAI)
     sans_fai: HashSet<String>,
 }
 
 impl Annuaire {
-    /// Numéro et empreinte d'un abonné.
+    /// Numéro et empreinte d'un abonné (appli ; pas les postes SIP).
     pub fn get(&self, nom: &str) -> Option<&(String, PasswordHash)> {
         self.par_nom.get(nom)
     }
 
-    /// L'abonné peut-il appeler le FAI ?
-    pub fn fai_autorise(&self, nom: &str) -> bool {
-        self.par_nom.contains_key(nom) && !self.sans_fai.contains(nom)
+    /// Numéro et HA1 d'un poste SIP.
+    pub fn poste(&self, nom: &str) -> Option<&(String, String)> {
+        self.postes.get(nom)
     }
 
-    /// (nom, numéro) de chaque abonné, triés par nom.
+    /// Numéro attribué à ce nom, abonné ou poste SIP.
+    pub fn numero_de(&self, nom: &str) -> Option<&str> {
+        self.par_nom.get(nom).map(|(n, _)| n.as_str()).or_else(|| self.postes.get(nom).map(|(n, _)| n.as_str()))
+    }
+
+    /// L'abonné (ou le poste) peut-il appeler le FAI ?
+    pub fn fai_autorise(&self, nom: &str) -> bool {
+        self.numero_de(nom).is_some() && !self.sans_fai.contains(nom)
+    }
+
+    /// (nom, numéro) de chaque abonné et poste SIP, triés par nom.
     pub fn entrees(&self) -> Vec<(&str, &str)> {
-        let mut v: Vec<(&str, &str)> = self.par_nom.iter().map(|(n, (num, _))| (n.as_str(), num.as_str())).collect();
+        let abonnes = self.par_nom.iter().map(|(n, (num, _))| (n.as_str(), num.as_str()));
+        let postes = self.postes.iter().map(|(n, (num, _))| (n.as_str(), num.as_str()));
+        let mut v: Vec<(&str, &str)> = abonnes.chain(postes).collect();
         v.sort();
         v
     }
 
     /// Nom déjà pris (sans tenir compte des majuscules) ?
     pub fn nom_pris(&self, nom: &str) -> bool {
-        self.par_nom.keys().any(|n| n.eq_ignore_ascii_case(nom))
+        self.par_nom.keys().chain(self.postes.keys()).any(|n| n.eq_ignore_ascii_case(nom))
     }
 
     pub fn numero_pris(&self, numero: &str) -> bool {
-        self.par_nom.values().any(|(n, _)| n == numero)
+        self.par_nom.values().any(|(n, _)| n == numero) || self.postes.values().any(|(n, _)| n == numero)
     }
 
     /// Ajoute les comptes créés par le site. Ceux de la configuration
@@ -422,11 +502,11 @@ impl Annuaire {
     }
 
     pub fn len(&self) -> usize {
-        self.par_nom.len()
+        self.par_nom.len() + self.postes.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.par_nom.is_empty()
+        self.len() == 0
     }
 }
 
@@ -459,7 +539,7 @@ impl Config {
         if self.abonnes.is_empty() {
             warnings.push("annuaire vide : personne ne peut s'enregistrer (v34-server ajouter-abonne NOM NUMERO)".into());
         }
-        let numeros_abonnes: HashSet<&str> = self.abonnes.iter().map(|a| a.numero.as_str()).collect();
+        let numeros_abonnes: HashSet<&str> = self.abonnes.iter().map(|a| a.numero.as_str()).chain(self.postes_sip.iter().map(|p| p.numero.as_str())).collect();
         let mut speciaux = HashSet::new();
         for s in &self.numeros_speciaux {
             if !valid_number(&s.numero) {
@@ -471,6 +551,18 @@ impl Config {
             if numeros_abonnes.contains(s.numero.as_str()) {
                 return Err(format!("le numéro spécial {} est aussi attribué à un abonné", s.numero));
             }
+        }
+        let sip = &self.sip;
+        let d = sip.domaine.trim();
+        if d.is_empty() || d.len() > 64 || !d.chars().all(|c| c.is_ascii_alphanumeric() || ".-_".contains(c)) {
+            return Err("sip.domaine invalide (1 à 64 caractères A-Z a-z 0-9 . - _)".into());
+        }
+        sip.public_ip()?;
+        if !(30..=3600).contains(&sip.enregistrement_max_s) {
+            return Err("sip.enregistrement_max_s doit être entre 30 et 3600".into());
+        }
+        if !sip.actif && !self.postes_sip.is_empty() {
+            warnings.push("des postes SIP sont déclarés mais la passerelle est éteinte ([sip] actif = false)".into());
         }
         let m = &self.modems;
         if !(28000..=56000).contains(&m.debit_max_56k) {
@@ -523,7 +615,35 @@ impl Config {
                 sans_fai.insert(a.nom.clone());
             }
         }
-        Ok(Annuaire { par_nom, sans_fai })
+        let mut postes = HashMap::new();
+        for p in &self.postes_sip {
+            if !valid_name(&p.nom) {
+                return Err(format!("nom de poste SIP invalide « {} » (1 à 32 caractères A-Z a-z 0-9 . _ -)", p.nom));
+            }
+            if !valid_number(&p.numero) {
+                return Err(format!("poste SIP {} : numéro invalide « {} » (1 à 20 chiffres)", p.nom, p.numero));
+            }
+            if !numeros.insert(p.numero.clone()) {
+                return Err(format!("numéro {} attribué deux fois", p.numero));
+            }
+            let (domaine, ha1) = parse_empreinte_sip(&p.empreinte).map_err(|e| format!("poste SIP {} : {e}", p.nom))?;
+            if domaine != self.sip.domaine.trim() {
+                return Err(format!(
+                    "poste SIP {} : empreinte calculée pour le domaine « {domaine} », pas « {} » (refaire : v34-server ajouter-poste-sip {} {})",
+                    p.nom,
+                    self.sip.domaine.trim(),
+                    p.nom,
+                    p.numero
+                ));
+            }
+            if par_nom.keys().any(|n: &String| n.eq_ignore_ascii_case(&p.nom)) || postes.insert(p.nom.clone(), (p.numero.clone(), ha1)).is_some() {
+                return Err(format!("nom en double dans l'annuaire : {}", p.nom));
+            }
+            if !p.fai {
+                sans_fai.insert(p.nom.clone());
+            }
+        }
+        Ok(Annuaire { par_nom, postes, sans_fai })
     }
 
     pub fn listen_addr(&self) -> Result<SocketAddr, String> {

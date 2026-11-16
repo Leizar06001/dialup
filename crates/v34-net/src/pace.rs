@@ -17,19 +17,43 @@ const CATCH_UP: f32 = 10.0;
 const COOLDOWN: u32 = 10;
 /// Lissage du niveau (par tic de 20 ms : constante de temps ~0,4 s)
 const SMOOTH: f32 = 0.05;
+/// Mode ancré : tics de lecture avant de relever le niveau de référence (1 s)
+const SETTLE: u32 = 50;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Pacer {
     avg: Option<f32>,
     wait: u32,
+    deadband: f32,
+    /// Référence = niveau du début plutôt que la cible du tampon
+    anchored: bool,
+    reference: Option<f32>,
+    settle: u32,
     /// Corrections appliquées (blocs en plus, blocs en moins)
     pub extra: u64,
     pub skipped: u64,
 }
 
+impl Default for Pacer {
+    fn default() -> Self {
+        Self { avg: None, wait: 0, deadband: DEADBAND, anchored: false, reference: None, settle: 0, extra: 0, skipped: 0 }
+    }
+}
+
 impl Pacer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Face à une horloge matérielle (adaptateur téléphonique) : notre
+    /// tampon est gardé au niveau qu'il avait après une seconde de lecture,
+    /// à `frames` trames près. Rien ne se perd en route : ce que notre
+    /// tampon gagne, celui de l'émetteur le perd. Le garder à son niveau de
+    /// départ garde donc aussi celui de l'adaptateur, petit et fixe, au sien
+    /// (avec la cible pour référence, il pourrait s'en écarter de plusieurs
+    /// trames avant la première correction).
+    pub fn anchored(frames: f32) -> Self {
+        Self { deadband: frames.max(0.5), anchored: true, ..Self::default() }
     }
 
     /// À appeler une fois par tic de 20 ms avec le niveau du tampon
@@ -39,23 +63,37 @@ impl Pacer {
         let Some((depth, target)) = level else {
             self.avg = None;
             self.wait = 0;
+            self.reference = None;
+            self.settle = 0;
             return 0.0;
         };
-        let avg = self.avg.get_or_insert(depth as f32);
-        *avg += (depth as f32 - *avg) * SMOOTH;
+        let mut avg = self.avg.unwrap_or(depth as f32);
+        avg += (depth as f32 - avg) * SMOOTH;
+        self.avg = Some(avg);
+        let reference = match (self.anchored, self.reference) {
+            (false, _) => target as f32,
+            (true, Some(r)) => r,
+            (true, None) => {
+                self.settle += 1;
+                if self.settle >= SETTLE {
+                    self.reference = Some(avg);
+                }
+                return 0.0;
+            }
+        };
         if self.wait > 0 {
             self.wait -= 1;
             return 0.0;
         }
-        let err = *avg - target as f32;
-        if err > DEADBAND {
+        let err = avg - reference;
+        if err > self.deadband {
             // Trop plein : l'autre va plus vite, ou on a pris du retard.
-            *avg -= 1.0;
+            self.avg = Some(avg - 1.0);
             self.wait = if err > CATCH_UP { 0 } else { COOLDOWN };
             self.extra += 1;
             1.0
-        } else if err < -DEADBAND {
-            *avg += 1.0;
+        } else if err < -self.deadband {
+            self.avg = Some(avg + 1.0);
             self.wait = COOLDOWN;
             self.skipped += 1;
             -1.0
@@ -88,6 +126,29 @@ mod tests {
             assert!((depth - target as f64).abs() < 8.0, "niveau {depth}");
         }
         assert!(p.extra > 250 && p.skipped < 20, "{} / {}", p.extra, p.skipped);
+    }
+
+    #[test]
+    fn anchored_keeps_the_starting_level() {
+        // Émetteur 1 % plus rapide, tampon parti SOUS sa cible (5 pour 7) :
+        // ancré, le niveau reste à une ou deux trames de son départ (avec
+        // la cible pour référence, il monterait d'abord de trois trames).
+        let mut p = Pacer::anchored(1.0);
+        let (mut depth, target) = (5.0f64, 7usize);
+        let mut produced = 0.0f64;
+        let mut worst = 0.0f64;
+        for _ in 0..30_000 {
+            produced += 1.01;
+            while produced >= 1.0 {
+                depth += 1.0;
+                produced -= 1.0;
+            }
+            let blocks = 1.0 + p.update(Some((depth.max(0.0) as usize, target)));
+            depth -= blocks;
+            worst = worst.max((depth - 5.0).abs());
+        }
+        assert!(worst <= 2.0, "écart maximal {worst}");
+        assert!(p.extra > 250, "{}", p.extra);
     }
 
     #[test]

@@ -18,7 +18,10 @@ Autour du modem, tout un petit monde « années 90 » :
 - **Un central téléphonique sur IP** : chaque abonné reçoit un numéro, les
   appels sont relayés en audio G.711 sur UDP, et les modems négocient à
   travers le réseau comme sur une vraie ligne. Le mot de passe ne circule
-  jamais (défi-réponse).
+  jamais (défi-réponse). Une **passerelle SIP** y raccorde aussi de vrais
+  appareils : un adaptateur téléphonique (ATA) s'enregistre comme un abonné,
+  et le vrai modem, le fax ou le Minitel branché dessus appelle le FAI, le
+  3615 ou l'appli des autres abonnés.
 - **Un fournisseur d'accès à Internet** : composer le `0836154286` décroche
   un modem côté serveur, qui ouvre un tunnel vers Internet (proxy SOCKS5
   local) à la vitesse d'un vrai modem. Raccordé en numérique au central, il
@@ -81,7 +84,7 @@ d'abonné.
 ```
 crates/v34-core     moteur V.8 / V.34 / V.90 : DSP, machine d'états, LAPM, simulateur de ligne
 crates/v34-net      audio sur IP (G.711/UDP, gigue), signalisation du central, tunnel, trames BBS (chat)
-crates/v34-server   central téléphonique, modem du FAI, web 1998, salon, 3615 ORACLE, site d'inscription (pour un VPS)
+crates/v34-server   central téléphonique, passerelle SIP, modem du FAI, web 1998, salon, 3615 ORACLE, site d'inscription (pour un VPS)
 crates/v34-cli      ligne de commande : deux modems en local, WAV, appels via le central
 app/                l'appli Tauri v2 (backend Rust dans src-tauri, interface statique dans ui)
 deploy/             installation du central sur un VPS (systemd) et du site d'inscription (Docker)

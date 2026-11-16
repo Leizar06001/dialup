@@ -7,7 +7,10 @@
 //! - relais des paquets audio ([`v34_net::packet`]) entre les deux bouts
 //!   d'un appel, d'après l'identifiant d'appel de l'en-tête et l'adresse
 //!   de l'émetteur (qui doit être celle d'un abonné authentifié de l'appel) ;
-//! - appels vers les numéros spéciaux : remis à un modem ([`crate::services`]).
+//! - appels vers les numéros spéciaux : remis à un modem ([`crate::services`]) ;
+//! - passerelle SIP (`[sip]` de la configuration) : des adaptateurs
+//!   téléphoniques s'enregistrent comme des abonnés, sur la même socket
+//!   ([`crate::sip`], et `central/sip.rs` pour la logique d'appel).
 //!
 //! Sans authentification valide, rien n'est relayé : seuls REGISTER (→
 //! CHALLENGE) et AUTH (→ AUTH_FAIL) reçoivent une réponse, toujours plus
@@ -42,11 +45,16 @@ use crate::services::{self, ModemCall, ModemInput, ModemNotice};
 use crate::tunnel::TunnelPolicy;
 use crate::{debug, error, info, warn};
 
+mod sip;
+use self::sip::{Poste, SipState};
+
 /// Validité d'un défi (s).
 const CHALLENGE_TTL: u64 = 30;
 const HOUSEKEEPING: Duration = Duration::from_millis(50);
 /// Fréquence de vérification du fichier de configuration.
 const RELOAD_CHECK: Duration = Duration::from_secs(2);
+/// Taille du tampon de réception (un INVITE SIP avec SDP y tient largement).
+const RECV_BUF: usize = 8192;
 /// Taille maximale d'un paquet audio relayé (4 trames L16).
 const MAX_AUDIO: usize = packet::HEADER_LEN + 4 * packet::FRAME_SAMPLES * 2;
 /// Adresses IP suivies au maximum par la limitation des échecs.
@@ -67,13 +75,26 @@ pub struct Stats {
 struct Reg {
     name: String,
     number: String,
-    key: SessionKey,
-    client_nonce: [u8; CLIENT_NONCE_LEN],
+    /// Adresse de la signalisation (messages `VC`, ou SIP)
     addr: SocketAddr,
     last_seen: Instant,
+    call: Option<u32>,
+    lien: Lien,
+}
+
+/// Comment parler à un abonné.
+enum Lien {
+    /// L'appli ou `v34-cli` : signalisation authentifiée du central
+    Appli(Appli),
+    /// Un poste SIP (une ligne d'adaptateur téléphonique)
+    Sip(Poste),
+}
+
+struct Appli {
+    key: SessionKey,
+    client_nonce: [u8; CLIENT_NONCE_LEN],
     outbox: Outbox,
     dedup: Dedup,
-    call: Option<u32>,
     /// Dernier annuaire envoyé (au plus un par seconde)
     last_directory: Option<Instant>,
 }
@@ -81,6 +102,12 @@ struct Reg {
 enum Callee {
     Client(u32),
     Modem { service: Service, answer_at: Instant, tx: Option<Sender<ModemInput>> },
+}
+
+/// Une trame à relayer : paquet `V3` reçu tel quel, ou déjà décodé (RTP).
+enum Audio<'a> {
+    V3(&'a [u8]),
+    Decoded(Packet),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -146,6 +173,8 @@ pub struct Server {
     exploits: crate::caches::Exploits,
     /// Démarrage (secondes Unix)
     depuis: u64,
+    /// Passerelle SIP (`[sip] actif = true`)
+    sip: Option<SipState>,
     stop: Arc<AtomicBool>,
     stats: Arc<Mutex<Stats>>,
     counters: Stats,
@@ -200,6 +229,7 @@ impl Server {
             }
         }
         let (notice_tx, notice_rx) = mpsc::channel();
+        let sip = cfg.sip.actif.then(|| SipState::new(&cfg, sock.local_addr().unwrap_or(addr)));
         Ok(Server {
             sock,
             cfg: Arc::new(cfg),
@@ -222,6 +252,7 @@ impl Server {
             donnees: None,
             exploits: Default::default(),
             depuis: unix_now(),
+            sip,
             stop: Arc::new(AtomicBool::new(false)),
             stats: Arc::new(Mutex::new(Stats::default())),
             counters: Stats::default(),
@@ -292,7 +323,7 @@ impl Server {
 
     /// Boucle principale (bloquante jusqu'à l'arrêt).
     pub fn run(mut self) {
-        let mut buf = [0u8; 2048];
+        let mut buf = vec![0u8; RECV_BUF];
         let mut next_hk = Instant::now();
         while !self.stop.load(Ordering::Relaxed) {
             match self.sock.recv_from(&mut buf) {
@@ -333,6 +364,14 @@ impl Server {
             self.on_audio(buf, from);
         } else if signal::is_control(buf) {
             self.on_control(buf, from);
+        } else if self.sip.is_some() {
+            // « V3 », « VC » et le texte SIP commencent par 0x41-0x5A ;
+            // le RTP (version 2) par 0x80-0xBF
+            if crate::sip::rtp::is_rtp(buf) {
+                self.on_rtp(buf, from);
+            } else if crate::sip::message::looks_like_sip(buf) {
+                self.on_sip(buf, from);
+            }
         }
         // tout le reste : ignoré sans réponse
     }
@@ -422,7 +461,8 @@ impl Server {
         }
         let now = Instant::now();
         let Some(reg) = self.regs.get_mut(&session) else { return };
-        let Ok(f) = signal::decode(buf, Some(&reg.key)) else {
+        let Lien::Appli(app) = &mut reg.lien else { return };
+        let Ok(f) = signal::decode(buf, Some(&app.key)) else {
             debug!("message de contrôle mal authentifié depuis {from}");
             return;
         };
@@ -432,15 +472,15 @@ impl Server {
             reg.addr = from;
         }
         if let Msg::Ack { msg_id } = f.msg {
-            reg.outbox.ack(msg_id);
+            app.outbox.ack(msg_id);
             return;
         }
         if matches!(f.msg, Msg::DirectoryReq) {
-            if reg.last_directory.is_some_and(|t| now - t < Duration::from_millis(900)) {
+            if app.last_directory.is_some_and(|t| now - t < Duration::from_millis(900)) {
                 return;
             }
-            reg.last_directory = Some(now);
-            let (key, addr) = (reg.key, reg.addr);
+            app.last_directory = Some(now);
+            let (key, addr) = (app.key, reg.addr);
             let msg = Msg::Directory { entries: self.directory() };
             let bytes = signal::encode(&Frame { session, msg_id: 0, msg }, Some(&key));
             self.send_to(&bytes, addr);
@@ -458,8 +498,8 @@ impl Server {
         if !f.msg.is_reliable() {
             return;
         }
-        let ack = signal::encode(&Frame { session, msg_id: 0, msg: Msg::Ack { msg_id: f.msg_id } }, Some(&reg.key));
-        let seen = reg.dedup.check(f.msg_id);
+        let ack = signal::encode(&Frame { session, msg_id: 0, msg: Msg::Ack { msg_id: f.msg_id } }, Some(&app.key));
+        let seen = app.dedup.check(f.msg_id);
         self.send_to(&ack, from);
         if seen == Seen::New {
             self.on_message(session, f.msg);
@@ -489,7 +529,7 @@ impl Server {
         };
         // AUTH répété (WELCOME perdu) : même session, on renvoie WELCOME.
         if let Some(&s) = self.by_name.get(&name) {
-            if self.regs.get(&s).is_some_and(|r| r.client_nonce == client_nonce) {
+            if self.regs.get(&s).is_some_and(|r| matches!(&r.lien, Lien::Appli(a) if a.client_nonce == client_nonce)) {
                 let reg = self.regs.get_mut(&s).expect("session présente");
                 reg.addr = from;
                 reg.last_seen = Instant::now();
@@ -502,27 +542,9 @@ impl Server {
             warn!("connexion de {name} refusée : limite de {} abonnés connectés", self.cfg.central.connectes_max);
             return self.auth_fail(from, AuthFailReason::ServerFull);
         }
-        let session = loop {
-            let s = random_u32_nonzero();
-            if !self.regs.contains_key(&s) {
-                break s;
-            }
-        };
-        self.regs.insert(
-            session,
-            Reg {
-                name: name.clone(),
-                number: number.clone(),
-                key,
-                client_nonce,
-                addr: from,
-                last_seen: Instant::now(),
-                outbox: Outbox::new(),
-                dedup: Dedup::default(),
-                call: None,
-                last_directory: None,
-            },
-        );
+        let session = self.new_session_id();
+        let lien = Lien::Appli(Appli { key, client_nonce, outbox: Outbox::new(), dedup: Dedup::default(), last_directory: None });
+        self.regs.insert(session, Reg { name: name.clone(), number: number.clone(), addr: from, last_seen: Instant::now(), call: None, lien });
         self.by_name.insert(name.clone(), session);
         self.by_number.insert(number.clone(), session);
         info!("{name} enregistré au {number} depuis {from}");
@@ -536,21 +558,23 @@ impl Server {
     /// annuaire ; les clients d'avant le 0.1.7 l'ignorent).
     fn send_compte(&mut self, session: u32) {
         let (Some(f), Some(reg)) = (self.facturation.as_mut(), self.regs.get(&session)) else { return };
+        let Lien::Appli(app) = &reg.lien else { return };
         let r = f.releve(&reg.name, unix_now());
         let msg = Msg::Compte { mois: r.mois, centimes: r.centimes, secondes: r.secondes, succes: r.succes };
-        let b = signal::encode(&Frame { session, msg_id: 0, msg }, Some(&reg.key));
+        let b = signal::encode(&Frame { session, msg_id: 0, msg }, Some(&app.key));
         self.send_to(&b, reg.addr);
     }
 
     fn send_welcome(&self, session: u32) {
         let Some(reg) = self.regs.get(&session) else { return };
+        let Lien::Appli(app) = &reg.lien else { return };
         let msg = Msg::Welcome {
             number: reg.number.clone(),
             keepalive_s: self.cfg.central.keepalive_s,
             expiry_s: self.cfg.central.expiration_s,
             services: self.cfg.services(),
         };
-        let b = signal::encode(&Frame { session, msg_id: 0, msg }, Some(&reg.key));
+        let b = signal::encode(&Frame { session, msg_id: 0, msg }, Some(&app.key));
         self.send_to(&b, reg.addr);
     }
 
@@ -570,13 +594,26 @@ impl Server {
             .collect()
     }
 
+    /// Message fiable à un abonné ; pour un poste SIP, traduit en SIP.
     fn send_reliable(&mut self, session: u32, msg: Msg) {
         let Some(reg) = self.regs.get_mut(&session) else { return };
-        let msg_id = reg.outbox.alloc_id();
-        let bytes = signal::encode(&Frame { session, msg_id, msg }, Some(&reg.key));
-        reg.outbox.track(msg_id, bytes.clone(), Instant::now());
+        let Lien::Appli(app) = &mut reg.lien else {
+            return self.sip_deliver(session, msg);
+        };
+        let msg_id = app.outbox.alloc_id();
+        let bytes = signal::encode(&Frame { session, msg_id, msg }, Some(&app.key));
+        app.outbox.track(msg_id, bytes.clone(), Instant::now());
         let addr = reg.addr;
         self.send_to(&bytes, addr);
+    }
+
+    fn new_session_id(&self) -> u32 {
+        loop {
+            let s = random_u32_nonzero();
+            if !self.regs.contains_key(&s) {
+                return s;
+            }
+        }
     }
 
     fn remove_registration(&mut self, session: u32, why: &str) {
@@ -589,6 +626,9 @@ impl Server {
         }
         if let Some(c) = reg.call {
             self.end_call(c, Some(session), HangupReason::PeerLost);
+        }
+        if matches!(reg.lien, Lien::Sip(_)) {
+            self.sip_forget(session);
         }
         info!("{} ({}) déconnecté : {why}", reg.name, reg.number);
     }
@@ -745,6 +785,14 @@ impl Server {
         let Some(call) = self.calls.get(&call_id) else { return };
         let Callee::Modem { service, .. } = call.callee else { return };
         let Some(reg) = self.regs.get(&call.caller) else { return };
+        // Un poste SIP reçoit du RTP, et c'est son horloge qui mène
+        let (peer, rtp) = match &reg.lien {
+            Lien::Appli(_) => (reg.addr, None),
+            Lien::Sip(_) => match self.sip_media(call.caller) {
+                Some((dest, law, pt)) => (dest, Some(services::RtpOut { law, pt })),
+                None => return self.end_call(call_id, None, HangupReason::Failure),
+            },
+        };
         let (tx, rx) = mpsc::channel();
         let sock = match self.sock.try_clone() {
             Ok(s) => s,
@@ -758,7 +806,8 @@ impl Server {
             service,
             caller: reg.name.clone(),
             caller_number: reg.number.clone(),
-            peer: reg.addr,
+            peer,
+            rtp,
             sock,
             max_rate: self.cfg.modems.debit_max,
             v90: self.cfg.modems.v90,
@@ -791,13 +840,14 @@ impl Server {
 
     // ───────────────────────── audio ─────────────────────────
 
+    /// Paquet audio `V3` d'un abonné de l'appli.
     fn on_audio(&mut self, buf: &[u8], from: SocketAddr) {
         if buf.len() < packet::HEADER_LEN || buf.len() > MAX_AUDIO {
             self.counters.dropped_packets += 1;
             return;
         }
         let call_id = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
-        let Some(call) = self.calls.get_mut(&call_id) else {
+        let Some(call) = self.calls.get(&call_id) else {
             self.counters.dropped_packets += 1;
             return;
         };
@@ -805,33 +855,55 @@ impl Server {
             self.counters.dropped_packets += 1;
             return;
         }
-        let addr_of = |s: u32| self.regs.get(&s).map(|r| r.addr);
-        let caller_addr = addr_of(call.caller);
-        let callee_addr = match call.callee {
-            Callee::Client(s) => addr_of(s),
-            Callee::Modem { .. } => None,
-        };
+        // seuls les abonnés de l'appli parlent `V3` (un poste SIP parle RTP)
+        let appli = |s: u32| self.regs.get(&s).filter(|r| matches!(r.lien, Lien::Appli(_))).map(|r| r.addr);
         // sens 0 : appelant → appelé ; sens 1 : appelé → appelant
-        let dir = if caller_addr == Some(from) {
+        let dir = if appli(call.caller) == Some(from) {
             0
-        } else if callee_addr == Some(from) {
+        } else if matches!(call.callee, Callee::Client(s) if appli(s) == Some(from)) {
             1
         } else {
             self.counters.dropped_packets += 1;
             return;
         };
-        let to_modem = dir == 0 && matches!(call.callee, Callee::Modem { .. });
-        let need_decode = to_modem || call.sims.is_some();
-        let mut pkt = if need_decode {
-            match Packet::decode(buf) {
-                Some(p) => Some(p),
+        self.relay(call_id, dir, Audio::V3(buf), from);
+    }
+
+    /// Relaie une trame vers l'autre bout de l'appel : un abonné de l'appli
+    /// (paquet `V3`, tel quel si possible), un poste SIP (RTP) ou le modem
+    /// d'un numéro spécial.
+    fn relay(&mut self, call_id: u32, dir: usize, audio: Audio, from: SocketAddr) {
+        enum Dest {
+            Appli(SocketAddr),
+            Sip(u32),
+            Modem,
+        }
+        let Some(call) = self.calls.get_mut(&call_id) else { return };
+        let party = if dir == 0 {
+            match call.callee {
+                Callee::Client(s) => Some(s),
+                Callee::Modem { .. } => None,
+            }
+        } else {
+            Some(call.caller)
+        };
+        let dest = match party.map(|s| (s, self.regs.get(&s))) {
+            None => Dest::Modem,
+            Some((_, Some(Reg { lien: Lien::Appli(_), addr, .. }))) => Dest::Appli(*addr),
+            Some((s, Some(Reg { lien: Lien::Sip(_), .. }))) => Dest::Sip(s),
+            Some((_, None)) => return,
+        };
+        let need_decode = !matches!(dest, Dest::Appli(_)) || call.sims.is_some();
+        let (raw, mut pkt) = match audio {
+            Audio::V3(buf) if !need_decode => (Some(buf), None),
+            Audio::V3(buf) => match Packet::decode(buf) {
+                Some(p) => (None, Some(p)),
                 None => {
                     self.counters.dropped_packets += 1;
                     return;
                 }
-            }
-        } else {
-            None
+            },
+            Audio::Decoded(p) => (None, Some(p)),
         };
         if let (Some(sims), Some(p)) = (call.sims.as_mut(), pkt.as_mut()) {
             let input = std::mem::take(&mut p.samples);
@@ -843,17 +915,20 @@ impl Server {
             p.backup.clear();
         }
         self.counters.relayed_packets += 1;
-        if to_modem {
-            if let (Callee::Modem { tx: Some(tx), .. }, Some(p)) = (&call.callee, pkt) {
-                let _ = tx.send(ModemInput::Audio { pkt: p, from });
+        match (dest, pkt) {
+            (Dest::Modem, Some(p)) => {
+                if let Callee::Modem { tx: Some(tx), .. } = &call.callee {
+                    let _ = tx.send(ModemInput::Audio { pkt: p, from });
+                }
             }
-            return;
-        }
-        let dest = if dir == 0 { callee_addr } else { caller_addr };
-        let Some(dest) = dest else { return };
-        match pkt {
-            Some(p) => self.send_to(&p.encode(), dest),
-            None => self.send_to(buf, dest),
+            (Dest::Appli(addr), Some(p)) => self.send_to(&p.encode(), addr),
+            (Dest::Appli(addr), None) => {
+                if let Some(b) = raw {
+                    self.send_to(b, addr);
+                }
+            }
+            (Dest::Sip(s), Some(p)) => self.sip_send_audio(s, &p),
+            _ => {}
         }
     }
 
@@ -875,12 +950,19 @@ impl Server {
         let mut lost = Vec::new();
         let mut resend = Vec::new();
         for (&s, reg) in self.regs.iter_mut() {
-            let p = reg.outbox.poll(now);
-            resend.extend(p.resend.into_iter().map(|b| (b, reg.addr)));
-            if !p.failed.is_empty() {
-                lost.push((s, "injoignable"));
-            } else if now.duration_since(reg.last_seen) > expiry {
-                lost.push((s, "keepalive expiré"));
+            match &mut reg.lien {
+                Lien::Appli(app) => {
+                    let p = app.outbox.poll(now);
+                    resend.extend(p.resend.into_iter().map(|b| (b, reg.addr)));
+                    if !p.failed.is_empty() {
+                        lost.push((s, "injoignable"));
+                    } else if now.duration_since(reg.last_seen) > expiry {
+                        lost.push((s, "keepalive expiré"));
+                    }
+                }
+                // un poste SIP a sa propre durée d'enregistrement
+                Lien::Sip(p) if p.expired(now) => lost.push((s, "enregistrement SIP expiré")),
+                Lien::Sip(_) => {}
             }
         }
         for (b, addr) in resend {
@@ -889,6 +971,7 @@ impl Server {
         for (s, why) in lost {
             self.remove_registration(s, why);
         }
+        self.sip_housekeeping(now);
         // sonneries trop longues, décroché des modems
         let ring_timeout = self.cfg.ring_timeout();
         let mut no_answer = Vec::new();
@@ -946,16 +1029,28 @@ impl Server {
         }
         w.modified = modified;
         let path = w.path.clone();
-        let new = match Config::load(&path).and_then(|c| c.annuaire().map(|a| (c, a))) {
+        let new = match Config::load(&path) {
             Ok(x) => x,
             Err(e) => {
                 warn!("configuration modifiée mais invalide, annuaire conservé : {e}");
                 return;
             }
         };
-        let (cfg, annuaire) = new;
+        // seuls l'annuaire et les postes SIP changent à chaud (le reste,
+        // dont la section [sip], demande un redémarrage)
         let mut c = (*self.cfg).clone();
-        c.abonnes = cfg.abonnes;
+        if new.sip.domaine != c.sip.domaine || new.sip.actif != c.sip.actif {
+            warn!("section [sip] modifiée : redémarrez le central pour l'appliquer");
+        }
+        c.abonnes = new.abonnes;
+        c.postes_sip = new.postes_sip;
+        let annuaire = match c.annuaire() {
+            Ok(a) => a,
+            Err(e) => {
+                warn!("annuaire modifié mais inutilisable avant redémarrage, conservé : {e}");
+                return;
+            }
+        };
         self.cfg = Arc::new(c);
         self.install_annuaire(annuaire);
     }
@@ -985,7 +1080,13 @@ impl Server {
         let stale: Vec<u32> = self
             .regs
             .iter()
-            .filter(|(_, r)| annuaire.get(&r.name).is_none_or(|(n, _)| *n != r.number))
+            .filter(|(_, r)| {
+                let numero = match r.lien {
+                    Lien::Appli(_) => annuaire.get(&r.name).map(|(n, _)| n),
+                    Lien::Sip(_) => annuaire.poste(&r.name).map(|(n, _)| n),
+                };
+                numero.is_none_or(|n| *n != r.number)
+            })
             .map(|(&s, _)| s)
             .collect();
         for s in stale {

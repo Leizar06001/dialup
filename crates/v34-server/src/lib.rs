@@ -13,7 +13,10 @@
 //! - dans ce tunnel, l'**hôte virtuel `http://web1998/`** ([`web1998`]) :
 //!   le serveur sert lui-même des versions allégées « 1998 » des pages web
 //!   (HTML 3.2, images GIF 256 couleurs, ou « V.Hallucination » : redessinées
-//!   en quelques dizaines de formes SVG), utilisables à 3 Ko/s.
+//!   en quelques dizaines de formes SVG), utilisables à 3 Ko/s ;
+//! - une **passerelle SIP** ([`sip`]) : un adaptateur téléphonique (ATA)
+//!   s'y enregistre comme un abonné, et on y branche un vrai modem, un vrai
+//!   fax ou un Minitel.
 //!
 //! La configuration est un fichier TOML ([`config`]) ; [`admin`] gère
 //! l'annuaire depuis la ligne de commande.
@@ -32,6 +35,7 @@ pub mod oracle;
 pub mod portail;
 pub mod salon;
 pub mod services;
+pub mod sip;
 pub mod tinyblog;
 pub mod tunnel;
 pub mod verrou;

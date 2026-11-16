@@ -187,3 +187,37 @@ delai_s = 20
 debit_affichage = 1200
 # Sans question pendant ce temps, l'oracle raccroche et libère le modem (s).
 inactivite_s = 300
+
+[sip]
+# Passerelle SIP : un adaptateur téléphonique (ATA : Cisco ATA 191/192,
+# Grandstream HT80x…) s'enregistre comme un abonné, sur le MÊME port UDP
+# que le central (rien d'autre à ouvrir), et ce qu'on branche sur sa prise
+# téléphone (vrai modem, fax, Minitel) appelle les abonnés et les numéros
+# spéciaux, ou est appelé. Audio G.711 (loi A de préférence) en RTP, une
+# trame de 20 ms par paquet, sans transcodage. Voir deploy/README.md § 8 ter.
+# Modifier cette section demande un redémarrage du central.
+actif = false
+# Domaine d'authentification (« realm » du digest SIP). Les empreintes des
+# postes en dépendent : le changer oblige à refaire chaque poste.
+domaine = "v34net"
+# Adresse IP publique annoncée pour l'audio (SDP). Vide : celle de
+# l'interface réseau qui mène au poste, juste sur un VPS ordinaire ; à
+# renseigner si le VPS est lui-même derrière un NAT (adresse IP privée).
+adresse_publique = ""
+# Durée d'enregistrement accordée au plus (s) : l'adaptateur se
+# réenregistre avant, ce qui garde aussi son NAT ouvert.
+enregistrement_max_s = 120
+
+# ── Postes SIP ─────────────────────────────────────────────────────────
+# Une ligne d'adaptateur = un poste : un nom (« User ID » sur l'ATA), un
+# numéro de l'annuaire (comme un abonné : il apparaît dans l'annuaire des
+# applis), et l'empreinte MD5(nom:domaine:mot de passe) qu'exige
+# l'authentification SIP. Ne pas écrire ces blocs à la main :
+#   sudo v34-server ajouter-poste-sip ata1 0142000001   (mot de passe demandé)
+#   sudo v34-server retirer-poste-sip ata1
+# fai = false : pas d'accès au FAI (ni à l'oracle s'il lui est réservé).
+#
+# [[postes_sip]]
+# nom = "ata1"
+# numero = "0142000001"
+# empreinte = "sip-md5$v34net$<32 chiffres hexadécimaux>"

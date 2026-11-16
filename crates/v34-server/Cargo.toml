@@ -22,6 +22,8 @@ v34-net = { workspace = true }
 serde = { workspace = true }
 toml = "1"
 sha2 = "0.10"
+# Passerelle SIP : authentification « digest » (MD5, imposé par RFC 3261)
+md-5 = "0.10"
 # Navigateur « web 1998 » (hôte virtuel http://web1998/) : client HTTP(S)
 # en rustls (pas d'OpenSSL), analyse HTML, conversion d'images en GIF.
 ureq = { version = "2.12", default-features = false, features = ["tls", "gzip"] }

@@ -20,6 +20,11 @@ USAGE :
         clavier (ou lu sur l'entrée standard si ce n'est pas un terminal)
   v34-server retirer-abonne NOM [--config CHEMIN]
   v34-server liste-abonnes [--config CHEMIN]
+  v34-server ajouter-poste-sip NOM NUMERO [--config CHEMIN]
+        ajoute (ou met à jour) un poste SIP : une ligne d'adaptateur
+        téléphonique (ATA), qui s'enregistre avec NOM comme « User ID » et
+        ce mot de passe (demandé au clavier) ; passerelle : [sip] actif = true
+  v34-server retirer-poste-sip NOM [--config CHEMIN]
   v34-server --example-config             affiche une configuration commentée
   v34-server --version
 
@@ -75,6 +80,10 @@ fn main() -> ExitCode {
             println!("Abonné {nom} retiré de {}.", path.display());
         }),
         ["liste-abonnes"] => list(&path),
+        ["ajouter-poste-sip", nom, numero] => add_sip(&path, nom, numero),
+        ["retirer-poste-sip", nom] => admin::remove_sip_line(&path, nom).map(|()| {
+            println!("Poste SIP {nom} retiré de {}.", path.display());
+        }),
         _ => return usage_error("commande inconnue ou arguments manquants"),
     };
     match res {
@@ -102,6 +111,9 @@ fn check(path: &std::path::Path) -> Result<(), String> {
         cfg.abonnes.len(),
         specials(&cfg)
     );
+    if cfg.sip.actif {
+        println!("Passerelle SIP active (domaine « {} ») : {} poste(s)", cfg.sip.domaine, cfg.postes_sip.len());
+    }
     if cfg.services().iter().any(|(_, k)| k == "oracle") {
         // (le central tourne sous l'utilisateur v34 : la clé doit lui être lisible)
         match v34_server::oracle::lire_cle(&cfg.oracle.fichier_cle) {
@@ -136,6 +148,25 @@ fn add(path: &std::path::Path, nom: &str, numero: &str, iterations: u32) -> Resu
     Ok(())
 }
 
+fn add_sip(path: &std::path::Path, nom: &str, numero: &str) -> Result<(), String> {
+    let pw = admin::read_password(&format!("Mot de passe SIP de {nom} : "), true)?;
+    if pw.chars().count() < 8 {
+        return Err("mot de passe trop court (8 caractères au moins)".into());
+    }
+    if pw.chars().any(|c| c.is_control()) {
+        return Err("mot de passe invalide (caractères de contrôle)".into());
+    }
+    let (existed, cfg) = admin::add_sip_line(path, nom, numero, &pw)?;
+    println!("Poste SIP {nom} {} au {numero} dans {}.", if existed { "mis à jour" } else { "ajouté" }, path.display());
+    println!("Sur l'adaptateur : User ID « {nom} », ce mot de passe, proxy <adresse du central>:{}.", cfg.listen_addr().map(|a| a.port()).unwrap_or(3434));
+    if !cfg.sip.actif {
+        println!("Attention : la passerelle est éteinte. Mettez « actif = true » dans [sip], puis redémarrez le central.");
+    } else {
+        println!("Un central en marche recharge l'annuaire automatiquement.");
+    }
+    Ok(())
+}
+
 fn list(path: &std::path::Path) -> Result<(), String> {
     let cfg = admin::list_subscribers(path)?;
     if cfg.abonnes.is_empty() {
@@ -144,6 +175,12 @@ fn list(path: &std::path::Path) -> Result<(), String> {
         println!("{:<32} NUMÉRO", "NOM");
         for a in &cfg.abonnes {
             println!("{:<32} {}", a.nom, a.numero);
+        }
+    }
+    if !cfg.postes_sip.is_empty() {
+        println!("\n{:<32} NUMÉRO (postes SIP{})", "NOM", if cfg.sip.actif { "" } else { ", passerelle éteinte" });
+        for p in &cfg.postes_sip {
+            println!("{:<32} {}", p.nom, p.numero);
         }
     }
     println!("Numéros spéciaux : {}", specials(&cfg));
@@ -192,6 +229,9 @@ fn run(path: PathBuf) -> ExitCode {
         cfg.abonnes.len(),
         specials(&cfg)
     );
+    if cfg.sip.actif {
+        info!("passerelle SIP sur le même port (domaine « {} ») : {} poste(s)", cfg.sip.domaine, cfg.postes_sip.len());
+    }
     server.run();
     ExitCode::SUCCESS
 }

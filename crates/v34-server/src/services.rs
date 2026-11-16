@@ -15,6 +15,12 @@
 //!
 //! Pour ajouter un service (BBS…) : une variante de [`Service`] dans la
 //! configuration et un thread qui consomme/produit des octets ici.
+//!
+//! Face à un poste SIP (un vrai modem derrière un adaptateur), le modem
+//! émet du RTP (une trame par paquet) et suit l'horloge de l'adaptateur :
+//! un quartz matériel ne se cale sur personne, c'est donc au modem
+//! logiciel de traiter ponctuellement un bloc de plus ou de moins
+//! ([`v34_net::Pacer`]), comme l'appli face au central.
 
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
@@ -55,6 +61,13 @@ pub enum ModemNotice {
     Ended { call_id: u32, reason: HangupReason, detail: String },
 }
 
+/// L'appelant est un poste SIP : RTP en loi `law`, type de charge `pt`.
+#[derive(Clone, Copy, Debug)]
+pub struct RtpOut {
+    pub law: Codec,
+    pub pt: u8,
+}
+
 pub struct ModemCall {
     pub call_id: u32,
     pub service: Service,
@@ -62,6 +75,8 @@ pub struct ModemCall {
     pub caller: String,
     pub caller_number: String,
     pub peer: SocketAddr,
+    /// Appelant SIP (RTP, cadence calée sur la sienne) ; None : l'appli
+    pub rtp: Option<RtpOut>,
     pub sock: UdpSocket,
     pub max_rate: u32,
     /// 56k (V.90) proposé, et son débit descendant maximal
@@ -127,7 +142,11 @@ fn run(call: ModemCall, rx: Receiver<ModemInput>) -> (HangupReason, String) {
     let mut jb = JitterBuffer::new(MODEM_JITTER_MS, Concealment::Modem);
     let mut sim = call.line.clone().map(LineSim::new);
     let mut peer = call.peer;
-    let mut codec = Codec::Alaw;
+    let mut codec = call.rtp.map_or(Codec::Alaw, |r| r.law);
+    let mut numbering = call.rtp.map(|r| crate::sip::rtp::Numbering::new(r.pt));
+    // l'adaptateur n'a qu'un petit tampon fixe : on garde le nôtre (donc
+    // le sien) à son niveau de départ, à une trame près
+    let mut pacer = v34_net::Pacer::anchored(1.0);
     let (mut seq, mut ts) = (0u32, 0u32);
     let mut tx = vec![0.0f32; FRAME_SAMPLES];
     let mut tx_line = vec![0.0f32; FRAME_SAMPLES];
@@ -172,13 +191,18 @@ fn run(call: ModemCall, rx: Receiver<ModemInput>) -> (HangupReason, String) {
             }
             None => &tx,
         };
-        // chaque paquet répète les deux trames précédentes : un paquet perdu
-        // en route est rattrapé avec le suivant (le 56k ne supporte pas un
-        // trou de 20 ms)
-        let pkt = Packet { codec, call_id: call.call_id, seq, timestamp: ts, samples: out.to_vec(), backup: tx_hist.iter().cloned().collect() };
-        let _ = call.sock.send_to(&pkt.encode(), peer);
-        tx_hist.push_front(out.to_vec());
-        tx_hist.truncate(v34_net::packet::BACKUP_FRAMES);
+        if let Some(n) = numbering.as_mut() {
+            // poste SIP : une seule trame par paquet RTP
+            let _ = call.sock.send_to(&n.packet(codec, seq, ts, out), peer);
+        } else {
+            // chaque paquet répète les deux trames précédentes : un paquet perdu
+            // en route est rattrapé avec le suivant (le 56k ne supporte pas un
+            // trou de 20 ms)
+            let pkt = Packet { codec, call_id: call.call_id, seq, timestamp: ts, samples: out.to_vec(), backup: tx_hist.iter().cloned().collect() };
+            let _ = call.sock.send_to(&pkt.encode(), peer);
+            tx_hist.push_front(out.to_vec());
+            tx_hist.truncate(v34_net::packet::BACKUP_FRAMES);
+        }
         seq = seq.wrapping_add(1);
         ts = ts.wrapping_add(FRAME_SAMPLES as u32);
 
@@ -268,8 +292,13 @@ fn run(call: ModemCall, rx: Receiver<ModemInput>) -> (HangupReason, String) {
             break (HangupReason::Failure, "pas de porteuse".into());
         }
 
-        // 5. cadence de 20 ms
-        next += PERIOD;
+        // 5. cadence de 20 ms (face à un poste SIP : calée sur son horloge,
+        // +1 = un bloc de plus tout de suite, −1 = un de moins)
+        let adj = if numbering.is_some() { pacer.update(jb.level()) } else { 0.0 };
+        if adj != 0.0 {
+            debug!("{label} : cadence {} (tampon {:?})", if adj > 0.0 { "+1 bloc" } else { "−1 bloc" }, jb.level());
+        }
+        next += PERIOD.mul_f64((1.0 - adj).max(0.0));
         let now = Instant::now();
         if next > now {
             std::thread::sleep(next - now);

@@ -8,7 +8,9 @@ s'appellent ; le central relaie l'audio (G.711 sur UDP). Il héberge aussi des
 V.90** : raccordé en numérique au central, son modem joue le côté numérique,
 jusqu'à 56 000 bit/s vers l'abonné), une **ligne de test** en écho
 (`0800000000`), et **3615 ORACLE** (`0836672253`), une IA qui se croit en
-1998 (voir § 8 bis).
+1998 (voir § 8 bis). Une **passerelle SIP** y raccorde aussi de vrais
+appareils : un adaptateur téléphonique (ATA) s'enregistre comme un abonné,
+et on branche sur sa prise un vrai modem, un fax ou un Minitel (§ 8 ter).
 
 ```text
  PC A (v34-cli / appli)                VPS dialup.tinyverse.fr                PC B
@@ -234,6 +236,20 @@ sudo systemctl restart v34-server
 (ou `sudo ./deploy/install.sh`, qui fait la même chose et garde la config).
 Les clients se réenregistrent tout seuls après le redémarrage (keepalive).
 
+**Sans Rust sur le VPS** : compiler sur un PC avec Docker, dans une Debian 12
+(le binaire tourne alors sur Debian 12 et 13, quelle que soit la glibc du PC),
+puis l'installer avec le script :
+
+```sh
+# sur le PC, à la racine du dépôt
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/src -w /src \
+  -e CARGO_HOME=/src/target/docker-cargo -e CARGO_TARGET_DIR=/src/target/docker \
+  rust:1-slim-bookworm cargo build --release --locked -p v34-server --bin v34-server
+scp target/docker/release/v34-server vps:/tmp/v34-server
+# sur le VPS, dans le dépôt
+sudo ./deploy/install.sh /tmp/v34-server
+```
+
 La configuration existante n'est jamais remplacée : une nouveauté de
 `deploy/config.example.toml` s'y recopie à la main. Notamment :
 - **Numéro du FAI** : `0836154286` depuis la version 0.1.2 (avant :
@@ -248,6 +264,11 @@ La configuration existante n'est jamais remplacée : une nouveauté de
 - **3615 ORACLE** : ajouter le bloc `[[numeros_speciaux]]` `0836672253` /
   `oracle` (la section `[oracle]` est facultative : valeurs par défaut) et
   poser la clé d'API (voir § 8 bis).
+- **Passerelle SIP** (0.1.7) : section `[sip]` et postes `[[postes_sip]]`
+  (voir § 8 ter). **Le site d'inscription lit le même `config.toml`** et
+  refuse les sections qu'il ne connaît pas : reconstruire son conteneur à
+  partir du même commit que le central (`docker compose up -d --build`)
+  AVANT d'ajouter `[sip]`, sinon le site ne démarre plus.
 
 ## 6. Journaux
 
@@ -359,6 +380,78 @@ Vie privée : les questions partent chez OpenRouter et le fournisseur du
 modèle ; le central ne journalise que des compteurs (jetons consommés en
 `debug`) et oublie la conversation au raccroché.
 
+## 8 ter. Passerelle SIP : un vrai modem, un fax, un Minitel
+
+Un adaptateur téléphonique (ATA : Cisco ATA 191/192 multiplateforme,
+Grandstream HT80x…) parle SIP et RTP. Il s'enregistre auprès du central
+comme un **poste SIP**, un abonné avec son numéro, et ce qu'on branche sur
+sa prise téléphone (FXS) appelle les abonnés et les numéros spéciaux (FAI,
+3615, ligne de test, numéros cachés), ou est appelé par eux :
+
+```text
+ vrai modem ── prise ── ATA ── SIP + RTP (G.711) ──UDP 3434──► central ──► FAI, 3615, appli d'un abonné…
+```
+
+Tout passe par le **même port UDP 3434** (le premier octet distingue l'audio
+du central, sa signalisation, le RTP et le SIP) : rien à ouvrir de plus, et
+le port 5060, que les robots scrutent et que l'« ALG SIP » des box abîme,
+n'est pas utilisé.
+
+**Sur le VPS** :
+
+```sh
+# 1. dans /etc/v34-server/config.toml (voir l'exemple) :
+#      [sip]
+#      actif = true
+sudo v34-server ajouter-poste-sip ata1 0142000001    # mot de passe SIP demandé
+sudo systemctl restart v34-server                    # (pour la section [sip])
+journalctl -u v34-server -f    # « poste SIP ata1 enregistré au 0142000001 depuis … »
+```
+
+Les postes suivants s'ajoutent à chaud, comme les abonnés. `serveur.journal
+= "debug"` journalise chaque message SIP (utile pour régler l'adaptateur)
+et les corrections de cadence.
+
+**Sur l'adaptateur** (noms des réglages d'un Cisco ATA 191/192 en firmware
+multiplateforme 11.x, vue avancée, onglet *Voice* ; ailleurs, des noms
+voisins) :
+
+| Réglage | Valeur | Pourquoi |
+|---|---|---|
+| *Line 1 › Proxy* | `dialup.tinyverse.fr:3434` | le port du central |
+| *Register* / *Make Call Without Reg* / *Register Expires* | yes / no / 120 | |
+| *User ID* / *Password* / *Use Auth ID* | `ata1` / mot de passe du poste / no | |
+| *Preferred Codec* / *Use Pref Codec Only* | G711a / yes | pas de compression pour un modem |
+| *SIP › RTP Packet Size* | 0.020 | souvent 0.030 d'usine ; le central recoupe, mais 20 ms est le format natif |
+| *Silence Supp Enable* / *Echo Canc Enable* | no / no | le modem a son propre annuleur d'écho |
+| *FAX Enable T38* / *FAX Passthru Method* | no / None | la ligne reste en G.711 (le central refuse T.38) |
+| *Network Jitter Level* / *Jitter Buffer Adjustment* | very high / disable | tampon fixe : pas de glissement |
+| *Modem Line* (si présent) | yes | |
+| *Regional › FXS Port Input/Output Gain* | 0 / 0 | indispensable pour le 56K |
+| *NAT Keep Alive Enable* / *Msg* / *Dest* ; *SIP › NAT Keep Alive Intvl* | yes / `$NOTIFY` / `$PROXY` ; 15 | garde ouvert le NAT de la box |
+| *Dial Plan* | `(0xxxxxxxxx\|[1-9]x.)` | les numéros à 10 chiffres partent tout de suite |
+| *Call Waiting Serv* ; *User 1 › CW Setting* | no ; no | le bip du double appel coupe le modem |
+
+Deuxième ligne : même chose avec *SIP Port* 5061 et un autre poste. Sur le
+modem : `ATX3` s'il ne reconnaît pas la tonalité de l'adaptateur, puis
+`ATDT0800000000` (ligne de test) pour un premier essai.
+
+**Ce qu'on peut attendre** : V.34 à travers l'ATA ; le 56K (V.90) vers le
+FAI est possible (le convertisseur de l'ATA joue le rôle de la carte
+d'abonné du central) mais dépend de sa fidélité (gains, filtres) ; un fax
+G3 avec la TÉLÉCOPIE de l'appli (V.29) ; un Minitel avec le 3615 (V.23).
+L'ATA n'envoie qu'une copie de chaque trame : un paquet perdu entre la box
+et le VPS est un vrai trou dans la ligne (réapprentissage, ou pire).
+
+**Comment ça marche** : le central traite le poste comme un abonné. Le
+dialogue SIP (REGISTER et INVITE authentifiés en digest MD5, 100/180/200,
+ACK, BYE, CANCEL, re-INVITE) est traduit en messages du central, et l'audio
+RTP en trames du central, une à une, sans décoder ni transcoder quand les
+deux bouts sont en loi A. L'horloge est celle de l'ATA (un quartz ne se
+cale sur personne) : les modems logiciels, celui de l'appli comme ceux du
+central, traitent ponctuellement un bloc de plus ou de moins pour la suivre
+(`v34_net::Pacer`), sans jamais inventer ni jeter un échantillon.
+
 ## 9. Sécurité
 
 - **Pas de relais ouvert** : seul l'audio d'un abonné authentifié, venant de
@@ -370,7 +463,14 @@ modèle ; le central ne journalise que des compteurs (jetons consommés en
   « trop de tentatives » (`central.echecs_max`, `echecs_fenetre_s`). Choisir
   des mots de passe longs.
 - **Pas d'amplification** : les seules réponses à un inconnu (CHALLENGE,
-  AUTH_FAIL) sont plus petites que sa requête.
+  AUTH_FAIL ; en SIP, défis 401/407 et refus) sont plus petites que sa
+  requête, sinon le central se tait.
+- **Postes SIP** : REGISTER et INVITE exigent l'authentification digest
+  (nonce sans état lié à l'adresse IP, valable 5 min) ; un échec compte dans
+  la même limitation par IP que l'appli. Le fichier ne garde que
+  MD5(nom:domaine:mot de passe) : il ne révèle pas le mot de passe mais
+  suffit pour s'authentifier en SIP (protéger `config.toml` comme avant).
+  Le RTP d'un poste n'est accepté que de l'adresse IP de sa signalisation.
 - **Tunnel FAI** : ports 80/443 seulement par défaut ; adresses privées,
   locales et réservées refusées APRÈS résolution DNS (127/8, 10/8,
   172.16/12, 192.168/16, 169.254/16 dont les métadonnées cloud, 100.64/10,
@@ -403,6 +503,10 @@ modèle ; le central ne journalise que des compteurs (jetons consommés en
   AUTH_FAIL ; puis messages étiquetés HMAC-SHA256 (clé de session) :
   KEEPALIVE, DIAL, RINGING, RING, ANSWER, HANGUP, BUSY, UNKNOWN_NUMBER,
   UNREGISTER, ACK. Retransmission jusqu'à acquittement (0,3 s → 2 s, 8 essais).
+- **SIP** (même port, RFC 3261 sur UDP, sous-ensemble) : REGISTER, INVITE,
+  ACK, BYE, CANCEL, re-INVITE, OPTIONS/NOTIFY (keepalive) ; digest MD5 ;
+  SDP G.711 loi A (sinon µ) à 20 ms ; RTP sur le port du central, destination
+  calée sur la source réelle des paquets du poste (traversée du NAT).
 - **Tunnel FAI** (`v34_net::tunnel`, dans les octets du modem) : bannière
   texte, marqueur `TUNNEL`, puis trames `A5 | type | seq | flux | long. |
   charge | CRC-16` : HELLO, OPEN(hôte, port), OPEN_OK, OPEN_FAIL, DATA, CLOSE.
@@ -418,6 +522,10 @@ modèle ; le central ne journalise que des compteurs (jetons consommés en
   transmission détectée coupe toutes les connexions en cours.
 - Le simulateur de ligne du central (`central.simulateur_ligne`) n'applique
   pas l'écho local : il reste côté client (`--preset`).
+- Passerelle SIP : UDP seulement (ni TCP ni TLS/SRTP), pas de T.38, pas de
+  PRACK ni de minuteurs de session ; un poste n'a qu'un appel à la fois.
+  Deux ATA qui s'appellent n'ont personne pour suivre l'horloge de l'autre :
+  leurs propres tampons font ce qu'ils peuvent.
 - 56K (V.90) seulement avec le FAI, seul raccordé en numérique : entre deux
   abonnés, c'est du V.34 (33 600 bit/s au plus). Le 56K se rabat en V.34 sur
   une ligne trop bruitée ou qui décale les fréquences.
