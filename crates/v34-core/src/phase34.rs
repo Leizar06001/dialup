@@ -179,6 +179,10 @@ pub(crate) struct P34 {
     dec: Option<DataDecoder>,
     /// Couche liaison fiable (inspirée de V.42 / LAPM) sur le tuyau de bits
     link: Lapm,
+    /// Rôle V.42 de notre côté (appelant = originator, §7.2.1.1). Entre nos
+    /// modems, celui des phases 2 à 4 (inversé en 56k) ; face à un vrai
+    /// modem, le sens de l'appel.
+    v42_originator: bool,
     mp_refined: bool,
     // Renégociation, raccrochage propre, surveillance de la qualité
     renegotiating: bool,
@@ -283,6 +287,7 @@ impl P34 {
             enc: None,
             dec: None,
             link: Lapm::new(!answer),
+            v42_originator: !answer,
             mp_refined: false,
             renegotiating: false,
             cleardown: false,
@@ -1160,7 +1165,7 @@ impl P34 {
 
     /// Récupère la couche liaison (pour la conserver pendant un réentraînement).
     pub fn take_link(&mut self) -> Lapm {
-        let mut fresh = Lapm::new(!self.answer);
+        let mut fresh = Lapm::new(self.v42_originator);
         fresh.set_standard(!self.crc_legacy);
         std::mem::replace(&mut self.link, fresh)
     }
@@ -1399,6 +1404,20 @@ impl Modem {
 
     /// Phase 3 du V.90 : le modem analogique émet S, S̄, PP, TRN, Ja ;
     /// le numérique les reçoit puis répond en PCM (voir `phase34/v90.rs`).
+    /// Couche V.42 d'une nouvelle phase 3. Un vrai modem (CRC dans l'ordre
+    /// de la norme) parle V.42 strict, et son rôle suit le sens de l'appel :
+    /// en 56k, les phases 2 à 4 inversent les rôles (et un repli V.34 les
+    /// garde), mais un U.S. Robotics qui appelle reste l'appelant V.42 — il
+    /// émet l'ODP et attend l'ADP ; sans lui, « CONNECT …/V34/NONE ». Entre
+    /// nos modems (appli 0.1.8 et avant), rien ne change.
+    fn v42_setup(&self, p: &mut P34) {
+        if !self.crc_legacy {
+            p.v42_originator = self.role == Role::Call;
+            p.link = Lapm::new(p.v42_originator);
+        }
+        p.link.set_standard(!self.crc_legacy);
+    }
+
     fn start_phase3_v90(&mut self) {
         self.set_phase(Phase::Phase3);
         let answer = self.p2_answer();
@@ -1422,8 +1441,7 @@ impl Modem {
         let mut p = P34::new(answer, up, high, up, high, mp);
         p.crc_legacy = self.crc_legacy;
         p.crc_mode = self.cfg.crc_mode;
-        // un vrai modem (CRC dans l'ordre de la norme) parle V.42 strict
-        p.link.set_standard(!self.crc_legacy);
+        self.v42_setup(&mut p);
         p.ec_wait = 0;
         p.n = self.n;
         p.t_step = self.n;
@@ -1494,8 +1512,7 @@ impl Modem {
         let mut p = P34::new(answer, sr_tx, tx_high, sr_rx, rx_high, mp);
         p.crc_legacy = self.crc_legacy;
         p.crc_mode = self.cfg.crc_mode;
-        // un vrai modem (CRC dans l'ordre de la norme) parle V.42 strict
-        p.link.set_standard(!self.crc_legacy);
+        self.v42_setup(&mut p);
         // Long aller-retour (Internet, adaptateur téléphonique) : un écho
         // lointain est possible, on rallonge notre TRN de 0,8 s pour que son
         // annuleur ait le temps d'apprendre (l'autre attend notre J)

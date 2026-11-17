@@ -47,7 +47,8 @@ USAGE :
 Via le central téléphonique (v34-server, défaut dialup.tinyverse.fr:3434) :
   v34-cli register [--server HOTE:PORT] --user NOM [--password MDP] [--rings N]
         S'enregistre (le central attribue le numéro), attend les appels
-        et décroche après N sonneries (défaut 1).
+        et décroche après N sonneries (défaut 1). --numerique oui : répond
+        comme le modem du FAI (raccordé en numérique : 56k proposé).
   v34-cli dial [--server HOTE:PORT] --user NOM [--password MDP] <numéro>
         Appelle <numéro>. Si c'est le FAI (annoncé par le central, ou
         --isp NUM), lance aussi un proxy local SOCKS5 / HTTP CONNECT
@@ -144,6 +145,9 @@ impl Args {
         cfg.max_rate_pcm = self.num("max-rate-56k", cfg.max_rate_pcm)?;
         // morse (DIP 4 de l'appli) : --morse oui
         cfg.morse = self.get("morse") == Some("oui");
+        // --numerique oui : raccordé en numérique, comme le modem du FAI du
+        // central (en réponse, il joue le modem numérique du 56k)
+        cfg.digital = self.get("numerique") == Some("oui");
         Ok(cfg)
     }
 }

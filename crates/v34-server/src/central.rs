@@ -803,6 +803,12 @@ impl Server {
                 return self.end_call(call_id, None, HangupReason::Failure);
             }
         };
+        // Pas de 56k pour un vrai modem derrière un adaptateur téléphonique :
+        // un U.S. Robotics qui l'essaie s'arrête en phase 3 (le flux de l'ATA
+        // s'interrompt), réentraîne, et ne retombe en V.34 qu'au bout d'une
+        // vingtaine de secondes, quand il ne raccroche pas avant. En V.34
+        // d'emblée, la connexion aboutit (CONNECT …/ARQ/V34/LAPM).
+        let v90 = self.cfg.modems.v90 && rtp.is_none();
         let modem_call = ModemCall {
             call_id,
             service,
@@ -812,7 +818,7 @@ impl Server {
             rtp,
             sock,
             max_rate: self.cfg.modems.debit_max,
-            v90: self.cfg.modems.v90,
+            v90,
             max_rate_pcm: self.cfg.modems.debit_max_56k,
             carrier_timeout: Duration::from_secs(self.cfg.modems.delai_porteuse_s.max(10)),
             line: self.cfg.line_params().ok().flatten(),
