@@ -447,6 +447,28 @@ impl Modem {
                         self.t_mark = at;
                         self.goto(St::C2Rev2Sched);
                     }
+                } else if self.tone_on == 0
+                    && self.pending_rev.is_none()
+                    && self.tone_drop_at > self.t_st
+                    && (20 * MS..=200 * MS).contains(&self.tone_run_prev)
+                    && (12 * MS..20 * MS).contains(&self.n.saturating_sub(self.tone_drop_at))
+                {
+                    // §11.2.1.2.6 : ton A 50 ms, inversion, encore 10 ms, puis
+                    // silence. Derrière un adaptateur téléphonique, ces 10 ms
+                    // arrivent écrasées (25 dB plus bas, vu avec un U.S.
+                    // Robotics) : le ton s'éteint à l'inversion, que le
+                    // détecteur ne voit pas. Une rafale de A brève qui
+                    // s'éteint, c'est elle : on y répond.
+                    let t = self.tone_drop_at;
+                    let ms = self.tone_run_prev / MS;
+                    self.log(LogLevel::Detail, &format!("Rafale de ton A ({ms} ms) éteinte sans inversion visible : c'est l'inversion"));
+                    self.rx_name("Ā");
+                    let at = (t + REV_DELAY).max(self.n + MS);
+                    if let TxMode::Tone(tt) = &mut self.tx.mode {
+                        tt.schedule_reversal(at);
+                    }
+                    self.t_mark = at;
+                    self.goto(St::C2Rev2Sched);
                 } else if !self.b_relance && self.elapsed() > self.rtd.unwrap_or(0) + 450 * MS && self.tone_for(300) {
                     // Son ton A dure sans s'inverser alors qu'il entend notre B
                     // depuis longtemps : il l'a raté (parti avant la fin de son
