@@ -68,8 +68,10 @@ const UPLINK_STALE: Duration = Duration::from_millis(1000);
 const RX_GAP_LOG: Duration = Duration::from_millis(200);
 /// Rattrapage maximal d'un coup (trames)
 const MAX_CATCHUP: i32 = 50;
-/// Poste revenu derrière notre envoi de plus de tant de trames : recalage
+/// Poste revenu derrière notre envoi de plus de tant de trames, pendant au
+/// moins tant : recalage (une gigue passagère se rattrape toute seule)
 const RESYNC_BEHIND: i32 = 5;
+const RESYNC_AFTER: Duration = Duration::from_millis(400);
 
 /// Ce qu'un abonné SIP a de particulier (voir [`Lien::Sip`]).
 pub(super) struct Poste {
@@ -208,6 +210,8 @@ struct Leg {
     /// trames cadencées, envoyées aussitôt (poste muet), sautées (en
     /// retard, rattrapage), recalages (le poste a repris derrière nous)
     tx_bilan: [u32; 5],
+    /// Depuis quand le poste est revenu derrière nous (voir sip_pump)
+    behind_at: Option<Instant>,
     /// Envoi cadencé par le poste (pas avec un modem du central, qui
     /// envoie lui-même son RTP à la cadence du poste)
     paced: bool,
@@ -264,6 +268,7 @@ impl Leg {
             rx_ts: 0,
             tx_mark: 0,
             tx_bilan: [0; 5],
+            behind_at: None,
             paced: false,
             reframer: rtp::Reframer::default(),
             numbering: rtp::Numbering::new(8),
@@ -1239,14 +1244,28 @@ impl Server {
             let target = last.wrapping_add((since.as_millis() / 20) as u32);
             let mut due = target.wrapping_sub(leg.tx_mark) as i32;
             if due < -RESYNC_BEHIND {
-                // Le poste a repris derrière nous : son flux s'était arrêté
-                // (pause de l'ATA), on avait continué au jugé, et il repart
-                // du numéro suivant. Sans recalage, sa cadence ne nous
-                // rattraperait jamais : plus rien ne lui serait envoyé.
-                leg.tx_mark = target;
-                leg.tx_bilan[4] += 1;
+                // Le poste est derrière nous. Le plus souvent, un de ses
+                // paquets a pris du retard (gigue) et la rafale qui suit
+                // rattrape tout : recaler alors ferait sauter notre flux de
+                // quelques trames — le modem d'en face réentraîne, et l'écho
+                // qui nous revient de l'ATA ne correspond plus à notre
+                // annuleur. Mais si son flux s'était arrêté (pause de l'ATA)
+                // et repart du numéro suivant, il ne nous rattrapera jamais :
+                // plus rien ne lui serait envoyé. Recalage seulement si ça
+                // dure.
+                match leg.behind_at {
+                    None => leg.behind_at = Some(now),
+                    Some(t0) if now.saturating_duration_since(t0) >= RESYNC_AFTER => {
+                        info!("poste SIP {} : recalage de notre envoi (le poste est {} trames derrière depuis {} ms)", leg.name, -due, now.saturating_duration_since(t0).as_millis());
+                        leg.tx_mark = target;
+                        leg.tx_bilan[4] += 1;
+                        leg.behind_at = None;
+                    }
+                    Some(_) => {}
+                }
                 continue;
             }
+            leg.behind_at = None;
             if due <= 0 {
                 continue;
             }
