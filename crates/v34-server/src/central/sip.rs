@@ -201,6 +201,7 @@ struct Leg {
     /// flux qui s'interrompt plus de 200 ms est journalisé)
     rx_at: Option<Instant>,
     rx_seq: u16,
+    rx_ts: u32,
     /// Trame du poste jusqu'à laquelle on a déjà envoyé la nôtre
     tx_mark: u32,
     /// Bilan de ce qu'on a envoyé au poste (journalisé en fin d'appel) :
@@ -260,6 +261,7 @@ impl Leg {
             up_at: None,
             rx_at: None,
             rx_seq: 0,
+            rx_ts: 0,
             tx_mark: 0,
             tx_bilan: [0; 5],
             paced: false,
@@ -1130,18 +1132,27 @@ impl Server {
             return;
         };
         let leg = &mut st.legs[i];
-        // Diagnostic : le flux du poste s'est-il interrompu ? « +1 » à la
-        // reprise : ses paquets étaient retenus (ils arrivent en rafale) ;
-        // « +N » : perdus en route.
+        // Diagnostic : le flux du poste s'est-il interrompu ? Numéro « +1 »
+        // et horodatage « +20 ms » à la reprise : son flux s'est figé (les
+        // paquets suivants arrivent en rafale) ; horodatage qui saute d'autant
+        // que le trou : il s'est tu (suppression de silence) ; « +N » : perdus.
         let t = Instant::now();
         if let Some(at) = leg.rx_at {
             let gap = t.saturating_duration_since(at);
             if gap > RX_GAP_LOG {
-                info!("poste SIP {} : rien reçu pendant {} ms, puis le paquet +{}", leg.name, gap.as_millis(), h.seq.wrapping_sub(leg.rx_seq));
+                info!(
+                    "poste SIP {} : rien reçu pendant {} ms, puis le paquet +{} (horodatage +{} ms, type {})",
+                    leg.name,
+                    gap.as_millis(),
+                    h.seq.wrapping_sub(leg.rx_seq),
+                    h.ts.wrapping_sub(leg.rx_ts) / 8,
+                    h.pt
+                );
             }
         }
         leg.rx_at = Some(t);
         leg.rx_seq = h.seq;
+        leg.rx_ts = h.ts;
         if !leg.latched {
             if leg.rtp_dest != Some(from) {
                 debug!("poste SIP {} : audio reçu de {from}", leg.name);
