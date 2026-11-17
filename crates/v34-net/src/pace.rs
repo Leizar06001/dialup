@@ -19,6 +19,14 @@ const COOLDOWN: u32 = 10;
 const SMOOTH: f32 = 0.05;
 /// Mode ancré : tics de lecture avant de relever le niveau de référence (1 s)
 const SETTLE: u32 = 50;
+/// Mode ancré, une fois la référence prise : lissage plus lent (constante
+/// de temps ~1 s). Face à un adaptateur, la marge n'est que d'une trame :
+/// avec le lissage ordinaire, un trou de 120 ms suivi de sa rafale suffisait
+/// à décaler notre envoi de 20 ms, puis de 20 ms en sens inverse une
+/// seconde plus tard, et le vrai modem derrière l'adaptateur réentraînait.
+/// La dérive d'un quartz (moins de 100 ppm, une trame en plus de 3 min)
+/// est suivie tout aussi bien.
+const ANCHORED_SMOOTH: f32 = 0.02;
 
 #[derive(Clone, Debug)]
 pub struct Pacer {
@@ -73,8 +81,9 @@ impl Pacer {
         if depth == 0 {
             return 0.0;
         }
+        let smooth = if self.anchored && self.reference.is_some() { ANCHORED_SMOOTH } else { SMOOTH };
         let mut avg = self.avg.unwrap_or(depth as f32);
-        avg += (depth as f32 - avg) * SMOOTH;
+        avg += (depth as f32 - avg) * smooth;
         self.avg = Some(avg);
         let reference = match (self.anchored, self.reference) {
             (false, _) => target as f32,
@@ -170,6 +179,31 @@ mod tests {
                 _ => 7,
             };
             c += p.update(Some((depth, 7))).abs();
+        }
+        assert_eq!(c, 0.0);
+    }
+
+    #[test]
+    fn anchored_ignores_a_short_hole() {
+        // Vu face à un Cisco ATA : le tampon tombe de 7 à 2 trames (trou de
+        // 120 ms, puis la rafale), avec un paquet en retard de temps en
+        // temps. Ancré à une trame près, aucune correction : chacune
+        // décalerait notre envoi de 20 ms.
+        let mut p = Pacer::anchored(1.0);
+        let (mut depth, mut owed, mut c) = (7i32, 0i32, 0.0);
+        let mut x = 12345u32;
+        for t in 0..6000 {
+            x = x.wrapping_mul(1_103_515_245).wrapping_add(12345);
+            let late = (x >> 16) % 20 == 0;
+            if t % 300 >= 200 && t % 300 < 206 || late {
+                owed += 1;
+            } else {
+                depth += 1 + owed;
+                owed = 0;
+            }
+            let adj = p.update(Some((depth.max(0) as usize, 7)));
+            c += adj.abs();
+            depth -= 1 + adj as i32;
         }
         assert_eq!(c, 0.0);
     }
