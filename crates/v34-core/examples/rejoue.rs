@@ -4,7 +4,12 @@
 //! se comporte comme l'original. Pour déboguer hors ligne une session avec
 //! un vrai modem, sans le rappeler.
 //!
-//!     cargo run --release -p v34-core --example rejoue -- capture.wav [call|answer] [bloc]
+//!     cargo run --release -p v34-core --example rejoue -- capture.wav [call|answer] [bloc] [voie] [numerique]
+//!
+//! voie : 0 = gauche (ce que le modem enregistré avait reçu, défaut) ;
+//! 1 = droite (ce qu'il avait émis) : rejoue alors côté d'en face ce qu'il
+//! a reçu de nous (ex. le récepteur du FAI : `capture.wav answer 160 1
+//! numerique`). La comparaison d'émission n'a alors pas de sens.
 
 use v34_core::{Modem, ModemCommand, ModemConfig, ModemEvent, Role};
 
@@ -22,8 +27,12 @@ fn main() {
     let path = args.get(1).expect("chemin du WAV");
     let role = if args.get(2).map(String::as_str) == Some("answer") { Role::Answer } else { Role::Call };
     let block: usize = args.get(3).map_or(160, |s| s.parse().unwrap());
-    let (rx, tx_ref) = read_wav(path);
-    let mut modem = Modem::new(role, ModemConfig::default());
+    let voie: usize = args.get(4).map_or(0, |s| s.parse().unwrap());
+    let numerique = args.get(5).map(String::as_str) == Some("numerique");
+    let (left, right) = read_wav(path);
+    let (rx, tx_ref) = if voie == 1 { (right, left) } else { (left, right) };
+    let cfg = ModemConfig { digital: numerique, ..ModemConfig::default() };
+    let mut modem = Modem::new(role, cfg);
     modem.command(if role == Role::Call { ModemCommand::Dial } else { ModemCommand::Answer });
     let mut tx = vec![0.0f32; block];
     let mut diverged = false;
@@ -34,7 +43,7 @@ fn main() {
         let r = &tx_ref[i * block..(i + 1) * block];
         let err: f32 = tx.iter().zip(r).map(|(a, b)| (a - b) * (a - b)).sum::<f32>() / block as f32;
         let pow: f32 = r.iter().map(|b| b * b).sum::<f32>() / block as f32;
-        if !diverged && err > 1e-6 && err > 1e-3 * pow {
+        if voie == 0 && !diverged && err > 1e-6 && err > 1e-3 * pow {
             diverged = true;
             println!("[{ms:8.0} ms] (l'émission rejouée s'écarte de l'originale : {:.1} dB)", 10.0 * (err / pow.max(1e-12)).log10());
         }

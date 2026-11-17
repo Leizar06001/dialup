@@ -451,6 +451,10 @@ impl P34 {
             self.tx_st = TxSt::E;
             self.act(P34Action::Tx("E".into()));
             self.v90_progress();
+            // Les données du FAI ont pu commencer avant notre E (aller-retour
+            // long : tampon de 200 ms, Starlink…) : la connexion se conclut
+            // alors ici, sinon jamais (« poignée de main bloquée (P4Mp) »)
+            self.v90_check_connected();
             return;
         }
         if let Some((bits, ack)) = v.next_seq.take() {

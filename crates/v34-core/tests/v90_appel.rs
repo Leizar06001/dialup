@@ -16,11 +16,16 @@ fn fai() -> ModemConfig {
 }
 
 fn run_with(p: LineParams, abonne: ModemConfig, fai: ModemConfig, seconds: f32, payload: [&[u8]; 2]) -> Run {
+    run_with_lines(p.clone(), p, abonne, fai, seconds, payload)
+}
+
+/// `up` : abonné → FAI ; `p` : FAI → abonné (et les échos).
+fn run_with_lines(up: LineParams, p: LineParams, abonne: ModemConfig, fai: ModemConfig, seconds: f32, payload: [&[u8]; 2]) -> Run {
     let mut call = Modem::new(Role::Call, abonne);
     let mut ans = Modem::new(Role::Answer, fai);
     // le sens montant passe par la boucle locale de l'abonné comme le
     // descendant (le FAI, lui, n'a pas de boucle analogique)
-    let mut c2a = LineSim::new(p.clone());
+    let mut c2a = LineSim::new(up);
     let mut a2c = LineSim::new(p.clone());
     let mut echo_c = EchoPath::new(p.clone());
     // écho du côté du FAI aussi (hybride de la carte d'abonné du central)
@@ -129,6 +134,33 @@ fn connexion_56k() {
         assert_eq!(r.connected[1], Some((down, up)), "{ligne}");
         eprintln!("{ligne} : CONNECT 56k — descendant {down} bit/s, montant {up} bit/s");
     }
+}
+
+/// Longs délais, différents dans chaque sens (tampon de gigue de 200 ms de
+/// l'appli, Starlink…) : le 56k aboutit et les données passent. (L'ordre
+/// « données du FAI avant notre E », qui bloquait l'abonné en P4Mp avec le
+/// central réel, n'apparaît pas dans ce banc où les deux modems avancent
+/// au même pas.)
+#[test]
+fn connexion_56k_aller_retour_long() {
+    let a: Vec<u8> = "Requête de l'abonné vers le FAI. ".repeat(20).into_bytes();
+    let b: Vec<u8> = "Réponse du FAI, page web de 1998. ".repeat(40).into_bytes();
+    let mut bloque = Vec::new();
+    for (up_ms, down_ms) in [(60.0, 200.0), (140.0, 60.0), (100.0, 260.0)] {
+        {
+            let parfaite = LineParams::preset("Parfaite").unwrap();
+            let up = LineParams { delay_ms: up_ms, ..parfaite.clone() };
+            let down = LineParams { delay_ms: down_ms, ..parfaite };
+            let r = run_with_lines(up, down, ModemConfig::default(), fai(), 30.0, [&a, &b]);
+            let dump = r.log.join("\n");
+            let ok = matches!(r.connected[0], Some((_, d)) if d > 33600) && !dump.contains("P4Mp") && r.got[0] == b && r.got[1] == a;
+            eprintln!("montant {up_ms} ms, descendant {down_ms} ms : {}", if ok { "56k" } else { "ÉCHEC" });
+            if !ok {
+                bloque.push((up_ms, down_ms));
+            }
+        }
+    }
+    assert!(bloque.is_empty(), "56k raté pour (montant, descendant) = {bloque:?}");
 }
 
 /// Sans 56k d'un côté ou de l'autre : V.34 classique, rôles normaux.
