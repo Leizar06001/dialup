@@ -14,7 +14,11 @@ fn run(preset: &str, seconds: f32, payload: [&[u8]; 2]) -> Run {
 }
 
 fn run_with(p: LineParams, seconds: f32, payload: [&[u8]; 2]) -> Run {
-    let mut call = Modem::new(Role::Call, ModemConfig::default());
+    run_cfg(p, seconds, payload, ModemConfig::default())
+}
+
+fn run_cfg(p: LineParams, seconds: f32, payload: [&[u8]; 2], call_cfg: ModemConfig) -> Run {
+    let mut call = Modem::new(Role::Call, call_cfg);
     let mut ans = Modem::new(Role::Answer, ModemConfig::default());
     let mut c2a = LineSim::new(p.clone());
     let mut a2c = LineSim::new(p.clone());
@@ -76,6 +80,22 @@ fn data_over_perfect_line() {
 #[test]
 fn data_over_urban_line() {
     check("Urbaine");
+}
+
+#[test]
+fn rate_cap_below_the_symbol_rate_minimum() {
+    // Molette de l'appli sur 2400 bit/s, mais l'appelé choisit 3429 bauds :
+    // le V.34 n'y descend pas sous 4800 bit/s. La MP doit l'annoncer (une MP
+    // à 2400 bit/s y est invalide : le U.S. Robotics raccrochait).
+    let a = b"au plus lent".to_vec();
+    let b = b"bien recu".to_vec();
+    let cfg = ModemConfig { max_rate: 2400, v90: false, ..ModemConfig::default() };
+    let r = run_cfg(LineParams::preset("Parfaite").unwrap(), 25.0, [&a, &b], cfg);
+    let dump = r.log.join("\n");
+    assert_eq!(r.connected[0], Some((4800, 4800)), "{dump}");
+    let mp = r.log.iter().find(|l| l.contains("APPELÉ") && l.contains("MP reçue")).expect("MP de l'appelant");
+    assert!(mp.contains("appelant→appelé 4800 bit/s, appelé→appelant 4800 bit/s"), "{mp}");
+    assert_eq!(r.got[1], a);
 }
 
 #[test]

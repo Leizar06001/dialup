@@ -34,6 +34,12 @@ pub const CARRIER_RATIOS: [((u32, u32), (u32, u32)); 6] = [
 /// Débit max par vitesse de symbole (Table 8), bit/s.
 pub const MAX_RATE_FOR_SR: [u32; 6] = [21600, 26400, 26400, 28800, 31200, 33600];
 
+/// Débit min par vitesse de symbole (Table 8) : 2400 bit/s seulement à
+/// 2400 bauds, 4800 au-delà.
+pub const fn min_rate_for_sr(sr_idx: usize) -> u32 {
+    if sr_idx == 0 { 2400 } else { 4800 }
+}
+
 pub fn carrier_hz(sr_idx: usize, high: bool) -> f64 {
     let (lo, hi) = CARRIER_RATIOS[sr_idx];
     let (d, e) = if high { hi } else { lo };

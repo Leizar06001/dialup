@@ -14,7 +14,7 @@ use crate::info::{Info1a, Info1c};
 use crate::lapm::Lapm;
 use crate::modem::{Modem, St, MS};
 use crate::tx::{ToneTx, TxMode};
-use crate::probe::{carrier_hz, MAX_RATE_FOR_SR, SYMBOL_RATES};
+use crate::probe::{carrier_hz, min_rate_for_sr, MAX_RATE_FOR_SR, SYMBOL_RATES};
 use crate::qamrx::{mu_schedule, PpAligner, QamRx, RxSym, SDetector, SEvent};
 use crate::dsp::Cpx;
 use crate::train::{j_pattern, j_prime_pattern, j_symbols, quarter_point, rate_mask_upto, seq_pp, seq_s, Mp, QamTx, Scrambler, TrainMapper};
@@ -370,7 +370,7 @@ impl P34 {
             // l'égaliseur (plus fiable que la projection du sondage).
             self.mp_refined = true;
             let snr = self.rx.snr_db();
-            let cap = max_rate_for_snr(self.sr_rx_idx, snr, 1.5).max(if self.sr_rx_idx == 0 { 2400 } else { 4800 });
+            let cap = max_rate_for_snr(self.sr_rx_idx, snr, 1.5).max(min_rate_for_sr(self.sr_rx_idx));
             let cap = cap.min(self.rn_cap.unwrap_or(u32::MAX));
             let n = (cap / 2400) as u8;
             let field = if self.answer { &mut self.our_mp.rate_c2a } else { &mut self.our_mp.rate_a2c };
@@ -1491,21 +1491,26 @@ impl Modem {
         } else {
             (i1a.sr_c2a as usize, i1a.high_carrier, i1a.sr_a2c as usize, i1c.results[i1a.sr_a2c as usize].high_carrier)
         };
-        // Capacités : notre réception (sondage), l'émission (projection de l'autre)
-        let rx_cap = self.rx_capability(sr_rx);
+        // Capacités : notre réception (sondage), l'émission (projection de l'autre).
+        // Plafond de l'appli (molette de débit) : jamais sous le débit minimal
+        // de la vitesse de symbole choisie par l'appelé (4800 bit/s au-delà de
+        // 2400 bauds). Une MP à 2400 bit/s pour 3429 bauds est invalide : le
+        // U.S. Robotics la rejette et raccroche avant la connexion.
+        let floor = |sr: usize, n: u8| n.max((min_rate_for_sr(sr) / 2400) as u8);
+        let rx_cap = floor(sr_rx, self.rx_capability(sr_rx));
         let tx_cap = if answer { i1c.results[sr_tx].max_rate } else { i1a.max_rate };
-        let tx_cap = tx_cap.min((MAX_RATE_FOR_SR[sr_tx].min(self.cfg.max_rate) / 2400) as u8);
+        let tx_cap = floor(sr_tx, tx_cap.min((MAX_RATE_FOR_SR[sr_tx].min(self.cfg.max_rate) / 2400) as u8));
         let (c2a, a2c) = if answer { (rx_cap, tx_cap) } else { (tx_cap, rx_cap) };
         let mp = Mp {
             type1: false,
-            rate_c2a: c2a.max(1),
-            rate_a2c: a2c.max(1),
+            rate_c2a: c2a,
+            rate_a2c: a2c,
             aux: false,
             trellis: 0,
             nonlinear: false,
             shaping_expanded: false,
             ack: false,
-            rate_mask: rate_mask_upto(self.cfg.max_rate),
+            rate_mask: rate_mask_upto(self.cfg.max_rate.max(min_rate_for_sr(sr_tx)).max(min_rate_for_sr(sr_rx))),
             asym: true,
             precoder: [(0, 0); 3],
         };
