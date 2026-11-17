@@ -68,6 +68,8 @@ const UPLINK_STALE: Duration = Duration::from_millis(1000);
 const RX_GAP_LOG: Duration = Duration::from_millis(200);
 /// Rattrapage maximal d'un coup (trames)
 const MAX_CATCHUP: i32 = 50;
+/// Poste revenu derrière notre envoi de plus de tant de trames : recalage
+const RESYNC_BEHIND: i32 = 5;
 
 /// Ce qu'un abonné SIP a de particulier (voir [`Lien::Sip`]).
 pub(super) struct Poste {
@@ -201,6 +203,10 @@ struct Leg {
     rx_seq: u16,
     /// Trame du poste jusqu'à laquelle on a déjà envoyé la nôtre
     tx_mark: u32,
+    /// Bilan de ce qu'on a envoyé au poste (journalisé en fin d'appel) :
+    /// trames cadencées, envoyées aussitôt (poste muet), sautées (en
+    /// retard, rattrapage), recalages (le poste a repris derrière nous)
+    tx_bilan: [u32; 5],
     /// Envoi cadencé par le poste (pas avec un modem du central, qui
     /// envoie lui-même son RTP à la cadence du poste)
     paced: bool,
@@ -216,6 +222,12 @@ struct Leg {
 }
 
 impl Leg {
+    /// Bilan de l'audio envoyé au poste, pour le journal.
+    fn bilan(&self) -> String {
+        let [cad, dir, tard, ratt, recal] = self.tx_bilan;
+        format!("poste SIP {} : vers lui {} trames cadencées, {} directes, {} sautées en retard, {} au rattrapage, {} recalages", self.name, cad, dir, tard, ratt, recal)
+    }
+
     fn new(session: u32, name: String, role: Role, invite: Message, sig: SocketAddr, now: Instant) -> Leg {
         Leg {
             session,
@@ -249,6 +261,7 @@ impl Leg {
             rx_at: None,
             rx_seq: 0,
             tx_mark: 0,
+            tx_bilan: [0; 5],
             paced: false,
             reframer: rtp::Reframer::default(),
             numbering: rtp::Numbering::new(8),
@@ -848,6 +861,9 @@ impl Server {
         let Some(st) = self.sip.as_mut() else { return };
         st.recent.push(Recent { call_id: call_id.to_string(), cseq, method: "BYE".into(), bytes, at: now });
         let leg = st.legs.remove(i);
+        if leg.tx_out > 0 {
+            info!("{}", leg.bilan());
+        }
         if let Some(c) = leg.call.filter(|c| leg.active() && self.calls.contains_key(c)) {
             info!("appel {c:08x} : le poste SIP {} raccroche", leg.name);
             self.end_call(c, Some(leg.session), HangupReason::Normal);
@@ -1052,6 +1068,9 @@ impl Server {
     fn sip_end_leg(&mut self, i: usize, reason: HangupReason, now: Instant) {
         let Some(st) = self.sip.as_mut() else { return };
         let leg = &mut st.legs[i];
+        if leg.tx_out > 0 && leg.call.is_some() {
+            info!("{}", leg.bilan());
+        }
         leg.call = None;
         match (leg.role, leg.state) {
             (Role::Uas, State::Incoming) => {
@@ -1208,6 +1227,15 @@ impl Server {
             }
             let target = last.wrapping_add((since.as_millis() / 20) as u32);
             let mut due = target.wrapping_sub(leg.tx_mark) as i32;
+            if due < -RESYNC_BEHIND {
+                // Le poste a repris derrière nous : son flux s'était arrêté
+                // (pause de l'ATA), on avait continué au jugé, et il repart
+                // du numéro suivant. Sans recalage, sa cadence ne nous
+                // rattraperait jamais : plus rien ne lui serait envoyé.
+                leg.tx_mark = target;
+                leg.tx_bilan[4] += 1;
+                continue;
+            }
             if due <= 0 {
                 continue;
             }
@@ -1219,6 +1247,7 @@ impl Server {
                         jb.pop_frame();
                     }
                     leg.tx_out = leg.tx_out.wrapping_add(1);
+                    leg.tx_bilan[3] += 1;
                 }
                 due = MAX_CATCHUP;
             }
@@ -1228,7 +1257,10 @@ impl Server {
                 leg.tx_out = n.wrapping_add(1);
                 // un retard de plus de 2 trames : les plus anciennes sont
                 // déjà passées chez lui, seules les dernières partent
-                if due - k <= 2 {
+                if due - k > 2 {
+                    leg.tx_bilan[2] += 1;
+                } else {
+                    leg.tx_bilan[0] += 1;
                     let bytes = leg.numbering.packet(leg.law, n, n.wrapping_mul(FRAME_SAMPLES as u32), &frame);
                     if let Err(e) = self.sock.send_to(&bytes, dest) {
                         if !is_transient(&e) {
@@ -1260,6 +1292,7 @@ impl Server {
         let (frame, _) = jb.pop_frame();
         let n = leg.tx_out;
         leg.tx_out = n.wrapping_add(1);
+        leg.tx_bilan[1] += 1;
         let bytes = leg.numbering.packet(leg.law, n, n.wrapping_mul(FRAME_SAMPLES as u32), &frame);
         if let Err(e) = self.sock.send_to(&bytes, dest) {
             if !is_transient(&e) {
