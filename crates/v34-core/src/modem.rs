@@ -578,8 +578,17 @@ impl Modem {
         if let Some(t) = f.reversal {
             // juste après un trou du réseau, le ton qui reprend n'a pas la
             // phase que le détecteur attendait : ce n'est pas une inversion
-            // (sinon : délai aller-retour faux, 15 ms ou 1,9 s)
-            if self.hole_at.is_some_and(|h| self.n.saturating_sub(h) < 60 * MS) {
+            // (sinon : délai aller-retour faux, 15 ms ou 1,9 s). Sauf si le
+            // ton a tenu 30 ms depuis le trou : les zéros étaient le silence
+            // de l'autre modem avant son ton (ligne simulée sans bruit), pas
+            // une coupure ; en réentraînement, il inverse son ton A ~60 ms
+            // après l'avoir lancé, et ignorer l'inversion bloquait la reprise.
+            let run_since_hole = match self.hole_at {
+                Some(_) if self.tone_on > 0 => self.tone_on,
+                Some(h) if self.tone_drop_at > h => self.tone_run_prev,
+                _ => 0,
+            };
+            if self.hole_at.is_some_and(|h| self.n.saturating_sub(h) < 60 * MS) && run_since_hole < 30 * MS {
                 self.log(LogLevel::Detail, "Inversion ignorée : trou du réseau juste avant");
                 return None;
             }
