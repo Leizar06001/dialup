@@ -786,7 +786,16 @@ impl Modem {
                     // avant de répondre (comme ceux de 1999), dans les 5 s
                     // que l'appelé lui accorde.
                     // (morse : le CM est plus long, on ne traîne pas)
-                    let te = if self.cfg.v90 && !self.cfg.express && !self.cfg.morse { 2300 } else { 1000 };
+                    let te: u64 = if self.cfg.v90 && !self.cfg.express && !self.cfg.morse { 2300 } else { 1000 };
+                    // ANSam reconnu tard (normalement ~2,4 s après le décroché :
+                    // 2 s de silence de taxation, puis la détection) : il en
+                    // reste d'autant moins, et un CM arrivé après sa fin n'a
+                    // plus de réponse (« pas de JM »). Derrière un adaptateur
+                    // téléphonique qui bascule en passthrough pendant l'ANSam,
+                    // la détection prend jusqu'à 5 s. Te raccourci d'autant,
+                    // sans descendre sous 0,5 s.
+                    let retard = (self.elapsed() / MS).saturating_sub(2400);
+                    let te = te.saturating_sub(retard).max(500);
                     self.log(LogLevel::Detail, &format!("Silence Te = {:.1} s (neutralisation des annuleurs d'écho du réseau)", te as f32 / 1000.0));
                     self.t_mark = self.n + te * MS;
                     self.goto(St::CallTe);
