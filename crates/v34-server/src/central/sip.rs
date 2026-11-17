@@ -64,6 +64,8 @@ const TX_DEPTH_APPLI_MS: u32 = 200;
 /// sans que le nôtre, vers lui, s'arrête. Au-delà (détection de silence de
 /// l'ATA), les trames partent au rythme de l'autre bout.
 const UPLINK_STALE: Duration = Duration::from_millis(1000);
+/// Diagnostic : interruption du flux RTP d'un poste digne du journal
+const RX_GAP_LOG: Duration = Duration::from_millis(200);
 /// Rattrapage maximal d'un coup (trames)
 const MAX_CATCHUP: i32 = 50;
 
@@ -193,6 +195,10 @@ struct Leg {
     /// Dernière trame reçue du poste, et quand : son horloge cadence l'envoi
     up_last: Option<u32>,
     up_at: Option<Instant>,
+    /// Diagnostic : arrivée et numéro du dernier paquet RTP du poste (un
+    /// flux qui s'interrompt plus de 200 ms est journalisé)
+    rx_at: Option<Instant>,
+    rx_seq: u16,
     /// Trame du poste jusqu'à laquelle on a déjà envoyé la nôtre
     tx_mark: u32,
     /// Envoi cadencé par le poste (pas avec un modem du central, qui
@@ -240,6 +246,8 @@ impl Leg {
             tx_out: 0,
             up_last: None,
             up_at: None,
+            rx_at: None,
+            rx_seq: 0,
             tx_mark: 0,
             paced: false,
             reframer: rtp::Reframer::default(),
@@ -1103,6 +1111,18 @@ impl Server {
             return;
         };
         let leg = &mut st.legs[i];
+        // Diagnostic : le flux du poste s'est-il interrompu ? « +1 » à la
+        // reprise : ses paquets étaient retenus (ils arrivent en rafale) ;
+        // « +N » : perdus en route.
+        let t = Instant::now();
+        if let Some(at) = leg.rx_at {
+            let gap = t.saturating_duration_since(at);
+            if gap > RX_GAP_LOG {
+                info!("poste SIP {} : rien reçu pendant {} ms, puis le paquet +{}", leg.name, gap.as_millis(), h.seq.wrapping_sub(leg.rx_seq));
+            }
+        }
+        leg.rx_at = Some(t);
+        leg.rx_seq = h.seq;
         if !leg.latched {
             if leg.rtp_dest != Some(from) {
                 debug!("poste SIP {} : audio reçu de {from}", leg.name);

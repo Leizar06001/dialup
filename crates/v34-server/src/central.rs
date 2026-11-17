@@ -51,6 +51,8 @@ use self::sip::{Poste, SipState};
 /// Validité d'un défi (s).
 const CHALLENGE_TTL: u64 = 30;
 const HOUSEKEEPING: Duration = Duration::from_millis(50);
+/// Diagnostic : tour de boucle anormalement long
+const LOOP_STALL_LOG: Duration = Duration::from_millis(150);
 /// Fréquence de vérification du fichier de configuration.
 const RELOAD_CHECK: Duration = Duration::from_secs(2);
 /// Taille du tampon de réception (un INVITE SIP avec SDP y tient largement).
@@ -325,6 +327,10 @@ impl Server {
     pub fn run(mut self) {
         let mut buf = vec![0u8; RECV_BUF];
         let mut next_hk = Instant::now();
+        // Diagnostic : un tour de boucle dure au plus ~10 ms (délai de
+        // lecture) ; bien plus, c'est que quelque chose l'a bloquée — et
+        // tous les flux audio s'arrêtent avec elle.
+        let mut tour = Instant::now();
         while !self.stop.load(Ordering::Relaxed) {
             match self.sock.recv_from(&mut buf) {
                 Ok((n, from)) => self.on_datagram(&buf[..n], from),
@@ -342,6 +348,12 @@ impl Server {
                 self.housekeeping(now);
                 next_hk = now + HOUSEKEEPING;
             }
+            let fin = Instant::now();
+            let duree = fin.saturating_duration_since(tour);
+            if duree > LOOP_STALL_LOG {
+                warn!("boucle du central bloquée {} ms (tous les flux audio arrêtés d'autant)", duree.as_millis());
+            }
+            tour = fin;
         }
         info!("arrêt du central");
         let ids: Vec<u32> = self.calls.keys().copied().collect();
